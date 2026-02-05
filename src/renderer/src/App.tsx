@@ -1,95 +1,277 @@
-import { useReducer, useEffect, useCallback } from 'react'
-import type { AppState, AppAction, CensorType } from './types'
-import { useTranscription } from './hooks/useTranscription'
-import { useAudioProcessing } from './hooks/useAudioProcessing'
+import { useReducer, useEffect, useCallback, useRef } from 'react'
+import type {
+  BatchAppState,
+  BatchAppAction,
+  CensorType,
+  SongEntry,
+  CensorWord
+} from './types'
+import { useQueueProcessor } from './hooks/useQueueProcessor'
 import FileUpload from './components/FileUpload'
-import TranscriptEditor from './components/TranscriptEditor'
-import AudioPreview from './components/AudioPreview'
-import ExportControls from './components/ExportControls'
+import QueueList from './components/QueueList'
+import BatchControls from './components/BatchControls'
+import SongDetailPanel from './components/SongDetailPanel'
+import HistoryList from './components/HistoryList'
 
-const initialState: AppState = {
-  status: 'loading-backend',
-  backendReady: false,
-  filePath: null,
-  fileName: null,
-  words: [],
-  duration: 0,
-  language: '',
-  defaultCensorType: 'mute',
-  censoredFilePath: null,
-  errorMessage: null,
-  vocalsPath: null,
-  accompanimentPath: null
+function generateId(): string {
+  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 }
 
-function reducer(state: AppState, action: AppAction): AppState {
+const initialState: BatchAppState = {
+  backendReady: false,
+  globalDefaultCensorType: 'mute',
+  songs: [],
+  currentlyProcessingId: null,
+  processingQueue: [],
+  expandedSongId: null,
+  history: [],
+  isExportingAll: false,
+  exportProgress: null
+}
+
+function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
   switch (action.type) {
     case 'SET_BACKEND_STATUS':
-      return {
-        ...state,
-        backendReady: action.ready,
-        status: action.ready ? (state.filePath ? state.status : 'ready') : 'loading-backend',
-        errorMessage: action.error || state.errorMessage
-      }
-    case 'SET_FILE':
-      return {
-        ...state,
-        filePath: action.path,
-        fileName: action.name,
+      return { ...state, backendReady: action.ready }
+
+    case 'ADD_SONGS': {
+      const newSongs: SongEntry[] = action.songs.map((s) => ({
+        id: generateId(),
+        filePath: s.filePath,
+        fileName: s.fileName,
+        status: 'pending',
         words: [],
         duration: 0,
         language: '',
+        vocalsPath: null,
+        accompanimentPath: null,
+        separationProgress: null,
         censoredFilePath: null,
-        errorMessage: null,
-        status: 'ready'
+        defaultCensorType: state.globalDefaultCensorType,
+        userReviewed: false,
+        errorMessage: null
+      }))
+      const newIds = newSongs.map((s) => s.id)
+      return {
+        ...state,
+        songs: [...state.songs, ...newSongs],
+        processingQueue: [...state.processingQueue, ...newIds]
       }
-    case 'CLEAR_FILE':
-      return { ...initialState, backendReady: state.backendReady, status: 'ready' }
+    }
+
+    case 'REMOVE_SONG':
+      return {
+        ...state,
+        songs: state.songs.filter((s) => s.id !== action.id),
+        processingQueue: state.processingQueue.filter((id) => id !== action.id),
+        expandedSongId: state.expandedSongId === action.id ? null : state.expandedSongId
+      }
+
+    case 'CLEAR_ALL_SONGS':
+      return {
+        ...state,
+        songs: [],
+        processingQueue: [],
+        currentlyProcessingId: null,
+        expandedSongId: null
+      }
+
+    case 'SET_EXPANDED_SONG':
+      return { ...state, expandedSongId: action.id }
+
+    case 'START_PROCESSING':
+      return { ...state, currentlyProcessingId: action.id }
+
     case 'START_TRANSCRIPTION':
-      return { ...state, status: 'transcribing', errorMessage: null, words: [], censoredFilePath: null, vocalsPath: null, accompanimentPath: null }
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, status: 'transcribing', errorMessage: null } : s
+        )
+      }
+
     case 'TRANSCRIPTION_COMPLETE':
       return {
         ...state,
-        status: 'ready',
-        words: action.words,
-        duration: action.duration,
-        language: action.language
+        songs: state.songs.map((s) =>
+          s.id === action.id
+            ? { ...s, words: action.words, duration: action.duration, language: action.language }
+            : s
+        )
       }
+
     case 'START_SEPARATING':
-      return { ...state, status: 'separating', errorMessage: null }
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, status: 'separating', separationProgress: null } : s
+        )
+      }
+
+    case 'SEPARATION_PROGRESS':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, separationProgress: action.progress } : s
+        )
+      }
+
     case 'SEPARATION_COMPLETE':
       return {
         ...state,
-        status: 'ready',
-        vocalsPath: action.vocalsPath,
-        accompanimentPath: action.accompanimentPath
+        songs: state.songs.map((s) =>
+          s.id === action.id
+            ? {
+                ...s,
+                vocalsPath: action.vocalsPath,
+                accompanimentPath: action.accompanimentPath,
+                separationProgress: null
+              }
+            : s
+        )
       }
+
+    case 'SET_SONG_READY':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, status: 'ready' } : s
+        )
+      }
+
+    case 'SET_SONG_ERROR':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, status: 'error', errorMessage: action.message } : s
+        )
+      }
+
+    case 'PROCESSING_COMPLETE':
+      return {
+        ...state,
+        currentlyProcessingId: null,
+        processingQueue: state.processingQueue.filter((id) => id !== action.id)
+      }
+
     case 'TOGGLE_PROFANITY':
       return {
         ...state,
-        words: state.words.map((w, i) =>
-          i === action.index ? { ...w, is_profanity: !w.is_profanity } : w
-        ),
-        censoredFilePath: null
+        songs: state.songs.map((s) =>
+          s.id === action.songId
+            ? {
+                ...s,
+                words: s.words.map((w, i) =>
+                  i === action.wordIndex ? { ...w, is_profanity: !w.is_profanity } : w
+                ),
+                censoredFilePath: null
+              }
+            : s
+        )
       }
-    case 'SET_CENSOR_TYPE':
+
+    case 'SET_WORD_CENSOR_TYPE':
       return {
         ...state,
-        words: state.words.map((w, i) =>
-          i === action.index ? { ...w, censor_type: action.censorType } : w
-        ),
-        censoredFilePath: null
+        songs: state.songs.map((s) =>
+          s.id === action.songId
+            ? {
+                ...s,
+                words: s.words.map((w, i) =>
+                  i === action.wordIndex ? { ...w, censor_type: action.censorType } : w
+                ),
+                censoredFilePath: null
+              }
+            : s
+        )
       }
-    case 'SET_DEFAULT_CENSOR_TYPE':
-      return { ...state, defaultCensorType: action.censorType, censoredFilePath: null }
-    case 'START_CENSORING':
-      return { ...state, status: 'censoring', errorMessage: null }
-    case 'CENSORING_COMPLETE':
-      return { ...state, status: 'ready', censoredFilePath: action.outputPath }
-    case 'SET_ERROR':
-      return { ...state, status: 'error', errorMessage: action.message }
-    case 'CLEAR_ERROR':
-      return { ...state, status: 'ready', errorMessage: null }
+
+    case 'SET_SONG_CENSOR_TYPE':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.songId ? { ...s, defaultCensorType: action.censorType, censoredFilePath: null } : s
+        )
+      }
+
+    case 'SET_GLOBAL_CENSOR_TYPE':
+      return {
+        ...state,
+        globalDefaultCensorType: action.censorType,
+        songs: state.songs.map((s) =>
+          s.status === 'pending' ? { ...s, defaultCensorType: action.censorType } : s
+        )
+      }
+
+    case 'MARK_SONG_REVIEWED':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, userReviewed: true } : s
+        )
+      }
+
+    case 'START_EXPORT':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, status: 'exporting' } : s
+        )
+      }
+
+    case 'EXPORT_COMPLETE':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, status: 'completed', censoredFilePath: action.outputPath } : s
+        )
+      }
+
+    case 'START_EXPORT_ALL':
+      return {
+        ...state,
+        isExportingAll: true,
+        exportProgress: { completed: 0, total: action.total }
+      }
+
+    case 'EXPORT_ALL_PROGRESS':
+      return {
+        ...state,
+        exportProgress: state.exportProgress
+          ? { ...state.exportProgress, completed: action.completed }
+          : null
+      }
+
+    case 'EXPORT_ALL_COMPLETE':
+      return {
+        ...state,
+        isExportingAll: false,
+        exportProgress: null
+      }
+
+    case 'RETRY_SONG': {
+      const song = state.songs.find((s) => s.id === action.id)
+      if (!song || song.status !== 'error') return state
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id
+            ? { ...s, status: 'pending', errorMessage: null, words: [], vocalsPath: null, accompanimentPath: null }
+            : s
+        ),
+        processingQueue: [...state.processingQueue, action.id]
+      }
+    }
+
+    case 'SET_HISTORY':
+      return { ...state, history: action.history }
+
+    case 'ADD_HISTORY_ENTRY':
+      return { ...state, history: [action.entry, ...state.history] }
+
+    case 'DELETE_HISTORY_ENTRY':
+      return { ...state, history: state.history.filter((e) => e.id !== action.id) }
+
     default:
       return state
   }
@@ -97,16 +279,22 @@ function reducer(state: AppState, action: AppAction): AppState {
 
 export default function App(): React.JSX.Element {
   const [state, dispatch] = useReducer(reducer, initialState)
-  const { transcribe } = useTranscription(dispatch)
-  const { censor } = useAudioProcessing(dispatch, state.defaultCensorType)
+  const exportingRef = useRef(false)
 
-  // Listen for backend status updates from main process
+  // Use the queue processor hook
+  const { retrySong } = useQueueProcessor({
+    songs: state.songs,
+    currentlyProcessingId: state.currentlyProcessingId,
+    processingQueue: state.processingQueue,
+    dispatch
+  })
+
+  // Listen for backend status updates
   useEffect(() => {
     const unsubscribe = window.electronAPI.onBackendStatus((status) => {
-      dispatch({ type: 'SET_BACKEND_STATUS', ready: status.ready, error: status.error })
+      dispatch({ type: 'SET_BACKEND_STATUS', ready: status.ready })
     })
 
-    // Also check status on mount
     window.electronAPI.getBackendStatus().then((status) => {
       dispatch({ type: 'SET_BACKEND_STATUS', ready: status.ready })
     })
@@ -114,59 +302,167 @@ export default function App(): React.JSX.Element {
     return unsubscribe
   }, [])
 
-  const separateVocals = useCallback(
-    async (filePath: string) => {
-      dispatch({ type: 'START_SEPARATING' })
-      try {
-        const result = await window.electronAPI.separateAudio(filePath)
-        dispatch({
-          type: 'SEPARATION_COMPLETE',
-          vocalsPath: result.vocals_path,
-          accompanimentPath: result.accompaniment_path
-        })
-      } catch (err) {
-        dispatch({ type: 'SET_ERROR', message: (err as Error).message })
-      }
+  // Load history on mount
+  useEffect(() => {
+    window.electronAPI.getHistory().then((history) => {
+      dispatch({ type: 'SET_HISTORY', history })
+    })
+  }, [])
+
+  // Handle file selection
+  const handleFilesSelected = useCallback(
+    (files: Array<{ path: string; name: string }>) => {
+      dispatch({
+        type: 'ADD_SONGS',
+        songs: files.map((f) => ({ filePath: f.path, fileName: f.name }))
+      })
     },
-    [dispatch]
+    []
   )
 
-  const handleFileSelected = useCallback(
-    async (path: string, name: string) => {
-      dispatch({ type: 'SET_FILE', path, name })
-      const ok = await transcribe(path)
-      if (ok) {
-        // Auto-separate vocals after transcription completes
-        separateVocals(path)
-      }
+  // Toggle expanded song
+  const handleToggleExpand = useCallback((id: string) => {
+    dispatch({
+      type: 'SET_EXPANDED_SONG',
+      id: state.expandedSongId === id ? null : id
+    })
+  }, [state.expandedSongId])
+
+  // Remove song from queue
+  const handleRemoveSong = useCallback((id: string) => {
+    dispatch({ type: 'REMOVE_SONG', id })
+  }, [])
+
+  // Clear all songs
+  const handleClearAll = useCallback(() => {
+    dispatch({ type: 'CLEAR_ALL_SONGS' })
+  }, [])
+
+  // Set global censor type
+  const handleSetGlobalCensorType = useCallback((censorType: CensorType) => {
+    dispatch({ type: 'SET_GLOBAL_CENSOR_TYPE', censorType })
+  }, [])
+
+  // Toggle profanity for a word
+  const handleToggleProfanity = useCallback((songId: string, wordIndex: number) => {
+    dispatch({ type: 'TOGGLE_PROFANITY', songId, wordIndex })
+  }, [])
+
+  // Set censor type for a word
+  const handleSetWordCensorType = useCallback(
+    (songId: string, wordIndex: number, censorType: CensorType) => {
+      dispatch({ type: 'SET_WORD_CENSOR_TYPE', songId, wordIndex, censorType })
     },
-    [transcribe, separateVocals]
+    []
   )
 
-  const handleToggleProfanity = useCallback((index: number) => {
-    dispatch({ type: 'TOGGLE_PROFANITY', index })
+  // Set censor type for a song
+  const handleSetSongCensorType = useCallback((songId: string, censorType: CensorType) => {
+    dispatch({ type: 'SET_SONG_CENSOR_TYPE', songId, censorType })
   }, [])
 
-  const handleSetCensorType = useCallback((index: number, censorType: CensorType) => {
-    dispatch({ type: 'SET_CENSOR_TYPE', index, censorType })
+  // Mark song as reviewed
+  const handleMarkReviewed = useCallback((songId: string) => {
+    dispatch({ type: 'MARK_SONG_REVIEWED', id: songId })
   }, [])
 
-  const handleSetDefaultCensorType = useCallback((censorType: CensorType) => {
-    dispatch({ type: 'SET_DEFAULT_CENSOR_TYPE', censorType })
+  // Close expanded panel
+  const handleCloseExpanded = useCallback(() => {
+    dispatch({ type: 'SET_EXPANDED_SONG', id: null })
   }, [])
 
-  const handleExport = useCallback(() => {
-    if (state.filePath) {
-      censor(state.filePath, state.words, state.vocalsPath, state.accompanimentPath)
+  // Delete history entry
+  const handleDeleteHistoryEntry = useCallback((id: string) => {
+    window.electronAPI.deleteHistoryEntry(id).then(() => {
+      dispatch({ type: 'DELETE_HISTORY_ENTRY', id })
+    })
+  }, [])
+
+  // Export all ready songs
+  const handleExportAll = useCallback(async () => {
+    if (exportingRef.current) return
+    exportingRef.current = true
+
+    const exportableSongs = state.songs.filter(
+      (s) => (s.status === 'ready' || s.status === 'completed') && s.words.some((w) => w.is_profanity)
+    )
+
+    if (exportableSongs.length === 0) {
+      exportingRef.current = false
+      return
     }
-  }, [state.filePath, state.words, state.vocalsPath, state.accompanimentPath, censor])
 
-  const handleClearFile = useCallback(() => {
-    dispatch({ type: 'CLEAR_FILE' })
-  }, [])
+    // Ask for output directory
+    const outputDir = await window.electronAPI.selectOutputDirectory()
+    if (!outputDir) {
+      exportingRef.current = false
+      return
+    }
 
-  const hasProfanity = state.words.some((w) => w.is_profanity)
-  const isProcessing = state.status === 'transcribing' || state.status === 'separating' || state.status === 'censoring'
+    dispatch({ type: 'START_EXPORT_ALL', total: exportableSongs.length })
+
+    let completed = 0
+
+    for (const song of exportableSongs) {
+      dispatch({ type: 'START_EXPORT', id: song.id })
+
+      try {
+        const profaneWords = song.words.filter((w) => w.is_profanity)
+        const censorWords: CensorWord[] = profaneWords.map((w) => ({
+          word: w.word,
+          start: w.start,
+          end: w.end,
+          censor_type: w.censor_type ?? song.defaultCensorType
+        }))
+
+        const baseName = song.fileName
+        const ext = baseName.split('.').pop() || 'mp3'
+        const cleanName = baseName.replace(`.${ext}`, `_clean.${ext}`)
+        const outputPath = `${outputDir}/${cleanName}`
+
+        const result = await window.electronAPI.censorAudio(
+          song.filePath,
+          censorWords,
+          outputPath,
+          song.vocalsPath ?? undefined,
+          song.accompanimentPath ?? undefined
+        )
+
+        dispatch({ type: 'EXPORT_COMPLETE', id: song.id, outputPath: result.output_path })
+
+        // Add to history
+        const profanityCount = profaneWords.length
+        const historyEntry = await window.electronAPI.addHistoryEntry({
+          originalFileName: song.fileName,
+          originalFilePath: song.filePath,
+          censoredFilePath: result.output_path,
+          dateCreated: Date.now(),
+          wordCount: song.words.length,
+          profanityCount,
+          duration: song.duration,
+          language: song.language
+        })
+        dispatch({ type: 'ADD_HISTORY_ENTRY', entry: historyEntry })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        dispatch({ type: 'SET_SONG_ERROR', id: song.id, message })
+      }
+
+      completed++
+      dispatch({ type: 'EXPORT_ALL_PROGRESS', completed })
+    }
+
+    dispatch({ type: 'EXPORT_ALL_COMPLETE' })
+    exportingRef.current = false
+  }, [state.songs])
+
+  // Computed values
+  const readyCount = state.songs.filter((s) => s.status === 'ready').length
+  const completedCount = state.songs.filter((s) => s.status === 'completed').length
+  const isProcessing = state.currentlyProcessingId !== null
+  const expandedSong = state.expandedSongId
+    ? state.songs.find((s) => s.id === state.expandedSongId)
+    : null
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -174,8 +470,8 @@ export default function App(): React.JSX.Element {
       <header className="drag-region border-b border-zinc-800 px-6 py-4">
         <div className="flex items-center justify-between no-drag">
           <div>
-            <h1 className="text-xl font-bold">Clean Song Editor</h1>
-            <p className="text-sm text-zinc-500">Censor profanity in audio files</p>
+            <h1 className="text-xl font-bold">Cleanse</h1>
+            <p className="text-sm text-zinc-500">Batch censor profanity in audio files</p>
           </div>
           <div className="flex items-center gap-2">
             <span
@@ -191,99 +487,53 @@ export default function App(): React.JSX.Element {
       </header>
 
       {/* Main content */}
-      <main className="max-w-3xl mx-auto px-6 py-8 flex flex-col gap-6">
-        {/* Error banner */}
-        {state.errorMessage && (
-          <div className="bg-red-950/50 border border-red-800 rounded-lg px-4 py-3 flex items-start justify-between">
-            <p className="text-sm text-red-300">{state.errorMessage}</p>
-            <button
-              onClick={() => dispatch({ type: 'CLEAR_ERROR' })}
-              className="text-red-500 hover:text-red-300 ml-3 text-lg leading-none"
-            >
-              &times;
-            </button>
-          </div>
-        )}
+      <main className="max-w-4xl mx-auto px-6 py-8 flex flex-col gap-6">
+        {/* File upload */}
+        <FileUpload onFilesSelected={handleFilesSelected} disabled={!state.backendReady} />
 
-        {/* File upload or current file */}
-        {!state.filePath ? (
-          <FileUpload
-            onFileSelected={handleFileSelected}
-            disabled={!state.backendReady}
-          />
-        ) : (
-          <div className="flex items-center justify-between bg-zinc-900/50 rounded-lg px-4 py-3 border border-zinc-800">
-            <div className="flex items-center gap-3">
-              <span className="text-2xl">🎵</span>
-              <div>
-                <p className="font-medium">{state.fileName}</p>
-                <p className="text-xs text-zinc-500">{state.filePath}</p>
-              </div>
-            </div>
-            <button
-              onClick={handleClearFile}
-              disabled={isProcessing}
-              className="text-sm text-zinc-500 hover:text-zinc-300 disabled:opacity-30"
-            >
-              Change file
-            </button>
-          </div>
-        )}
-
-        {/* Transcription status */}
-        {state.status === 'transcribing' && (
-          <div className="text-center py-8">
-            <div className="inline-block w-8 h-8 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin mb-3" />
-            <p className="text-zinc-400">Transcribing audio...</p>
-            <p className="text-xs text-zinc-600 mt-1">
-              This may take a moment for the first run while the model loads
-            </p>
-          </div>
-        )}
-
-        {/* Vocal separation status */}
-        {state.status === 'separating' && (
-          <div className="text-center py-8">
-            <div className="inline-block w-8 h-8 border-2 border-zinc-600 border-t-purple-400 rounded-full animate-spin mb-3" />
-            <p className="text-zinc-400">Separating vocals...</p>
-            <p className="text-xs text-zinc-600 mt-1">
-              Isolating vocals from instrumentals (~60-120 seconds)
-            </p>
-          </div>
-        )}
-
-        {/* Transcript editor */}
-        {state.words.length > 0 && state.status !== 'transcribing' && (
+        {/* Queue list */}
+        {state.songs.length > 0 && (
           <>
-            <TranscriptEditor
-              words={state.words}
-              onToggleProfanity={handleToggleProfanity}
-              onSetCensorType={handleSetCensorType}
-              defaultCensorType={state.defaultCensorType}
-              language={state.language}
-              duration={state.duration}
+            <QueueList
+              songs={state.songs}
+              expandedSongId={state.expandedSongId}
+              onToggleExpand={handleToggleExpand}
+              onRemoveSong={handleRemoveSong}
+              onRetrySong={retrySong}
             />
 
-            <ExportControls
-              onExport={handleExport}
+            {/* Expanded song detail panel */}
+            {expandedSong && (
+              <SongDetailPanel
+                song={expandedSong}
+                onToggleProfanity={handleToggleProfanity}
+                onSetCensorType={handleSetWordCensorType}
+                onSetSongCensorType={handleSetSongCensorType}
+                onMarkReviewed={handleMarkReviewed}
+                onClose={handleCloseExpanded}
+              />
+            )}
+
+            {/* Batch controls */}
+            <BatchControls
+              songCount={state.songs.length}
+              readyCount={readyCount}
+              completedCount={completedCount}
+              globalCensorType={state.globalDefaultCensorType}
+              onSetGlobalCensorType={handleSetGlobalCensorType}
+              onExportAll={handleExportAll}
+              onClearAll={handleClearAll}
+              isExporting={state.isExportingAll}
+              exportProgress={state.exportProgress}
               disabled={isProcessing}
-              hasProfanity={hasProfanity}
-              isCensoring={state.status === 'censoring'}
-              defaultCensorType={state.defaultCensorType}
-              onSetDefaultCensorType={handleSetDefaultCensorType}
             />
           </>
         )}
 
-        {/* Audio previews */}
-        {(state.filePath || state.censoredFilePath) &&
-          state.words.length > 0 &&
-          !isProcessing && (
-            <AudioPreview
-              originalPath={state.filePath}
-              censoredPath={state.censoredFilePath}
-            />
-          )}
+        {/* History (show when no songs in queue) */}
+        {state.songs.length === 0 && (
+          <HistoryList history={state.history} onDelete={handleDeleteHistoryEntry} />
+        )}
       </main>
     </div>
   )
