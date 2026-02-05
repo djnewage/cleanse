@@ -135,3 +135,40 @@ export type AppAction =
   | { type: 'SET_HISTORY'; history: HistoryEntry[] }
   | { type: 'ADD_HISTORY_ENTRY'; entry: HistoryEntry }
   | { type: 'DELETE_HISTORY_ENTRY'; id: string }
+
+// Auth & Subscription Types
+export type SubscriptionStatus = 'none' | 'active' | 'canceled' | 'past_due'
+
+export interface UserSubscription {
+  status: SubscriptionStatus
+  stripeCustomerId: string | null
+  stripeSubscriptionId: string | null
+  currentPeriodEnd: number | null
+}
+
+export interface UserData {
+  email: string
+  createdAt: number
+  songsProcessed: number
+  subscription: UserSubscription
+}
+
+export interface AuthState {
+  isAuthenticated: boolean
+  isLoading: boolean
+  user: {
+    uid: string
+    email: string | null
+  } | null
+  userData: UserData | null
+  error: string | null
+}
+
+export interface UsageInfo {
+  canProcess: boolean
+  songsProcessed: number
+  songsRemaining: number
+  isSubscribed: boolean
+}
+
+export const FREE_SONGS_LIMIT = 5

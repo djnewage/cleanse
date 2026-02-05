@@ -216,6 +216,12 @@ ipcMain.handle('delete-history-entry', (_event, id: string) => {
   deleteHistoryEntry(id)
 })
 
+// --- Shell IPC Handlers ---
+
+ipcMain.handle('open-external', (_event, url: string) => {
+  return shell.openExternal(url)
+})
+
 // --- App Lifecycle ---
 
 function getAudioMimeType(filePath: string): string {

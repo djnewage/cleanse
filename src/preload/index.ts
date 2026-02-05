@@ -32,6 +32,7 @@ export interface ElectronAPI {
   getHistory: () => Promise<HistoryEntry[]>
   addHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => Promise<HistoryEntry>
   deleteHistoryEntry: (id: string) => Promise<void>
+  openExternal: (url: string) => Promise<void>
 }
 
 export interface TranscriptionResult {
@@ -118,7 +119,9 @@ const electronAPI: ElectronAPI = {
     return () => {
       ipcRenderer.removeListener('separation-progress', handler)
     }
-  }
+  },
+
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url)
 }
 
 if (process.contextIsolated) {

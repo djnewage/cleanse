@@ -1,4 +1,4 @@
-import { useReducer, useEffect, useCallback, useRef } from 'react'
+import { useReducer, useEffect, useCallback, useRef, useState } from 'react'
 import type {
   BatchAppState,
   BatchAppAction,
@@ -6,12 +6,16 @@ import type {
   SongEntry,
   CensorWord
 } from './types'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useQueueProcessor } from './hooks/useQueueProcessor'
 import FileUpload from './components/FileUpload'
 import QueueList from './components/QueueList'
 import BatchControls from './components/BatchControls'
 import SongDetailPanel from './components/SongDetailPanel'
 import HistoryList from './components/HistoryList'
+import AuthScreen from './components/AuthScreen'
+import UsageIndicator from './components/UsageIndicator'
+import PaywallModal from './components/PaywallModal'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -277,9 +281,12 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
   }
 }
 
-export default function App(): React.JSX.Element {
+function MainApp(): React.JSX.Element {
   const [state, dispatch] = useReducer(reducer, initialState)
   const exportingRef = useRef(false)
+  const [showPaywall, setShowPaywall] = useState(false)
+
+  const { isAuthenticated, isLoading: authLoading, checkCanProcess, recordUsage } = useAuth()
 
   // Use the queue processor hook
   const { retrySong } = useQueueProcessor({
@@ -378,9 +385,17 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
-  // Export all ready songs
+  // Export all ready songs with paywall check
   const handleExportAll = useCallback(async () => {
     if (exportingRef.current) return
+
+    // Check if user can process
+    const usageInfo = await checkCanProcess()
+    if (!usageInfo.canProcess) {
+      setShowPaywall(true)
+      return
+    }
+
     exportingRef.current = true
 
     const exportableSongs = state.songs.filter(
@@ -388,6 +403,14 @@ export default function App(): React.JSX.Element {
     )
 
     if (exportableSongs.length === 0) {
+      exportingRef.current = false
+      return
+    }
+
+    // Check if user has enough quota for all songs
+    if (!usageInfo.isSubscribed && exportableSongs.length > usageInfo.songsRemaining) {
+      // Show paywall if they're trying to export more than their remaining quota
+      setShowPaywall(true)
       exportingRef.current = false
       return
     }
@@ -402,6 +425,7 @@ export default function App(): React.JSX.Element {
     dispatch({ type: 'START_EXPORT_ALL', total: exportableSongs.length })
 
     let completed = 0
+    let successfulExports = 0
 
     for (const song of exportableSongs) {
       dispatch({ type: 'START_EXPORT', id: song.id })
@@ -430,6 +454,15 @@ export default function App(): React.JSX.Element {
 
         dispatch({ type: 'EXPORT_COMPLETE', id: song.id, outputPath: result.output_path })
 
+        // Record usage for this export
+        try {
+          await recordUsage()
+          successfulExports++
+        } catch (usageErr) {
+          console.error('Failed to record usage:', usageErr)
+          // Continue anyway - the export succeeded
+        }
+
         // Add to history
         const profanityCount = profaneWords.length
         const historyEntry = await window.electronAPI.addHistoryEntry({
@@ -454,7 +487,29 @@ export default function App(): React.JSX.Element {
 
     dispatch({ type: 'EXPORT_ALL_COMPLETE' })
     exportingRef.current = false
-  }, [state.songs])
+  }, [state.songs, checkCanProcess, recordUsage])
+
+  // Show paywall modal
+  const handleShowPaywall = useCallback(() => {
+    setShowPaywall(true)
+  }, [])
+
+  // If still loading auth, show loading screen
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block w-8 h-8 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin mb-3" />
+          <p className="text-zinc-400">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // If not authenticated, show auth screen
+  if (!isAuthenticated) {
+    return <AuthScreen />
+  }
 
   // Computed values
   const readyCount = state.songs.filter((s) => s.status === 'ready').length
@@ -473,15 +528,21 @@ export default function App(): React.JSX.Element {
             <h1 className="text-xl font-bold">Cleanse</h1>
             <p className="text-sm text-zinc-500">Batch censor profanity in audio files</p>
           </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`inline-block w-2 h-2 rounded-full ${
-                state.backendReady ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'
-              }`}
-            />
-            <span className="text-xs text-zinc-500">
-              {state.backendReady ? 'Backend ready' : 'Starting backend...'}
-            </span>
+          <div className="flex items-center gap-4">
+            {/* Usage indicator */}
+            <UsageIndicator onManageSubscription={handleShowPaywall} />
+
+            {/* Backend status */}
+            <div className="flex items-center gap-2">
+              <span
+                className={`inline-block w-2 h-2 rounded-full ${
+                  state.backendReady ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'
+                }`}
+              />
+              <span className="text-xs text-zinc-500">
+                {state.backendReady ? 'Ready' : 'Starting...'}
+              </span>
+            </div>
           </div>
         </div>
       </header>
@@ -535,6 +596,18 @@ export default function App(): React.JSX.Element {
           <HistoryList history={state.history} onDelete={handleDeleteHistoryEntry} />
         )}
       </main>
+
+      {/* Paywall modal */}
+      <PaywallModal isOpen={showPaywall} onClose={() => setShowPaywall(false)} />
     </div>
+  )
+}
+
+// Wrap the app with AuthProvider
+export default function App(): React.JSX.Element {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
   )
 }
