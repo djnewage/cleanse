@@ -1,0 +1,10 @@
+node_modules/
+out/
+dist/
+.DS_Store
+*.log
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+.env
+.eslintcache

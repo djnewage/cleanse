@@ -1,0 +1,35 @@
+appId: com.electron.clean-song-editor
+productName: Clean Song Editor
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!backend/*'
+  - '!scripts/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+extraResources:
+  - from: backend/
+    to: backend/
+    filter:
+      - '**/*'
+      - '!__pycache__/**'
+      - '!*.pyc'
+      - '!venv/**'
+asarUnpack:
+  - resources/**
+mac:
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: false
+dmg:
+  artifactName: ${name}-${version}.${ext}
+linux:
+  target:
+    - AppImage
+    - deb
+  maintainer: ''
+  category: Utility
+npmRebuild: false
