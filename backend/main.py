@@ -3,6 +3,13 @@ import os
 import sys
 import tempfile
 
+import imageio_ffmpeg
+from pydub import AudioSegment
+
+# Configure pydub to use the bundled ffmpeg (so end users don't need it installed)
+AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
+AudioSegment.ffprobe = imageio_ffmpeg.get_ffmpeg_exe()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
