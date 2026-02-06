@@ -14,6 +14,8 @@ export default function TurboToggle({
   isProcessing,
   onToggle
 }: TurboToggleProps): React.JSX.Element | null {
+  // Temporarily hidden — turbo mode not working correctly
+  return null
   const { isSubscribed } = useAuth()
 
   if (!isSubscribed) return null

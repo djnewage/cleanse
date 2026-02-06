@@ -30,10 +30,10 @@ def get_model(turbo: bool = False):
         compute_type = "int8"
 
     print(
-        f"[Transcribe] Loading faster-whisper 'small' model (device={device}, compute={compute_type}, turbo={turbo})...",
+        f"[Transcribe] Loading faster-whisper 'medium' model (device={device}, compute={compute_type}, turbo={turbo})...",
         file=sys.stderr,
     )
-    _model = WhisperModel("small", device=device, compute_type=compute_type)
+    _model = WhisperModel("medium", device=device, compute_type=compute_type)
     _model_turbo = turbo
     print("[Transcribe] Model loaded.", file=sys.stderr)
     return _model
