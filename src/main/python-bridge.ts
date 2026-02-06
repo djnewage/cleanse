@@ -42,10 +42,15 @@ function getBackendPath(): string {
   return path.join(app.getAppPath(), 'backend')
 }
 
-function getPythonPath(): string {
-  const backendDir = getBackendPath()
-  const venvPython = path.join(backendDir, 'venv', 'bin', 'python3')
-  return venvPython
+function getBackendCommand(): { command: string; args: string[] } {
+  if (app.isPackaged) {
+    // PyInstaller binary — standalone executable, no Python needed
+    const binary = path.join(process.resourcesPath, 'backend', 'cleanse-backend')
+    return { command: binary, args: ['--port', String(backendPort)] }
+  }
+  // Dev mode — use venv python + main.py
+  const pythonPath = path.join(getBackendPath(), 'venv', 'bin', 'python3')
+  return { command: pythonPath, args: ['main.py', '--port', String(backendPort)] }
 }
 
 async function pollHealth(port: number, timeoutMs: number = 30000): Promise<boolean> {
@@ -68,15 +73,15 @@ async function pollHealth(port: number, timeoutMs: number = 30000): Promise<bool
 
 export async function startPythonBackend(): Promise<number> {
   backendPort = await findFreePort()
-  const backendDir = getBackendPath()
-  const pythonPath = getPythonPath()
+  const { command, args } = getBackendCommand()
 
   console.log(`[Python] Starting backend on port ${backendPort}`)
-  console.log(`[Python] Backend dir: ${backendDir}`)
-  console.log(`[Python] Python path: ${pythonPath}`)
+  console.log(`[Python] Command: ${command} ${args.join(' ')}`)
+  console.log(`[Python] Packaged: ${app.isPackaged}`)
 
-  pythonProcess = spawn(pythonPath, ['main.py', '--port', String(backendPort)], {
-    cwd: backendDir,
+  pythonProcess = spawn(command, args, {
+    // PyInstaller binary doesn't need cwd; dev mode needs backend dir
+    cwd: app.isPackaged ? undefined : getBackendPath(),
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,

@@ -18,6 +18,15 @@ export interface DeviceInfo {
   turbo_supported: boolean
 }
 
+export interface UpdateInfo {
+  version: string
+  releaseNotes: string | { version: string; note: string }[] | undefined
+}
+
+export interface DownloadProgress {
+  percent: number
+}
+
 export interface ElectronAPI {
   selectAudioFile: () => Promise<string | null>
   selectAudioFiles: () => Promise<string[]>
@@ -37,6 +46,11 @@ export interface ElectronAPI {
   onBackendStatus: (callback: (status: BackendStatus) => void) => () => void
   onDeviceInfo: (callback: (info: DeviceInfo) => void) => () => void
   onSeparationProgress: (callback: (progress: SeparationProgress) => void) => () => void
+  onUpdateAvailable: (callback: (info: UpdateInfo) => void) => () => void
+  onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void
+  onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void
+  downloadUpdate: () => Promise<void>
+  installUpdate: () => Promise<void>
   getPathForFile: (file: File) => string
   getHistory: () => Promise<HistoryEntry[]>
   addHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => Promise<HistoryEntry>
@@ -143,6 +157,40 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.removeListener('separation-progress', handler)
     }
   },
+
+  onUpdateAvailable: (callback: (info: UpdateInfo) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: UpdateInfo): void => {
+      callback(info)
+    }
+    ipcRenderer.on('update-available', handler)
+    return () => {
+      ipcRenderer.removeListener('update-available', handler)
+    }
+  },
+
+  onDownloadProgress: (callback: (progress: DownloadProgress) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: DownloadProgress): void => {
+      callback(progress)
+    }
+    ipcRenderer.on('download-progress', handler)
+    return () => {
+      ipcRenderer.removeListener('download-progress', handler)
+    }
+  },
+
+  onUpdateDownloaded: (callback: (info: { version: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { version: string }): void => {
+      callback(info)
+    }
+    ipcRenderer.on('update-downloaded', handler)
+    return () => {
+      ipcRenderer.removeListener('update-downloaded', handler)
+    }
+  },
+
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+
+  installUpdate: () => ipcRenderer.invoke('install-update'),
 
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url)
 }

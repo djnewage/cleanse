@@ -16,6 +16,7 @@ import HistoryList from './components/HistoryList'
 import AuthScreen from './components/AuthScreen'
 import UsageIndicator from './components/UsageIndicator'
 import PaywallModal from './components/PaywallModal'
+import UpdateModal from './components/UpdateModal'
 import TurboToggle from './components/TurboToggle'
 
 function generateId(): string {
@@ -294,6 +295,13 @@ function MainApp(): React.JSX.Element {
   const [state, dispatch] = useReducer(reducer, initialState)
   const exportingRef = useRef(false)
   const [showPaywall, setShowPaywall] = useState(false)
+  const [updateState, setUpdateState] = useState<{
+    show: boolean
+    version: string
+    releaseNotes: string
+    downloadProgress: number | null
+    downloaded: boolean
+  }>({ show: false, version: '', releaseNotes: '', downloadProgress: null, downloaded: false })
 
   const { isAuthenticated, isLoading: authLoading, checkCanProcess, recordUsage } = useAuth()
 
@@ -336,6 +344,39 @@ function MainApp(): React.JSX.Element {
 
     return unsubscribe
   }, [state.backendReady])
+
+  // Listen for auto-update events
+  useEffect(() => {
+    const unsubAvailable = window.electronAPI.onUpdateAvailable((info) => {
+      let notes = ''
+      if (typeof info.releaseNotes === 'string') {
+        notes = info.releaseNotes
+      } else if (Array.isArray(info.releaseNotes)) {
+        notes = info.releaseNotes.map((n) => `${n.version}: ${n.note}`).join('\n')
+      }
+      setUpdateState({
+        show: true,
+        version: info.version,
+        releaseNotes: notes,
+        downloadProgress: null,
+        downloaded: false
+      })
+    })
+
+    const unsubProgress = window.electronAPI.onDownloadProgress((progress) => {
+      setUpdateState((prev) => ({ ...prev, downloadProgress: progress.percent }))
+    })
+
+    const unsubDownloaded = window.electronAPI.onUpdateDownloaded(() => {
+      setUpdateState((prev) => ({ ...prev, downloaded: true, downloadProgress: 100 }))
+    })
+
+    return () => {
+      unsubAvailable()
+      unsubProgress()
+      unsubDownloaded()
+    }
+  }, [])
 
   // Load history on mount
   useEffect(() => {
@@ -640,6 +681,21 @@ function MainApp(): React.JSX.Element {
 
       {/* Paywall modal */}
       <PaywallModal isOpen={showPaywall} onClose={() => setShowPaywall(false)} />
+
+      {/* Update modal */}
+      <UpdateModal
+        isOpen={updateState.show}
+        version={updateState.version}
+        releaseNotes={updateState.releaseNotes}
+        downloadProgress={updateState.downloadProgress}
+        downloaded={updateState.downloaded}
+        onDownload={() => {
+          setUpdateState((prev) => ({ ...prev, downloadProgress: 0 }))
+          window.electronAPI.downloadUpdate()
+        }}
+        onInstall={() => window.electronAPI.installUpdate()}
+        onClose={() => setUpdateState((prev) => ({ ...prev, show: false }))}
+      />
     </div>
   )
 }
