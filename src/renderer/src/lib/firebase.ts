@@ -49,4 +49,6 @@ export const createPortalSession = httpsCallable<
   { url: string }
 >(functions, 'createPortalSession')
 
+export const submitFeedback = httpsCallable<{ message: string }, { success: boolean }>(functions, 'submitFeedback')
+
 export default app

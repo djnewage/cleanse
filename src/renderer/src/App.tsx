@@ -16,6 +16,7 @@ import HistoryList from './components/HistoryList'
 import AuthScreen from './components/AuthScreen'
 import UsageIndicator from './components/UsageIndicator'
 import PaywallModal from './components/PaywallModal'
+import FeedbackModal from './components/FeedbackModal'
 import UpdateModal from './components/UpdateModal'
 import TurboToggle from './components/TurboToggle'
 
@@ -295,6 +296,7 @@ function MainApp(): React.JSX.Element {
   const [state, dispatch] = useReducer(reducer, initialState)
   const exportingRef = useRef(false)
   const [showPaywall, setShowPaywall] = useState(false)
+  const [showFeedback, setShowFeedback] = useState(false)
   const [updateState, setUpdateState] = useState<{
     show: boolean
     version: string
@@ -603,6 +605,14 @@ function MainApp(): React.JSX.Element {
             <p className="text-sm text-zinc-500">Batch censor profanity in audio files</p>
           </div>
           <div className="flex items-center gap-4">
+            {/* Feedback button */}
+            <button
+              onClick={() => setShowFeedback(true)}
+              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              Feedback
+            </button>
+
             {/* Usage indicator */}
             <UsageIndicator onManageSubscription={handleShowPaywall} />
 
@@ -678,6 +688,9 @@ function MainApp(): React.JSX.Element {
           <HistoryList history={state.history} onDelete={handleDeleteHistoryEntry} />
         )}
       </main>
+
+      {/* Feedback modal */}
+      <FeedbackModal isOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
       {/* Paywall modal */}
       <PaywallModal isOpen={showPaywall} onClose={() => setShowPaywall(false)} />

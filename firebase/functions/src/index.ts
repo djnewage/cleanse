@@ -344,3 +344,29 @@ function mapStripeStatus(stripeStatus: Stripe.Subscription.Status): UserDoc['sub
       return 'none';
   }
 }
+
+/**
+ * Callable function: Submit user feedback
+ */
+export const submitFeedback = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+  }
+
+  const message = data?.message;
+  if (!message || typeof message !== 'string' || message.trim().length === 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'Message is required');
+  }
+
+  const uid = context.auth.uid;
+  const email = context.auth.token.email || '';
+
+  await db.collection('feedback').add({
+    uid,
+    email,
+    message: message.trim(),
+    createdAt: admin.firestore.Timestamp.now()
+  });
+
+  return { success: true };
+});
