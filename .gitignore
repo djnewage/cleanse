@@ -8,3 +8,6 @@ backend/__pycache__/
 backend/*.pyc
 .env
 .eslintcache
+build/
+firebase/functions/lib/
+tsconfig.node.tsbuildinfo
