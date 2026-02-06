@@ -11,8 +11,9 @@ from transcribe import transcribe_audio
 from profanity_detector import flag_profanity
 from audio_processor import censor_audio, censor_audio_vocals_only
 from vocal_separator import separate as separate_vocals
+from device_info import detect_device
 
-app = FastAPI(title="Clean Song Editor Backend")
+app = FastAPI(title="Cleanse Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +25,7 @@ app.add_middleware(
 
 class TranscribeRequest(BaseModel):
     path: str
+    turbo: bool = False
 
 
 class CensorWord(BaseModel):
@@ -35,6 +37,7 @@ class CensorWord(BaseModel):
 
 class SeparateRequest(BaseModel):
     path: str
+    turbo: bool = False
 
 
 class CensorRequest(BaseModel):
@@ -50,13 +53,18 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/device-info")
+async def device_info():
+    return detect_device()
+
+
 @app.post("/transcribe")
 async def transcribe(req: TranscribeRequest):
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
     try:
-        result = transcribe_audio(req.path)
+        result = transcribe_audio(req.path, turbo=req.turbo)
         words_with_flags = flag_profanity(result["words"])
         return {
             "words": words_with_flags,
@@ -73,8 +81,8 @@ async def separate(req: SeparateRequest):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
     try:
-        output_dir = os.path.join(tempfile.gettempdir(), "clean-song-editor-separated")
-        result = separate_vocals(req.path, output_dir)
+        output_dir = os.path.join(tempfile.gettempdir(), "cleanse-separated")
+        result = separate_vocals(req.path, output_dir, turbo=req.turbo)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

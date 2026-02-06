@@ -1,5 +1,5 @@
 {
-  "name": "clean-song-editor",
+  "name": "cleanse",
   "version": "1.0.0",
   "description": "A desktop app for censoring profanity in audio files",
   "main": "./out/main/index.js",
@@ -22,7 +22,8 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "electron-log": "^5.4.3"
+    "electron-log": "^5.4.3",
+    "firebase": "^10.14.0"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",

@@ -1,20 +1,25 @@
 import { useCallback, useState } from 'react'
 
 interface FileUploadProps {
-  onFileSelected: (path: string, name: string) => void
+  onFilesSelected: (files: Array<{ path: string; name: string }>) => void
   disabled: boolean
 }
 
-export default function FileUpload({ onFileSelected, disabled }: FileUploadProps): React.JSX.Element {
+const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.wma']
+
+export default function FileUpload({ onFilesSelected, disabled }: FileUploadProps): React.JSX.Element {
   const [isDragging, setIsDragging] = useState(false)
 
   const handleClick = useCallback(async () => {
-    const filePath = await window.electronAPI.selectAudioFile()
-    if (filePath) {
-      const name = filePath.split('/').pop() || filePath
-      onFileSelected(filePath, name)
+    const filePaths = await window.electronAPI.selectAudioFiles()
+    if (filePaths.length > 0) {
+      const files = filePaths.map((path) => ({
+        path,
+        name: path.split('/').pop() || path
+      }))
+      onFilesSelected(files)
     }
-  }, [onFileSelected])
+  }, [onFilesSelected])
 
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
@@ -34,20 +39,25 @@ export default function FileUpload({ onFileSelected, disabled }: FileUploadProps
       setIsDragging(false)
       if (disabled) return
 
-      const files = e.dataTransfer.files
-      if (files.length > 0) {
-        const file = files[0]
-        const audioExts = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.wma']
+      const droppedFiles = e.dataTransfer.files
+      const validFiles: Array<{ path: string; name: string }> = []
+
+      for (let i = 0; i < droppedFiles.length; i++) {
+        const file = droppedFiles[i]
         const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
-        if (audioExts.includes(ext)) {
+        if (AUDIO_EXTENSIONS.includes(ext)) {
           const filePath = window.electronAPI.getPathForFile(file)
           if (filePath) {
-            onFileSelected(filePath, file.name)
+            validFiles.push({ path: filePath, name: file.name })
           }
         }
       }
+
+      if (validFiles.length > 0) {
+        onFilesSelected(validFiles)
+      }
     },
-    [disabled, onFileSelected]
+    [disabled, onFilesSelected]
   )
 
   return (
@@ -65,10 +75,13 @@ export default function FileUpload({ onFileSelected, disabled }: FileUploadProps
     >
       <div className="text-4xl mb-3">🎵</div>
       <p className="text-lg font-medium mb-1">
-        {disabled ? 'Waiting for backend...' : 'Drop an audio file here'}
+        {disabled ? 'Waiting for backend...' : 'Drop audio files here'}
       </p>
       <p className="text-sm opacity-60">
-        {disabled ? 'The Python backend is starting up' : 'or click to browse • MP3, WAV, OGG, M4A, FLAC'}
+        {disabled ? 'The Python backend is starting up' : 'or click to browse • Select multiple files'}
+      </p>
+      <p className="text-xs opacity-40 mt-2">
+        MP3, WAV, OGG, M4A, FLAC, AAC, WMA
       </p>
     </div>
   )
