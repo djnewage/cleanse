@@ -7,6 +7,18 @@ let pythonProcess: ChildProcess | null = null
 let backendPort: number = 8765
 let isReady = false
 
+export type ProgressCallback = (data: {
+  step: string
+  progress: number
+  message: string
+}) => void
+
+let progressCallback: ProgressCallback | null = null
+
+export function setProgressCallback(cb: ProgressCallback | null): void {
+  progressCallback = cb
+}
+
 function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -73,7 +85,25 @@ export async function startPythonBackend(): Promise<number> {
   })
 
   pythonProcess.stdout?.on('data', (data: Buffer) => {
-    console.log(`[Python] ${data.toString().trim()}`)
+    const lines = data.toString().split('\n')
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      try {
+        const parsed = JSON.parse(trimmed)
+        if (parsed.type === 'separation-progress' && progressCallback) {
+          progressCallback({
+            step: parsed.step,
+            progress: parsed.progress,
+            message: parsed.message
+          })
+          continue
+        }
+      } catch {
+        // Not JSON, fall through to normal logging
+      }
+      console.log(`[Python] ${trimmed}`)
+    }
   })
 
   pythonProcess.stderr?.on('data', (data: Buffer) => {
@@ -109,20 +139,42 @@ export async function startPythonBackend(): Promise<number> {
 
 export function stopPythonBackend(): void {
   if (pythonProcess) {
-    console.log('[Python] Stopping backend...')
+    // Remove all listeners BEFORE killing to prevent EIO crashes
+    // during shutdown (handlers firing console.log after Electron's stdout closes)
+    pythonProcess.stdout?.removeAllListeners()
+    pythonProcess.stderr?.removeAllListeners()
+    pythonProcess.removeAllListeners()
+
     pythonProcess.kill('SIGTERM')
 
-    // Force kill after 5 seconds
+    // Capture reference for the timeout since we null pythonProcess immediately
+    const proc = pythonProcess
     setTimeout(() => {
-      if (pythonProcess && !pythonProcess.killed) {
-        console.log('[Python] Force killing backend...')
-        pythonProcess.kill('SIGKILL')
+      try {
+        if (!proc.killed) proc.kill('SIGKILL')
+      } catch {
+        /* process already gone */
       }
     }, 5000)
 
     pythonProcess = null
     isReady = false
   }
+}
+
+export interface DeviceInfo {
+  gpu_available: boolean
+  device_type: string
+  device_name: string
+  turbo_supported: boolean
+}
+
+export async function getDeviceInfo(): Promise<DeviceInfo> {
+  const resp = await fetchBackend('/device-info')
+  if (!resp.ok) {
+    throw new Error('Failed to fetch device info')
+  }
+  return resp.json()
 }
 
 export function getBackendPort(): number {

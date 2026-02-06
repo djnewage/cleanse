@@ -1,5 +1,5 @@
-appId: com.electron.clean-song-editor
-productName: Clean Song Editor
+appId: com.electron.cleanse
+productName: Cleanse
 directories:
   buildResources: build
 files:

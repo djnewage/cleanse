@@ -5,6 +5,7 @@ interface UseQueueProcessorProps {
   songs: SongEntry[]
   currentlyProcessingId: string | null
   processingQueue: string[]
+  turboEnabled: boolean
   dispatch: React.Dispatch<BatchAppAction>
 }
 
@@ -12,6 +13,7 @@ export function useQueueProcessor({
   songs,
   currentlyProcessingId,
   processingQueue,
+  turboEnabled,
   dispatch
 }: UseQueueProcessorProps) {
   const isProcessingRef = useRef(false)
@@ -36,7 +38,7 @@ export function useQueueProcessor({
       try {
         // Step 1: Transcription
         dispatch({ type: 'START_TRANSCRIPTION', id: songId })
-        const transcriptionResult = await window.electronAPI.transcribeFile(song.filePath)
+        const transcriptionResult = await window.electronAPI.transcribeFile(song.filePath, turboEnabled)
         dispatch({
           type: 'TRANSCRIPTION_COMPLETE',
           id: songId,
@@ -47,7 +49,7 @@ export function useQueueProcessor({
 
         // Step 2: Vocal Separation
         dispatch({ type: 'START_SEPARATING', id: songId })
-        const separationResult = await window.electronAPI.separateAudio(song.filePath)
+        const separationResult = await window.electronAPI.separateAudio(song.filePath, turboEnabled)
         dispatch({
           type: 'SEPARATION_COMPLETE',
           id: songId,
@@ -64,7 +66,7 @@ export function useQueueProcessor({
         dispatch({ type: 'PROCESSING_COMPLETE', id: songId })
       }
     },
-    [songs, dispatch]
+    [songs, turboEnabled, dispatch]
   )
 
   // Watch the queue and process songs sequentially

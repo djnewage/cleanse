@@ -20,9 +20,18 @@ export default function UsageIndicator({ onManageSubscription }: UsageIndicatorP
     <div className="flex items-center gap-3">
       {/* Usage badge */}
       {isSubscribed ? (
-        <span className="px-2 py-1 text-xs font-medium bg-emerald-900/50 text-emerald-300 rounded-full">
-          Pro
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-1 text-xs font-medium bg-emerald-900/50 text-emerald-300 rounded-full">
+            Pro
+          </span>
+          <span className="text-xs text-zinc-500">
+            {userData?.subscription.lifetime
+              ? 'Lifetime'
+              : userData?.subscription.currentPeriodEnd
+                ? `Renews ${new Date(userData.subscription.currentPeriodEnd).toLocaleDateString()}`
+                : ''}
+          </span>
+        </div>
       ) : (
         <div className="flex items-center gap-2">
           <span className="text-xs text-zinc-500">

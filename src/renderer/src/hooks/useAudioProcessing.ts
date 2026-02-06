@@ -36,7 +36,12 @@ export function useAudioProcessing(dispatch: React.Dispatch<AppAction>, defaultC
           vocalsPath ?? undefined,
           accompanimentPath ?? undefined
         )
-        dispatch({ type: 'CENSORING_COMPLETE', outputPath: result.output_path })
+        const outputResult = result.output_path
+        console.log('[Censor] Backend returned output_path:', outputResult, 'Full result:', result)
+        if (!outputResult) {
+          console.warn('[Censor] output_path is falsy, cannot show player')
+        }
+        dispatch({ type: 'CENSORING_COMPLETE', outputPath: outputResult })
       } catch (err) {
         dispatch({ type: 'SET_ERROR', message: (err as Error).message })
       }

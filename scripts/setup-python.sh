@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BACKEND_DIR="$PROJECT_DIR/backend"
 
-echo "=== Clean Song Editor - Python Backend Setup ==="
+echo "=== Cleanse - Python Backend Setup ==="
 
 # Check for Python 3.10+
 if ! command -v python3 &> /dev/null; then

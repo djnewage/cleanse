@@ -10,14 +10,17 @@ interface PaywallModalProps {
 export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): React.JSX.Element | null {
   const { openCheckout, userData, isLoading } = useAuth()
   const [checkoutLoading, setCheckoutLoading] = useState(false)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
 
   const handleSubscribe = useCallback(async () => {
     setCheckoutLoading(true)
+    setCheckoutError(null)
     try {
       await openCheckout()
       // Don't close modal - user needs to complete checkout in browser
     } catch (err) {
       console.error('Checkout error:', err)
+      setCheckoutError(err instanceof Error ? err.message : 'Failed to open checkout')
     } finally {
       setCheckoutLoading(false)
     }
@@ -89,6 +92,10 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
             </li>
             <li className="flex items-center gap-2">
               <span className="text-green-400">✓</span>
+              Turbo Processing (GPU acceleration)
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="text-green-400">✓</span>
               Priority support
             </li>
             <li className="flex items-center gap-2">
@@ -97,6 +104,13 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
             </li>
           </ul>
         </div>
+
+        {/* Error message */}
+        {checkoutError && (
+          <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-300 text-sm">
+            {checkoutError}
+          </div>
+        )}
 
         {/* Subscribe button */}
         <button

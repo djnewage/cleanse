@@ -9,7 +9,8 @@ import {
   stopPythonBackend,
   isBackendReady,
   fetchBackend,
-  setProgressCallback
+  setProgressCallback,
+  getDeviceInfo
 } from './python-bridge'
 import { getHistory, addHistoryEntry, deleteHistoryEntry } from './history-store'
 
@@ -97,13 +98,13 @@ ipcMain.handle('get-backend-status', () => {
   return { ready: isBackendReady() }
 })
 
-ipcMain.handle('transcribe-file', async (_event, filePath: string) => {
+ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolean = false) => {
   try {
-    console.log('[IPC] transcribe-file called with:', filePath)
+    console.log('[IPC] transcribe-file called with:', filePath, 'turbo:', turbo)
     const resp = await fetchBackend('/transcribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: filePath })
+      body: JSON.stringify({ path: filePath, turbo })
     })
 
     if (!resp.ok) {
@@ -125,9 +126,9 @@ ipcMain.handle('transcribe-file', async (_event, filePath: string) => {
   }
 })
 
-ipcMain.handle('separate-audio', async (_event, filePath: string) => {
+ipcMain.handle('separate-audio', async (_event, filePath: string, turbo: boolean = false) => {
   try {
-    console.log('[IPC] separate-audio called with:', filePath)
+    console.log('[IPC] separate-audio called with:', filePath, 'turbo:', turbo)
     setProgressCallback((data) => {
       mainWindow?.webContents.send('separation-progress', data)
     })
@@ -135,7 +136,7 @@ ipcMain.handle('separate-audio', async (_event, filePath: string) => {
     const resp = await fetchBackend('/separate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: filePath })
+      body: JSON.stringify({ path: filePath, turbo })
     })
 
     if (!resp.ok) {
@@ -220,6 +221,15 @@ ipcMain.handle('delete-history-entry', (_event, id: string) => {
 
 ipcMain.handle('open-external', (_event, url: string) => {
   return shell.openExternal(url)
+})
+
+ipcMain.handle('get-device-info', async () => {
+  try {
+    return await getDeviceInfo()
+  } catch (err) {
+    console.error('[IPC] Failed to get device info:', err)
+    return { gpu_available: false, device_type: 'cpu', device_name: 'CPU', turbo_supported: false }
+  }
 })
 
 // --- App Lifecycle ---
@@ -327,6 +337,14 @@ app.whenReady().then(async () => {
   try {
     await startPythonBackend()
     mainWindow?.webContents.send('backend-status', { ready: true })
+
+    // Fetch and send device info to renderer
+    try {
+      const deviceInfo = await getDeviceInfo()
+      mainWindow?.webContents.send('device-info', deviceInfo)
+    } catch (err) {
+      console.error('[Main] Failed to fetch device info:', err)
+    }
   } catch (err) {
     console.error('Failed to start Python backend:', err)
     mainWindow?.webContents.send('backend-status', { ready: false, error: (err as Error).message })

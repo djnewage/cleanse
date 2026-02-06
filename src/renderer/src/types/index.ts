@@ -34,6 +34,13 @@ export interface HistoryEntry {
   language: string
 }
 
+export interface DeviceInfo {
+  gpu_available: boolean
+  device_type: string
+  device_name: string
+  turbo_supported: boolean
+}
+
 // Batch Processing Types
 export type SongStatus = 'pending' | 'transcribing' | 'separating' | 'ready' | 'exporting' | 'completed' | 'error'
 
@@ -64,6 +71,8 @@ export interface BatchAppState {
   history: HistoryEntry[]
   isExportingAll: boolean
   exportProgress: { completed: number; total: number } | null
+  turboEnabled: boolean
+  deviceInfo: DeviceInfo | null
 }
 
 export type BatchAppAction =
@@ -95,6 +104,8 @@ export type BatchAppAction =
   | { type: 'SET_HISTORY'; history: HistoryEntry[] }
   | { type: 'ADD_HISTORY_ENTRY'; entry: HistoryEntry }
   | { type: 'DELETE_HISTORY_ENTRY'; id: string }
+  | { type: 'SET_DEVICE_INFO'; deviceInfo: DeviceInfo }
+  | { type: 'SET_TURBO_ENABLED'; enabled: boolean }
 
 // Legacy single-file types (for backwards compatibility)
 export type AppStatus = 'idle' | 'loading-backend' | 'ready' | 'transcribing' | 'separating' | 'censoring' | 'error'
@@ -141,6 +152,7 @@ export type SubscriptionStatus = 'none' | 'active' | 'canceled' | 'past_due'
 
 export interface UserSubscription {
   status: SubscriptionStatus
+  lifetime: boolean
   stripeCustomerId: string | null
   stripeSubscriptionId: string | null
   currentPeriodEnd: number | null

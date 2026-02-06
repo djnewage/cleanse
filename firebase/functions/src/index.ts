@@ -1,18 +1,23 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
+import { defineSecret, defineString } from 'firebase-functions/params';
 
 admin.initializeApp();
 
 const db = admin.firestore();
 
-// Initialize Stripe (API key will be set via Firebase config)
+const stripeSecretKey = defineSecret('STRIPE_SECRET_KEY');
+const stripeWebhookSecret = defineSecret('STRIPE_WEBHOOK_SECRET');
+const stripePriceId = defineString('STRIPE_PRICE_ID');
+
+// Initialize Stripe
 const getStripe = () => {
-  const stripeKey = process.env.STRIPE_SECRET_KEY || functions.config().stripe?.secret_key;
+  const stripeKey = stripeSecretKey.value();
   if (!stripeKey) {
     throw new Error('Stripe secret key not configured');
   }
-  return new Stripe(stripeKey, { apiVersion: '2024-12-18.acacia' });
+  return new Stripe(stripeKey, { apiVersion: '2026-01-28.clover' });
 };
 
 // User document interface
@@ -22,6 +27,7 @@ interface UserDoc {
   songsProcessed: number;
   subscription: {
     status: 'none' | 'active' | 'canceled' | 'past_due';
+    lifetime?: boolean;
     stripeCustomerId: string | null;
     stripeSubscriptionId: string | null;
     currentPeriodEnd: admin.firestore.Timestamp | null;
@@ -73,6 +79,7 @@ export const incrementUsage = functions.https.onCall(async (data, context) => {
 
     // Check if user can process (has subscription or under free limit)
     const canProcess =
+      userData.subscription.lifetime ||
       userData.subscription.status === 'active' ||
       userData.songsProcessed < FREE_SONGS_LIMIT;
 
@@ -109,23 +116,24 @@ export const canProcessSong = functions.https.onCall(async (data, context) => {
   const userData = userDoc.data() as UserDoc;
 
   const canProcess =
+    userData.subscription.lifetime ||
     userData.subscription.status === 'active' ||
     userData.songsProcessed < FREE_SONGS_LIMIT;
 
   return {
     canProcess,
     songsProcessed: userData.songsProcessed,
-    songsRemaining: userData.subscription.status === 'active'
+    songsRemaining: (userData.subscription.lifetime || userData.subscription.status === 'active')
       ? -1 // unlimited
       : Math.max(0, FREE_SONGS_LIMIT - userData.songsProcessed),
-    isSubscribed: userData.subscription.status === 'active'
+    isSubscribed: userData.subscription.lifetime || userData.subscription.status === 'active'
   };
 });
 
 /**
  * Callable function: Create a Stripe Checkout session
  */
-export const createCheckoutSession = functions.https.onCall(async (data, context) => {
+export const createCheckoutSession = functions.runWith({ secrets: [stripeSecretKey] }).https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
   }
@@ -156,7 +164,7 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
   }
 
   // Create checkout session
-  const priceId = process.env.STRIPE_PRICE_ID || functions.config().stripe?.price_id;
+  const priceId = stripePriceId.value();
   if (!priceId) {
     throw new functions.https.HttpsError('failed-precondition', 'Stripe price not configured');
   }
@@ -182,7 +190,7 @@ export const createCheckoutSession = functions.https.onCall(async (data, context
 /**
  * Callable function: Create a Stripe Customer Portal session
  */
-export const createPortalSession = functions.https.onCall(async (data, context) => {
+export const createPortalSession = functions.runWith({ secrets: [stripeSecretKey] }).https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
   }
@@ -213,9 +221,9 @@ export const createPortalSession = functions.https.onCall(async (data, context) 
 /**
  * HTTP endpoint: Stripe webhook handler
  */
-export const stripeWebhook = functions.https.onRequest(async (req, res) => {
+export const stripeWebhook = functions.runWith({ secrets: [stripeSecretKey, stripeWebhookSecret] }).https.onRequest(async (req, res) => {
   const stripe = getStripe();
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || functions.config().stripe?.webhook_secret;
+  const webhookSecret = stripeWebhookSecret.value();
 
   if (!webhookSecret) {
     console.error('Stripe webhook secret not configured');
@@ -281,12 +289,15 @@ async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
   const userDoc = usersSnapshot.docs[0];
   const status = mapStripeStatus(subscription.status);
 
+  // Get current_period_end from the first subscription item
+  const currentPeriodEnd = subscription.items?.data?.[0]?.current_period_end;
+
   await userDoc.ref.update({
     'subscription.status': status,
     'subscription.stripeSubscriptionId': subscription.id,
-    'subscription.currentPeriodEnd': admin.firestore.Timestamp.fromMillis(
-      subscription.current_period_end * 1000
-    )
+    'subscription.currentPeriodEnd': currentPeriodEnd
+      ? admin.firestore.Timestamp.fromMillis(currentPeriodEnd * 1000)
+      : null
   });
 
   console.log(`Updated subscription for user ${userDoc.id}: ${status}`);

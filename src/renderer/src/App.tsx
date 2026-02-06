@@ -16,6 +16,7 @@ import HistoryList from './components/HistoryList'
 import AuthScreen from './components/AuthScreen'
 import UsageIndicator from './components/UsageIndicator'
 import PaywallModal from './components/PaywallModal'
+import TurboToggle from './components/TurboToggle'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -30,7 +31,9 @@ const initialState: BatchAppState = {
   expandedSongId: null,
   history: [],
   isExportingAll: false,
-  exportProgress: null
+  exportProgress: null,
+  turboEnabled: false,
+  deviceInfo: null
 }
 
 function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
@@ -276,6 +279,12 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
     case 'DELETE_HISTORY_ENTRY':
       return { ...state, history: state.history.filter((e) => e.id !== action.id) }
 
+    case 'SET_DEVICE_INFO':
+      return { ...state, deviceInfo: action.deviceInfo }
+
+    case 'SET_TURBO_ENABLED':
+      return { ...state, turboEnabled: action.enabled }
+
     default:
       return state
   }
@@ -293,6 +302,7 @@ function MainApp(): React.JSX.Element {
     songs: state.songs,
     currentlyProcessingId: state.currentlyProcessingId,
     processingQueue: state.processingQueue,
+    turboEnabled: state.turboEnabled,
     dispatch
   })
 
@@ -308,6 +318,24 @@ function MainApp(): React.JSX.Element {
 
     return unsubscribe
   }, [])
+
+  // Listen for device info (main process sends this after backend is ready)
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onDeviceInfo((info) => {
+      dispatch({ type: 'SET_DEVICE_INFO', deviceInfo: info })
+    })
+
+    // Fetch only if backend is already ready (handles late-mount / hot-reload)
+    if (state.backendReady) {
+      window.electronAPI.getDeviceInfo().then((info) => {
+        dispatch({ type: 'SET_DEVICE_INFO', deviceInfo: info })
+      }).catch(() => {
+        // Will get it from the event
+      })
+    }
+
+    return unsubscribe
+  }, [state.backendReady])
 
   // Load history on mount
   useEffect(() => {
@@ -489,6 +517,11 @@ function MainApp(): React.JSX.Element {
     exportingRef.current = false
   }, [state.songs, checkCanProcess, recordUsage])
 
+  // Toggle turbo mode
+  const handleToggleTurbo = useCallback((enabled: boolean) => {
+    dispatch({ type: 'SET_TURBO_ENABLED', enabled })
+  }, [])
+
   // Show paywall modal
   const handleShowPaywall = useCallback(() => {
     setShowPaywall(true)
@@ -531,6 +564,14 @@ function MainApp(): React.JSX.Element {
           <div className="flex items-center gap-4">
             {/* Usage indicator */}
             <UsageIndicator onManageSubscription={handleShowPaywall} />
+
+            {/* Turbo toggle */}
+            <TurboToggle
+              turboEnabled={state.turboEnabled}
+              deviceInfo={state.deviceInfo}
+              isProcessing={isProcessing}
+              onToggle={handleToggleTurbo}
+            />
 
             {/* Backend status */}
             <div className="flex items-center gap-2">

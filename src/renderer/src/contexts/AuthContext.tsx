@@ -86,6 +86,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
             songsProcessed: data.songsProcessed || 0,
             subscription: {
               status: data.subscription?.status || 'none',
+              lifetime: data.subscription?.lifetime || false,
               stripeCustomerId: data.subscription?.stripeCustomerId || null,
               stripeSubscriptionId: data.subscription?.stripeSubscriptionId || null,
               currentPeriodEnd: data.subscription?.currentPeriodEnd?.toMillis?.() || null
@@ -177,7 +178,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       console.error('Error checking usage:', err)
       // Fallback to local data
       if (userData) {
-        const isSubscribed = userData.subscription.status === 'active'
+        const isSubscribed = userData.subscription.lifetime || userData.subscription.status === 'active'
         const canProcess = isSubscribed || userData.songsProcessed < 5
         return {
           canProcess,
@@ -239,7 +240,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
 
   // Computed values
   const isAuthenticated = !!user
-  const isSubscribed = userData?.subscription.status === 'active'
+  const isSubscribed = userData?.subscription.lifetime || userData?.subscription.status === 'active'
   const songsRemaining = isSubscribed ? -1 : Math.max(0, 5 - (userData?.songsProcessed || 0))
 
   const value: AuthContextType = {
