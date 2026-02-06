@@ -1,8 +1,10 @@
-import { useCallback } from 'react'
+import React, { useCallback } from 'react'
 import type { TranscribedWord, CensorType } from '../types'
 
-const CENSOR_CYCLE: CensorType[] = ['mute', 'beep', 'reverse']
-const CENSOR_LABEL: Record<CensorType, string> = { mute: 'M', beep: 'B', reverse: 'R' }
+export type PlaybackStatus = 'upcoming' | 'active' | 'played'
+
+const CENSOR_CYCLE: CensorType[] = ['mute', 'beep', 'reverse', 'tape_stop']
+const CENSOR_LABEL: Record<CensorType, string> = { mute: 'M', beep: 'B', reverse: 'R', tape_stop: 'T' }
 
 interface WordItemProps {
   word: TranscribedWord
@@ -10,14 +12,18 @@ interface WordItemProps {
   defaultCensorType: CensorType
   onToggle: (index: number) => void
   onSetCensorType: (index: number, type: CensorType) => void
+  playbackStatus?: PlaybackStatus
+  itemRef?: React.Ref<HTMLButtonElement>
 }
 
-export default function WordItem({
+function WordItemInner({
   word,
   index,
   defaultCensorType,
   onToggle,
-  onSetCensorType
+  onSetCensorType,
+  playbackStatus,
+  itemRef
 }: WordItemProps): React.JSX.Element {
   const handleClick = useCallback(() => {
     onToggle(index)
@@ -43,18 +49,33 @@ export default function WordItem({
   const effectiveType = word.censor_type ?? defaultCensorType
   const hasOverride = word.censor_type !== undefined
 
+  // Determine styling based on playback status
+  let statusClasses: string
+  if (playbackStatus === 'active') {
+    statusClasses = word.is_profanity
+      ? 'bg-amber-500/70 text-white ring-1 ring-amber-400/60 shadow-[0_0_8px_rgba(245,158,11,0.4)] scale-105 karaoke-active'
+      : 'bg-sky-500/60 text-white shadow-[0_0_8px_rgba(56,189,248,0.35)] scale-105 karaoke-active'
+  } else if (playbackStatus === 'played') {
+    statusClasses = word.is_profanity
+      ? 'bg-red-900/40 text-red-400/70 ring-1 ring-red-500/30'
+      : 'bg-sky-900/30 text-sky-300/50'
+  } else {
+    // upcoming or undefined (no playback)
+    statusClasses = word.is_profanity
+      ? 'bg-red-900/60 text-red-300 hover:bg-red-800/60 ring-1 ring-red-500/50'
+      : 'bg-zinc-800/40 text-zinc-300 hover:bg-zinc-700/50'
+  }
+
   return (
     <button
+      ref={itemRef}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
       title={`${formatTime(word.start)} - ${formatTime(word.end)} (${Math.round(word.confidence * 100)}%)${word.is_profanity ? `\nCensor: ${effectiveType}${hasOverride ? '' : ' (default)'}\nRight-click to change` : ''}`}
       className={`
-        inline-flex items-baseline gap-0.5 px-1.5 py-0.5 m-0.5 rounded text-sm font-mono transition-colors
-        ${
-          word.is_profanity
-            ? 'bg-red-900/60 text-red-300 hover:bg-red-800/60 ring-1 ring-red-500/50'
-            : 'bg-zinc-800/40 text-zinc-300 hover:bg-zinc-700/50'
-        }
+        inline-flex items-baseline gap-0.5 px-1.5 py-0.5 m-0.5 rounded text-sm font-mono
+        transition-all duration-200 ease-out
+        ${statusClasses}
       `}
     >
       {word.word}
@@ -70,3 +91,16 @@ export default function WordItem({
     </button>
   )
 }
+
+const WordItem = React.memo(WordItemInner, (prev, next) => {
+  return (
+    prev.word === next.word &&
+    prev.index === next.index &&
+    prev.defaultCensorType === next.defaultCensorType &&
+    prev.onToggle === next.onToggle &&
+    prev.onSetCensorType === next.onSetCensorType &&
+    prev.playbackStatus === next.playbackStatus
+  )
+})
+
+export default WordItem

@@ -1,5 +1,8 @@
+import { useRef, useEffect, useCallback } from 'react'
 import type { TranscribedWord, CensorType } from '../types'
+import type { PlaybackStatus } from './WordItem'
 import WordItem from './WordItem'
+import { useActiveWordIndex } from '../hooks/useActiveWordIndex'
 
 interface TranscriptEditorProps {
   words: TranscribedWord[]
@@ -8,6 +11,8 @@ interface TranscriptEditorProps {
   defaultCensorType: CensorType
   language: string
   duration: number
+  currentTime?: number
+  isPlaying?: boolean
 }
 
 export default function TranscriptEditor({
@@ -16,14 +21,44 @@ export default function TranscriptEditor({
   onSetCensorType,
   defaultCensorType,
   language,
-  duration
+  duration,
+  currentTime = 0,
+  isPlaying = false
 }: TranscriptEditorProps): React.JSX.Element {
   const profanityCount = words.filter((w) => w.is_profanity).length
+  const activeIndex = useActiveWordIndex(words, currentTime)
+  const wordRefsMap = useRef<Map<number, HTMLButtonElement>>(new Map())
 
   const formatDuration = (seconds: number): string => {
     const m = Math.floor(seconds / 60)
     const s = Math.floor(seconds % 60)
     return `${m}:${s.toString().padStart(2, '0')}`
+  }
+
+  // Auto-scroll to active word
+  useEffect(() => {
+    if (activeIndex < 0 || !isPlaying) return
+    const el = wordRefsMap.current.get(activeIndex)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [activeIndex, isPlaying])
+
+  const setWordRef = useCallback((index: number, node: HTMLButtonElement | null) => {
+    if (node) {
+      wordRefsMap.current.set(index, node)
+    } else {
+      wordRefsMap.current.delete(index)
+    }
+  }, [])
+
+  const getPlaybackStatus = (word: TranscribedWord, idx: number): PlaybackStatus | undefined => {
+    // Only compute playback status when audio has started (currentTime > 0 or is playing)
+    if (currentTime <= 0 && !isPlaying) return undefined
+
+    if (idx === activeIndex) return 'active'
+    if (word.end <= currentTime) return 'played'
+    return 'upcoming'
   }
 
   return (
@@ -61,6 +96,8 @@ export default function TranscriptEditor({
               defaultCensorType={defaultCensorType}
               onToggle={onToggleProfanity}
               onSetCensorType={onSetCensorType}
+              playbackStatus={getPlaybackStatus(word, idx)}
+              itemRef={(node) => setWordRef(idx, node)}
             />
           ))}
         </div>

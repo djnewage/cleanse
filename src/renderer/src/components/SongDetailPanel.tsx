@@ -1,6 +1,7 @@
 import type { SongEntry, CensorType } from '../types'
 import TranscriptEditor from './TranscriptEditor'
 import AudioPreview from './AudioPreview'
+import { usePlaybackTime } from '../hooks/usePlaybackTime'
 
 interface SongDetailPanelProps {
   song: SongEntry
@@ -19,6 +20,8 @@ export default function SongDetailPanel({
   onMarkReviewed,
   onClose
 }: SongDetailPanelProps): React.JSX.Element {
+  const { currentTime, isPlaying, audioRef } = usePlaybackTime()
+
   const handleToggleProfanity = (index: number) => {
     onToggleProfanity(song.id, index)
   }
@@ -28,6 +31,9 @@ export default function SongDetailPanel({
   }
 
   const profanityCount = song.words.filter((w) => w.is_profanity).length
+
+  // Show audio player during review (ready) or after export (completed)
+  const showAudioPreview = song.status === 'ready' || song.censoredFilePath !== null
 
   return (
     <div className="mt-2 border-t border-zinc-800 pt-4 pb-2 px-4 space-y-4">
@@ -68,6 +74,8 @@ export default function SongDetailPanel({
           defaultCensorType={song.defaultCensorType}
           language={song.language}
           duration={song.duration}
+          currentTime={currentTime}
+          isPlaying={isPlaying}
         />
       )}
 
@@ -75,7 +83,7 @@ export default function SongDetailPanel({
       <div className="flex items-center gap-4">
         <span className="text-xs text-zinc-500">Censor type for this song:</span>
         <div className="flex rounded-md overflow-hidden border border-zinc-700">
-          {(['mute', 'beep', 'reverse'] as CensorType[]).map((type) => (
+          {(['mute', 'beep', 'reverse', 'tape_stop'] as CensorType[]).map((type) => (
             <button
               key={type}
               onClick={() => onSetSongCensorType(song.id, type)}
@@ -102,13 +110,14 @@ export default function SongDetailPanel({
         {song.censoredFilePath && <span className="text-emerald-400">Exported</span>}
       </div>
 
-      {/* Audio preview if exported */}
-      {song.censoredFilePath && (
+      {/* Audio preview: shown during review (ready) and after export */}
+      {showAudioPreview && (
         <div className="pt-2">
           <AudioPreview
             originalPath={song.filePath}
             censoredPath={song.censoredFilePath}
-            onClearFile={() => {}}
+            audioRef={audioRef}
+            onClearFile={song.censoredFilePath ? () => {} : undefined}
           />
         </div>
       )}

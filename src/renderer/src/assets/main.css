@@ -17,3 +17,13 @@ body {
 .no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* Karaoke active word glow pulse */
+@keyframes karaoke-glow {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.15); }
+}
+
+.karaoke-active {
+  animation: karaoke-glow 1.2s ease-in-out infinite;
+}

@@ -1,28 +1,51 @@
+import { useCallback } from 'react'
+
 interface AudioPreviewProps {
   originalPath: string | null
   censoredPath: string | null
   onClearFile?: () => void
+  audioRef?: (node: HTMLAudioElement | null) => void
 }
 
 export default function AudioPreview({
   originalPath,
   censoredPath,
-  onClearFile
+  onClearFile,
+  audioRef
 }: AudioPreviewProps): React.JSX.Element {
+  // The primary audio element is censored if available, else original.
+  // We use a combined ref callback to attach the external audioRef to the primary element.
+  const primaryPath = censoredPath ?? originalPath
+  const secondaryPath = censoredPath ? originalPath : null
+
+  const primaryRefCallback = useCallback(
+    (node: HTMLAudioElement | null) => {
+      audioRef?.(node)
+    },
+    [audioRef]
+  )
+
   return (
     <div className="flex flex-col gap-4">
-      {originalPath && (
+      {secondaryPath && (
         <div>
           <label className="block text-sm font-medium text-zinc-400 mb-1">Original</label>
-          <audio key={originalPath} controls preload="auto" className="w-full" src={`media://${originalPath}`} />
+          <audio key={secondaryPath} controls preload="auto" className="w-full" src={`media://${secondaryPath}`} />
         </div>
       )}
-      {censoredPath && (
+      {primaryPath && (
         <div>
-          <label className="block text-sm font-medium text-green-400 mb-1">
-            Censored Version
+          <label className={`block text-sm font-medium mb-1 ${censoredPath ? 'text-green-400' : 'text-zinc-400'}`}>
+            {censoredPath ? 'Censored Version' : 'Original'}
           </label>
-          <audio key={censoredPath} controls preload="auto" className="w-full" src={`media://${censoredPath}`} />
+          <audio
+            ref={primaryRefCallback}
+            key={primaryPath}
+            controls
+            preload="auto"
+            className="w-full"
+            src={`media://${primaryPath}`}
+          />
         </div>
       )}
       {censoredPath && onClearFile && (

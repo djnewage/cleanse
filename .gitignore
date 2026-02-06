@@ -8,6 +8,9 @@ backend/__pycache__/
 backend/*.pyc
 .env
 .eslintcache
-build/
+build/*
+!build/icon.png
+!build/entitlements.mac.plist
+!build/entitlements.mac.inherit.plist
 firebase/functions/lib/
 tsconfig.node.tsbuildinfo

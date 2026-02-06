@@ -23,6 +23,25 @@ def _make_replacement(audio: AudioSegment, start_ms: int, end_ms: int, censor_ty
         return beep
     elif censor_type == "reverse":
         return audio[start_ms:end_ms].reverse()
+    elif censor_type == "tape_stop":
+        segment = audio[start_ms:end_ms]
+        n_chunks = 20
+        chunk_len = len(segment) // n_chunks
+        if chunk_len < 10:
+            return AudioSegment.silent(duration=duration_ms)
+        result = AudioSegment.empty()
+        for i in range(n_chunks):
+            s = i * chunk_len
+            e = s + chunk_len if i < n_chunks - 1 else len(segment)
+            chunk = segment[s:e]
+            speed = max(0.15, 1.0 - (i / n_chunks) * 0.85)
+            new_rate = int(chunk.frame_rate * speed)
+            slowed = chunk._spawn(chunk.raw_data, overrides={"frame_rate": max(new_rate, 1000)})
+            slowed = slowed.set_frame_rate(segment.frame_rate)
+            result += slowed
+        if len(result) > duration_ms:
+            result = result[:duration_ms]
+        return result.fade_out(min(duration_ms, 100))
     else:  # mute or unknown
         return AudioSegment.silent(duration=duration_ms)
 

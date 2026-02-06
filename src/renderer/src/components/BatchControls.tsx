@@ -16,7 +16,8 @@ interface BatchControlsProps {
 const censorOptions: { value: CensorType; label: string }[] = [
   { value: 'mute', label: 'Mute' },
   { value: 'beep', label: 'Beep' },
-  { value: 'reverse', label: 'Reverse' }
+  { value: 'reverse', label: 'Reverse' },
+  { value: 'tape_stop', label: 'Tape Stop' }
 ]
 
 export default function BatchControls({

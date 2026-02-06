@@ -14,7 +14,7 @@ export interface CensorWord {
   censor_type: CensorType
 }
 
-export type CensorType = 'mute' | 'beep' | 'reverse'
+export type CensorType = 'mute' | 'beep' | 'reverse' | 'tape_stop'
 
 export interface SeparationProgress {
   step: string

@@ -32,7 +32,7 @@ class CensorWord(BaseModel):
     word: str
     start: float
     end: float
-    censor_type: str = "mute"  # "mute", "beep", or "reverse"
+    censor_type: str = "mute"  # "mute", "beep", "reverse", or "tape_stop"
 
 
 class SeparateRequest(BaseModel):
