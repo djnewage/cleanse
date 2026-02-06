@@ -6,6 +6,8 @@ dist/
 backend/venv/
 backend/__pycache__/
 backend/*.pyc
+backend/dist/
+backend/build/
 .env
 .eslintcache
 build/*

@@ -4,6 +4,8 @@ import { createReadStream } from 'fs'
 import { stat } from 'fs/promises'
 import { Readable } from 'stream'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { autoUpdater } from 'electron-updater'
+import log from 'electron-log'
 import {
   startPythonBackend,
   stopPythonBackend,
@@ -13,6 +15,10 @@ import {
   getDeviceInfo
 } from './python-bridge'
 import { getHistory, addHistoryEntry, deleteHistoryEntry } from './history-store'
+
+// Configure auto-updater logging
+autoUpdater.logger = log
+autoUpdater.autoDownload = false
 
 let mainWindow: BrowserWindow | null = null
 
@@ -232,6 +238,43 @@ ipcMain.handle('get-device-info', async () => {
   }
 })
 
+// --- Auto-Updater ---
+
+function setupAutoUpdater(): void {
+  autoUpdater.on('update-available', (info) => {
+    log.info('[AutoUpdater] Update available:', info.version)
+    mainWindow?.webContents.send('update-available', {
+      version: info.version,
+      releaseNotes: info.releaseNotes
+    })
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow?.webContents.send('download-progress', {
+      percent: progress.percent
+    })
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    log.info('[AutoUpdater] Update downloaded:', info.version)
+    mainWindow?.webContents.send('update-downloaded', {
+      version: info.version
+    })
+  })
+
+  autoUpdater.on('error', (err) => {
+    log.error('[AutoUpdater] Error:', err)
+  })
+}
+
+ipcMain.handle('download-update', () => {
+  return autoUpdater.downloadUpdate()
+})
+
+ipcMain.handle('install-update', () => {
+  autoUpdater.quitAndInstall()
+})
+
 // --- App Lifecycle ---
 
 function getAudioMimeType(filePath: string): string {
@@ -332,6 +375,12 @@ app.whenReady().then(async () => {
   })
 
   createWindow()
+
+  // Set up auto-updater and check for updates
+  setupAutoUpdater()
+  autoUpdater.checkForUpdates().catch((err) => {
+    log.error('[AutoUpdater] Failed to check for updates:', err)
+  })
 
   // Start Python backend after window is created
   try {

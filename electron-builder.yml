@@ -12,28 +12,39 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 extraResources:
-  - from: backend/
+  - from: backend/dist/cleanse-backend/
     to: backend/
     filter:
       - '**/*'
-      - '!__pycache__/**'
-      - '!*.pyc'
-      - '!venv/**'
 asarUnpack:
   - resources/**
+afterSign: scripts/notarize.js
 mac:
   target:
     - target: dmg
-      arch: universal
+      arch: arm64
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
-  notarize: true
 dmg:
   artifactName: ${name}-${version}.${ext}
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
 linux:
   target:
     - AppImage
     - deb
   maintainer: ''
   category: Utility
+publish:
+  provider: github
+  owner: djnewage
+  repo: cleanse
 npmRebuild: false
