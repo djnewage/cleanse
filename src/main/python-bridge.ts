@@ -218,7 +218,14 @@ export function isBackendReady(): boolean {
 }
 
 export function isBackendAlive(): boolean {
-  return pythonProcess !== null && !pythonProcess.killed
+  if (pythonProcess === null) return false
+  if (pythonProcess.exitCode !== null || pythonProcess.signalCode !== null) return false
+  try {
+    process.kill(pythonProcess.pid!, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function getBackendLogPath(): string | null {

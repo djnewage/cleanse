@@ -18,14 +18,15 @@ import {
 } from './python-bridge'
 import { getHistory, addHistoryEntry, deleteHistoryEntry } from './history-store'
 
-function describeBackendError(originalMsg: string): string {
+async function describeBackendError(originalMsg: string): Promise<string> {
+  // Yield to event loop so the child process 'exit' event can propagate
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  const logPath = getBackendLogPath()
+  const logHint = logPath ? ` Check logs: ${logPath}` : ''
   if (!isBackendAlive()) {
-    const logPath = getBackendLogPath()
-    return logPath
-      ? `Backend process crashed. Logs: ${logPath}`
-      : 'Backend process crashed unexpectedly'
+    return `Backend process crashed.${logHint}`
   }
-  return originalMsg
+  return `${originalMsg}${logHint}`
 }
 
 // Configure auto-updater logging
@@ -140,7 +141,7 @@ ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolea
     return await resp.json()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    throw new Error(`Transcription error: ${describeBackendError(msg)}`)
+    throw new Error(`Transcription error: ${await describeBackendError(msg)}`)
   }
 })
 
@@ -172,7 +173,7 @@ ipcMain.handle('separate-audio', async (_event, filePath: string, turbo: boolean
     return await resp.json()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    throw new Error(`Separation error: ${describeBackendError(msg)}`)
+    throw new Error(`Separation error: ${await describeBackendError(msg)}`)
   } finally {
     setProgressCallback(null)
   }
@@ -216,7 +217,7 @@ ipcMain.handle(
       return await resp.json()
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      throw new Error(`Censor error: ${describeBackendError(msg)}`)
+      throw new Error(`Censor error: ${await describeBackendError(msg)}`)
     }
   }
 )

@@ -78,7 +78,7 @@ async def device_info():
 
 
 @app.post("/transcribe")
-async def transcribe(req: TranscribeRequest):
+def transcribe(req: TranscribeRequest):
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
@@ -95,7 +95,7 @@ async def transcribe(req: TranscribeRequest):
 
 
 @app.post("/separate")
-async def separate(req: SeparateRequest):
+def separate(req: SeparateRequest):
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
@@ -108,7 +108,7 @@ async def separate(req: SeparateRequest):
 
 
 @app.post("/censor")
-async def censor(req: CensorRequest):
+def censor(req: CensorRequest):
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
