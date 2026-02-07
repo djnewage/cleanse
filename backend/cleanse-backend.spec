@@ -86,6 +86,7 @@ a = Analysis(
         'notebook',
         'jupyter',
         'IPython',
+        'av',
     ],
     noarchive=False,
     optimize=0,

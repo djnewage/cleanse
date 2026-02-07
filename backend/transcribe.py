@@ -1,6 +1,103 @@
 """Transcription module using faster-whisper for word-level timestamps."""
 
+import subprocess
 import sys
+import types
+
+import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Stub out the 'av' (PyAV) package BEFORE faster-whisper is imported.
+#
+# PyAV 16.1.0 bundles libavdevice compiled for macOS 14+, which crashes on
+# macOS 13 and older with:
+#   Symbol not found: _AVCaptureDeviceTypeContinuityCamera
+#
+# faster-whisper imports av at module level (faster_whisper/audio.py line 15),
+# so we must intercept before any `from faster_whisper import ...`.
+#
+# We decode audio via ffmpeg subprocess instead (same approach as openai/whisper).
+# ---------------------------------------------------------------------------
+def _install_av_stub():
+    if "av" in sys.modules:
+        return
+
+    av = types.ModuleType("av")
+    av.__path__ = []
+    av.__package__ = "av"
+
+    av_audio = types.ModuleType("av.audio")
+    av_audio.__path__ = []
+    av_audio.__package__ = "av.audio"
+
+    av_audio_resampler = types.ModuleType("av.audio.resampler")
+    av_audio_resampler.__package__ = "av.audio"
+    av_audio_resampler.AudioResampler = type(
+        "AudioResampler", (), {"__init__": lambda *a, **kw: None}
+    )
+
+    av_audio_fifo = types.ModuleType("av.audio.fifo")
+    av_audio_fifo.__package__ = "av.audio"
+    av_audio_fifo.AudioFifo = type(
+        "AudioFifo", (), {"__init__": lambda *a, **kw: None}
+    )
+
+    av_error = types.ModuleType("av.error")
+    av_error.__package__ = "av"
+    av_error.InvalidDataError = type("InvalidDataError", (Exception,), {})
+
+    av.audio = av_audio
+    av.error = av_error
+    av_audio.resampler = av_audio_resampler
+    av_audio.fifo = av_audio_fifo
+    av.open = lambda *a, **kw: None
+
+    for name, mod in [
+        ("av", av),
+        ("av.audio", av_audio),
+        ("av.audio.resampler", av_audio_resampler),
+        ("av.audio.fifo", av_audio_fifo),
+        ("av.error", av_error),
+    ]:
+        sys.modules[name] = mod
+
+    print("[Transcribe] Installed av stub (PyAV native library bypassed)", file=sys.stderr)
+
+
+_install_av_stub()
+
+
+# ---------------------------------------------------------------------------
+# ffmpeg subprocess audio decoder (replaces PyAV-based decode_audio)
+# ---------------------------------------------------------------------------
+def _decode_audio_ffmpeg(file_path: str, sampling_rate: int = 16000) -> np.ndarray:
+    """Decode audio to 16kHz mono float32 numpy array using ffmpeg subprocess."""
+    import imageio_ffmpeg
+
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [
+        ffmpeg_exe,
+        "-nostdin",
+        "-threads", "0",
+        "-i", file_path,
+        "-f", "s16le",
+        "-ac", "1",
+        "-acodec", "pcm_s16le",
+        "-ar", str(sampling_rate),
+        "-",
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, check=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"ffmpeg failed to decode audio: {e.stderr.decode(errors='replace')}"
+        ) from e
+
+    audio = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+    return audio
+
 
 # Global model instance - loaded once at first use
 _model = None
@@ -52,11 +149,16 @@ def transcribe_audio(file_path: str, turbo: bool = False) -> dict:
     """
     model = get_model(turbo=turbo)
 
+    # Pre-decode audio via ffmpeg subprocess instead of letting faster-whisper
+    # use PyAV (which crashes on macOS < 14 due to libavdevice compatibility).
+    print(f"[Transcribe] Decoding audio via ffmpeg: {file_path}", file=sys.stderr)
+    audio_array = _decode_audio_ffmpeg(file_path, sampling_rate=16000)
+
     beam_size = 1 if turbo else 5
     print(f"[Transcribe] beam_size={beam_size}, turbo={turbo}", file=sys.stderr)
 
     segments, info = model.transcribe(
-        file_path,
+        audio_array,
         beam_size=beam_size,
         word_timestamps=True,
         language=None,  # auto-detect
