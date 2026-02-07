@@ -1,11 +1,14 @@
 import { ChildProcess, spawn } from 'child_process'
 import { app } from 'electron'
 import * as path from 'path'
+import * as fs from 'fs'
 import * as net from 'net'
 
 let pythonProcess: ChildProcess | null = null
 let backendPort: number = 8765
 let isReady = false
+let logFilePath: string | null = null
+let logStream: fs.WriteStream | null = null
 
 export type ProgressCallback = (data: {
   step: string
@@ -17,6 +20,17 @@ let progressCallback: ProgressCallback | null = null
 
 export function setProgressCallback(cb: ProgressCallback | null): void {
   progressCallback = cb
+}
+
+function initLogFile(): void {
+  const logDir = app.getPath('logs')
+  logFilePath = path.join(logDir, 'backend.log')
+  // Truncate on each app launch so the file stays manageable
+  logStream = fs.createWriteStream(logFilePath, { flags: 'w' })
+}
+
+function writeLog(line: string): void {
+  logStream?.write(`${new Date().toISOString()} ${line}\n`)
 }
 
 function findFreePort(): Promise<number> {
@@ -72,12 +86,16 @@ async function pollHealth(port: number, timeoutMs: number = 30000): Promise<bool
 }
 
 export async function startPythonBackend(): Promise<number> {
+  initLogFile()
   backendPort = await findFreePort()
   const { command, args } = getBackendCommand()
 
   console.log(`[Python] Starting backend on port ${backendPort}`)
   console.log(`[Python] Command: ${command} ${args.join(' ')}`)
   console.log(`[Python] Packaged: ${app.isPackaged}`)
+  console.log(`[Python] Log file: ${logFilePath}`)
+  writeLog(`[startup] Command: ${command} ${args.join(' ')}`)
+  writeLog(`[startup] Packaged: ${app.isPackaged}`)
 
   pythonProcess = spawn(command, args, {
     // PyInstaller binary doesn't need cwd; dev mode needs backend dir
@@ -108,20 +126,25 @@ export async function startPythonBackend(): Promise<number> {
         // Not JSON, fall through to normal logging
       }
       console.log(`[Python] ${trimmed}`)
+      writeLog(`[stdout] ${trimmed}`)
     }
   })
 
   pythonProcess.stderr?.on('data', (data: Buffer) => {
-    console.log(`[Python] ${data.toString().trim()}`)
+    const text = data.toString().trim()
+    console.log(`[Python] ${text}`)
+    writeLog(`[stderr] ${text}`)
   })
 
   pythonProcess.on('error', (err) => {
     console.error('[Python] Failed to start:', err.message)
+    writeLog(`[error] Failed to start: ${err.message}`)
     isReady = false
   })
 
-  pythonProcess.on('exit', (code) => {
-    console.log(`[Python] Process exited with code ${code}`)
+  pythonProcess.on('exit', (code, signal) => {
+    console.log(`[Python] Process exited with code ${code} signal ${signal}`)
+    writeLog(`[exit] code=${code} signal=${signal}`)
     isReady = false
     pythonProcess = null
   })
@@ -133,8 +156,10 @@ export async function startPythonBackend(): Promise<number> {
   if (ready) {
     isReady = true
     console.log('[Python] Backend is ready!')
+    writeLog('[startup] Backend is ready')
   } else {
     console.error('[Python] Backend failed to start within timeout')
+    writeLog('[startup] Backend failed to start within timeout')
     stopPythonBackend()
     throw new Error('Python backend failed to start')
   }
@@ -165,6 +190,8 @@ export function stopPythonBackend(): void {
     pythonProcess = null
     isReady = false
   }
+  logStream?.end()
+  logStream = null
 }
 
 export interface DeviceInfo {
@@ -188,6 +215,14 @@ export function getBackendPort(): number {
 
 export function isBackendReady(): boolean {
   return isReady
+}
+
+export function isBackendAlive(): boolean {
+  return pythonProcess !== null && !pythonProcess.killed
+}
+
+export function getBackendLogPath(): string | null {
+  return logFilePath
 }
 
 export async function fetchBackend(

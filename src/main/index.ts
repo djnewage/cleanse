@@ -10,11 +10,23 @@ import {
   startPythonBackend,
   stopPythonBackend,
   isBackendReady,
+  isBackendAlive,
+  getBackendLogPath,
   fetchBackend,
   setProgressCallback,
   getDeviceInfo
 } from './python-bridge'
 import { getHistory, addHistoryEntry, deleteHistoryEntry } from './history-store'
+
+function describeBackendError(originalMsg: string): string {
+  if (!isBackendAlive()) {
+    const logPath = getBackendLogPath()
+    return logPath
+      ? `Backend process crashed. Logs: ${logPath}`
+      : 'Backend process crashed unexpectedly'
+  }
+  return originalMsg
+}
 
 // Configure auto-updater logging
 autoUpdater.logger = log
@@ -128,7 +140,7 @@ ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolea
     return await resp.json()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    throw new Error(`Transcription error: ${msg}`)
+    throw new Error(`Transcription error: ${describeBackendError(msg)}`)
   }
 })
 
@@ -160,7 +172,7 @@ ipcMain.handle('separate-audio', async (_event, filePath: string, turbo: boolean
     return await resp.json()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    throw new Error(`Separation error: ${msg}`)
+    throw new Error(`Separation error: ${describeBackendError(msg)}`)
   } finally {
     setProgressCallback(null)
   }
@@ -204,7 +216,7 @@ ipcMain.handle(
       return await resp.json()
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      throw new Error(`Censor error: ${msg}`)
+      throw new Error(`Censor error: ${describeBackendError(msg)}`)
     }
   }
 )

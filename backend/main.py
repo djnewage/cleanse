@@ -1,7 +1,19 @@
 import argparse
+import multiprocessing
 import os
 import sys
 import tempfile
+
+# Required for PyInstaller: without this, multiprocessing child processes
+# re-execute main.py and crash on argparse (they receive internal args like
+# -B -S -I that argparse doesn't recognise). Must be called before anything else.
+multiprocessing.freeze_support()
+
+# Fix SSL certificate verification in PyInstaller bundles (macOS can't find
+# the system cert store from a frozen app, so point at certifi's CA bundle).
+import certifi
+os.environ.setdefault('SSL_CERT_FILE', certifi.where())
+os.environ.setdefault('REQUESTS_CA_BUNDLE', certifi.where())
 
 import imageio_ffmpeg
 from pydub import AudioSegment
