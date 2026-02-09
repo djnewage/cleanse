@@ -17,9 +17,14 @@ export type ProgressCallback = (data: {
 }) => void
 
 let progressCallback: ProgressCallback | null = null
+let transcriptionProgressCallback: ProgressCallback | null = null
 
 export function setProgressCallback(cb: ProgressCallback | null): void {
   progressCallback = cb
+}
+
+export function setTranscriptionProgressCallback(cb: ProgressCallback | null): void {
+  transcriptionProgressCallback = cb
 }
 
 function initLogFile(): void {
@@ -116,6 +121,14 @@ export async function startPythonBackend(): Promise<number> {
         const parsed = JSON.parse(trimmed)
         if (parsed.type === 'separation-progress' && progressCallback) {
           progressCallback({
+            step: parsed.step,
+            progress: parsed.progress,
+            message: parsed.message
+          })
+          continue
+        }
+        if (parsed.type === 'transcription-progress' && transcriptionProgressCallback) {
+          transcriptionProgressCallback({
             step: parsed.step,
             progress: parsed.progress,
             message: parsed.message

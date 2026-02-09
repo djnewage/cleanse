@@ -55,10 +55,13 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         vocalsPath: null,
         accompanimentPath: null,
         separationProgress: null,
+        transcriptionProgress: null,
         censoredFilePath: null,
         defaultCensorType: state.globalDefaultCensorType,
         userReviewed: false,
-        errorMessage: null
+        errorMessage: null,
+        metadata: null,
+        lyrics: null
       }))
       const newIds = newSongs.map((s) => s.id)
       return {
@@ -91,11 +94,43 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
     case 'START_PROCESSING':
       return { ...state, currentlyProcessingId: action.id }
 
+    case 'SET_SONG_METADATA':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, metadata: action.metadata } : s
+        )
+      }
+
+    case 'SET_SONG_LYRICS':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, lyrics: action.lyrics } : s
+        )
+      }
+
+    case 'START_FETCHING_LYRICS':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, status: 'fetching_lyrics' } : s
+        )
+      }
+
     case 'START_TRANSCRIPTION':
       return {
         ...state,
         songs: state.songs.map((s) =>
-          s.id === action.id ? { ...s, status: 'transcribing', errorMessage: null } : s
+          s.id === action.id ? { ...s, status: 'transcribing', errorMessage: null, transcriptionProgress: null } : s
+        )
+      }
+
+    case 'TRANSCRIPTION_PROGRESS':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, transcriptionProgress: action.progress } : s
         )
       }
 
@@ -104,8 +139,16 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         ...state,
         songs: state.songs.map((s) =>
           s.id === action.id
-            ? { ...s, words: action.words, duration: action.duration, language: action.language }
+            ? { ...s, words: action.words, duration: action.duration, language: action.language, transcriptionProgress: null }
             : s
+        )
+      }
+
+    case 'START_VOCALS_TRANSCRIPTION':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, status: 'transcribing_vocals' } : s
         )
       }
 
@@ -265,7 +308,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         ...state,
         songs: state.songs.map((s) =>
           s.id === action.id
-            ? { ...s, status: 'pending', errorMessage: null, words: [], vocalsPath: null, accompanimentPath: null }
+            ? { ...s, status: 'pending', errorMessage: null, words: [], vocalsPath: null, accompanimentPath: null, transcriptionProgress: null, separationProgress: null, lyrics: null }
             : s
         ),
         processingQueue: [...state.processingQueue, action.id]
@@ -386,6 +429,18 @@ function MainApp(): React.JSX.Element {
       dispatch({ type: 'SET_HISTORY', history })
     })
   }, [])
+
+  // Extract metadata for new songs that don't have it yet
+  useEffect(() => {
+    const songsNeedingMetadata = state.songs.filter((s) => s.metadata === null)
+    for (const song of songsNeedingMetadata) {
+      window.electronAPI.getAudioMetadata(song.filePath).then((metadata) => {
+        dispatch({ type: 'SET_SONG_METADATA', id: song.id, metadata })
+      }).catch(() => {
+        // Metadata extraction is best-effort
+      })
+    }
+  }, [state.songs.length]) // Only run when songs are added/removed
 
   // Handle file selection
   const handleFilesSelected = useCallback(

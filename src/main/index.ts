@@ -14,6 +14,7 @@ import {
   getBackendLogPath,
   fetchBackend,
   setProgressCallback,
+  setTranscriptionProgressCallback,
   getDeviceInfo
 } from './python-bridge'
 import { getHistory, addHistoryEntry, deleteHistoryEntry } from './history-store'
@@ -117,13 +118,56 @@ ipcMain.handle('get-backend-status', () => {
   return { ready: isBackendReady() }
 })
 
-ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolean = false) => {
+ipcMain.handle('get-audio-metadata', async (_event, filePath: string) => {
   try {
-    console.log('[IPC] transcribe-file called with:', filePath, 'turbo:', turbo)
+    const resp = await fetchBackend('/metadata', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath })
+    })
+    if (!resp.ok) return { artist: null, title: null, album: null, duration: null }
+    return await resp.json()
+  } catch {
+    return { artist: null, title: null, album: null, duration: null }
+  }
+})
+
+ipcMain.handle('fetch-lyrics', async (_event, artist: string, title: string, duration?: number) => {
+  try {
+    const resp = await fetchBackend('/fetch-lyrics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ artist, title, duration })
+    })
+    if (!resp.ok) return { plain_lyrics: null, synced_lyrics: null }
+    return await resp.json()
+  } catch {
+    return { plain_lyrics: null, synced_lyrics: null }
+  }
+})
+
+ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolean = false, vocalsPath?: string, lyrics?: string, syncedLyrics?: string) => {
+  try {
+    console.log('[IPC] transcribe-file called with:', filePath, 'turbo:', turbo, 'vocalsPath:', vocalsPath, 'hasLyrics:', !!lyrics)
+    setTranscriptionProgressCallback((data) => {
+      mainWindow?.webContents.send('transcription-progress', data)
+    })
+
+    const body: Record<string, unknown> = { path: filePath, turbo }
+    if (vocalsPath) {
+      body.vocals_path = vocalsPath
+    }
+    if (lyrics) {
+      body.lyrics = lyrics
+    }
+    if (syncedLyrics) {
+      body.synced_lyrics = syncedLyrics
+    }
+
     const resp = await fetchBackend('/transcribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: filePath, turbo })
+      body: JSON.stringify(body)
     })
 
     if (!resp.ok) {
@@ -142,6 +186,8 @@ ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolea
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     throw new Error(`Transcription error: ${await describeBackendError(msg)}`)
+  } finally {
+    setTranscriptionProgressCallback(null)
   }
 })
 

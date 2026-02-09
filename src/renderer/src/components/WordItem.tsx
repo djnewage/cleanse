@@ -88,6 +88,16 @@ function WordItemInner({
           {CENSOR_LABEL[effectiveType]}
         </span>
       )}
+      {word.detection_source === 'adlib' && (
+        <span className="text-[8px] leading-none font-sans font-semibold text-amber-400 ml-0.5">
+          AD
+        </span>
+      )}
+      {word.detection_source === 'lyrics' && (
+        <span className="text-[8px] leading-none font-sans font-semibold text-cyan-400 ml-0.5">
+          LY
+        </span>
+      )}
     </button>
   )
 }

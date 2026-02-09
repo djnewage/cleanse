@@ -5,6 +5,7 @@ export interface TranscribedWord {
   confidence: number
   is_profanity: boolean
   censor_type?: CensorType
+  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics'
 }
 
 export interface CensorWord {
@@ -41,8 +42,20 @@ export interface DeviceInfo {
   turbo_supported: boolean
 }
 
+export interface AudioMetadata {
+  artist: string | null
+  title: string | null
+  album: string | null
+  duration: number | null
+}
+
+export interface SongLyrics {
+  plain: string | null
+  synced: string | null
+}
+
 // Batch Processing Types
-export type SongStatus = 'pending' | 'transcribing' | 'separating' | 'ready' | 'exporting' | 'completed' | 'error'
+export type SongStatus = 'pending' | 'fetching_lyrics' | 'separating' | 'transcribing' | 'transcribing_vocals' | 'ready' | 'exporting' | 'completed' | 'error'
 
 export interface SongEntry {
   id: string
@@ -55,10 +68,13 @@ export interface SongEntry {
   vocalsPath: string | null
   accompanimentPath: string | null
   separationProgress: SeparationProgress | null
+  transcriptionProgress: SeparationProgress | null
   censoredFilePath: string | null
   defaultCensorType: CensorType
   userReviewed: boolean
   errorMessage: string | null
+  metadata: AudioMetadata | null
+  lyrics: SongLyrics | null
 }
 
 export interface BatchAppState {
@@ -82,8 +98,13 @@ export type BatchAppAction =
   | { type: 'CLEAR_ALL_SONGS' }
   | { type: 'SET_EXPANDED_SONG'; id: string | null }
   | { type: 'START_PROCESSING'; id: string }
+  | { type: 'SET_SONG_METADATA'; id: string; metadata: AudioMetadata }
+  | { type: 'SET_SONG_LYRICS'; id: string; lyrics: SongLyrics | null }
+  | { type: 'START_FETCHING_LYRICS'; id: string }
   | { type: 'START_TRANSCRIPTION'; id: string }
+  | { type: 'TRANSCRIPTION_PROGRESS'; id: string; progress: SeparationProgress }
   | { type: 'TRANSCRIPTION_COMPLETE'; id: string; words: TranscribedWord[]; duration: number; language: string }
+  | { type: 'START_VOCALS_TRANSCRIPTION'; id: string }
   | { type: 'START_SEPARATING'; id: string }
   | { type: 'SEPARATION_PROGRESS'; id: string; progress: SeparationProgress }
   | { type: 'SEPARATION_COMPLETE'; id: string; vocalsPath: string; accompanimentPath: string }

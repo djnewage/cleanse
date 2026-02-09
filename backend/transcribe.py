@@ -1,10 +1,22 @@
 """Transcription module using faster-whisper for word-level timestamps."""
 
+import json
 import subprocess
 import sys
 import types
 
 import numpy as np
+
+
+def _report_progress(step: str, progress: float, message: str):
+    """Print a JSON progress line to stdout for the Electron main process to parse."""
+    print(json.dumps({
+        "type": "transcription-progress",
+        "step": step,
+        "progress": progress,
+        "message": message,
+    }))
+    sys.stdout.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +148,24 @@ def get_model(turbo: bool = False):
     return _model
 
 
-def transcribe_audio(file_path: str, turbo: bool = False) -> dict:
+def transcribe_audio(
+    file_path: str,
+    turbo: bool = False,
+    language: str | None = None,
+    initial_prompt: str | None = None,
+    progress_offset: float = 0.0,
+    progress_scale: float = 100.0,
+) -> dict:
     """
     Transcribe an audio file and return word-level timestamps.
+
+    Args:
+        file_path: Path to the audio file
+        turbo: Use GPU acceleration if available
+        language: Force language (None = auto-detect)
+        initial_prompt: Optional text to bias the decoder vocabulary (e.g. song lyrics)
+        progress_offset: Base progress value (for multi-pass scaling)
+        progress_scale: Range of progress values to use
 
     Returns:
         {
@@ -151,23 +178,36 @@ def transcribe_audio(file_path: str, turbo: bool = False) -> dict:
 
     # Pre-decode audio via ffmpeg subprocess instead of letting faster-whisper
     # use PyAV (which crashes on macOS < 14 due to libavdevice compatibility).
+    _report_progress("decoding", round(progress_offset + progress_scale * 0.05, 1), "Decoding audio...")
     print(f"[Transcribe] Decoding audio via ffmpeg: {file_path}", file=sys.stderr)
     audio_array = _decode_audio_ffmpeg(file_path, sampling_rate=16000)
 
     beam_size = 1 if turbo else 5
     print(f"[Transcribe] beam_size={beam_size}, turbo={turbo}", file=sys.stderr)
 
+    _report_progress("transcribing", round(progress_offset + progress_scale * 0.10, 1), "Transcribing audio...")
+
+    if initial_prompt:
+        print(f"[Transcribe] Using initial_prompt ({len(initial_prompt)} chars)", file=sys.stderr)
+
     segments, info = model.transcribe(
         audio_array,
         beam_size=beam_size,
         word_timestamps=True,
-        language=None,  # auto-detect
+        language=language,
+        initial_prompt=initial_prompt,
     )
 
     words = []
     last_end = 0.0
+    duration = info.duration if info.duration > 0 else 1.0
 
     for segment in segments:
+        # Report progress based on how far through the audio we are
+        seg_progress = min(segment.end / duration, 1.0)
+        mapped = progress_offset + progress_scale * (0.10 + seg_progress * 0.85)
+        _report_progress("transcribing", round(mapped, 1), "Transcribing audio...")
+
         if segment.words:
             for w in segment.words:
                 words.append(
@@ -179,6 +219,8 @@ def transcribe_audio(file_path: str, turbo: bool = False) -> dict:
                     }
                 )
                 last_end = max(last_end, w.end)
+
+    _report_progress("complete", round(progress_offset + progress_scale, 1), "Transcription complete!")
 
     return {
         "words": words,

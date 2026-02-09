@@ -11,8 +11,10 @@ interface QueueItemProps {
 function getStatusBadge(status: SongStatus, errorMessage: string | null) {
   const badges: Record<SongStatus, { label: string; className: string }> = {
     pending: { label: 'Pending', className: 'bg-zinc-700 text-zinc-300' },
-    transcribing: { label: 'Transcribing', className: 'bg-blue-600 text-blue-100' },
+    fetching_lyrics: { label: 'Fetching Lyrics', className: 'bg-cyan-600 text-cyan-100' },
     separating: { label: 'Separating', className: 'bg-purple-600 text-purple-100' },
+    transcribing: { label: 'Transcribing', className: 'bg-blue-600 text-blue-100' },
+    transcribing_vocals: { label: 'Scanning Vocals', className: 'bg-indigo-600 text-indigo-100' },
     ready: { label: 'Ready', className: 'bg-green-600 text-green-100' },
     exporting: { label: 'Exporting', className: 'bg-yellow-600 text-yellow-100' },
     completed: { label: 'Completed', className: 'bg-emerald-600 text-emerald-100' },
@@ -43,7 +45,7 @@ export default function QueueItem({
   onRemove,
   onRetry
 }: QueueItemProps): React.JSX.Element {
-  const isProcessing = song.status === 'transcribing' || song.status === 'separating' || song.status === 'exporting'
+  const isProcessing = song.status === 'transcribing' || song.status === 'transcribing_vocals' || song.status === 'separating' || song.status === 'exporting' || song.status === 'fetching_lyrics'
   const canExpand = song.status === 'ready' || song.status === 'completed' || song.status === 'error'
   const profanityCount = song.words.filter((w) => w.is_profanity).length
 
@@ -67,8 +69,15 @@ export default function QueueItem({
 
         {/* File info */}
         <div className="flex-1 min-w-0">
-          <p className="font-medium truncate">{song.fileName}</p>
+          <p className="font-medium truncate">
+            {song.metadata?.artist && song.metadata?.title
+              ? `${song.metadata.artist} - ${song.metadata.title}`
+              : song.fileName}
+          </p>
           <div className="flex items-center gap-3 text-xs text-zinc-500">
+            {song.metadata?.artist && song.metadata?.title && (
+              <span className="truncate max-w-[200px]" title={song.fileName}>{song.fileName}</span>
+            )}
             {song.duration > 0 && <span>{formatDuration(song.duration)}</span>}
             {song.language && <span>{song.language.toUpperCase()}</span>}
             {song.words.length > 0 && (
@@ -131,12 +140,37 @@ export default function QueueItem({
         </div>
       )}
 
-      {/* Processing indicator */}
-      {song.status === 'transcribing' && (
+      {/* Transcription progress bar */}
+      {(song.status === 'transcribing' || song.status === 'transcribing_vocals') && (
+        <div className="px-4 pb-3">
+          {song.transcriptionProgress ? (
+            <>
+              <div className="flex items-center justify-between mb-1 text-xs text-zinc-500">
+                <span>{song.transcriptionProgress.message}</span>
+                <span>{Math.round(song.transcriptionProgress.progress)}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                  style={{ width: `${song.transcriptionProgress.progress}%` }}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-zinc-500">
+              <div className="w-3 h-3 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin" />
+              <span>{song.status === 'transcribing_vocals' ? 'Scanning isolated vocals...' : 'Transcribing audio...'}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Fetching lyrics indicator */}
+      {song.status === 'fetching_lyrics' && (
         <div className="px-4 pb-3">
           <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <div className="w-3 h-3 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin" />
-            <span>Transcribing audio...</span>
+            <div className="w-3 h-3 border-2 border-zinc-600 border-t-cyan-400 rounded-full animate-spin" />
+            <span>Fetching lyrics...</span>
           </div>
         </div>
       )}

@@ -27,12 +27,21 @@ export interface DownloadProgress {
   percent: number
 }
 
+export interface AudioMetadata {
+  artist: string | null
+  title: string | null
+  album: string | null
+  duration: number | null
+}
+
 export interface ElectronAPI {
   selectAudioFile: () => Promise<string | null>
   selectAudioFiles: () => Promise<string[]>
   selectOutputPath: (defaultName: string) => Promise<string | null>
   selectOutputDirectory: () => Promise<string | null>
-  transcribeFile: (path: string, turbo?: boolean) => Promise<TranscriptionResult>
+  getAudioMetadata: (path: string) => Promise<AudioMetadata>
+  fetchLyrics: (artist: string, title: string, duration?: number) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null }>
+  transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string) => Promise<TranscriptionResult>
   separateAudio: (path: string, turbo?: boolean) => Promise<SeparationResult>
   censorAudio: (
     path: string,
@@ -45,6 +54,7 @@ export interface ElectronAPI {
   getDeviceInfo: () => Promise<DeviceInfo>
   onBackendStatus: (callback: (status: BackendStatus) => void) => () => void
   onDeviceInfo: (callback: (info: DeviceInfo) => void) => () => void
+  onTranscriptionProgress: (callback: (progress: SeparationProgress) => void) => () => void
   onSeparationProgress: (callback: (progress: SeparationProgress) => void) => () => void
   onUpdateAvailable: (callback: (info: UpdateInfo) => void) => () => void
   onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void
@@ -70,6 +80,7 @@ export interface TranscribedWord {
   end: number
   confidence: number
   is_profanity: boolean
+  detection_source?: 'primary' | 'vocals' | 'adlib'
 }
 
 export interface CensorWord {
@@ -106,8 +117,13 @@ const electronAPI: ElectronAPI = {
 
   selectOutputDirectory: () => ipcRenderer.invoke('select-output-directory'),
 
-  transcribeFile: (path: string, turbo?: boolean) =>
-    ipcRenderer.invoke('transcribe-file', path, turbo ?? false),
+  getAudioMetadata: (path: string) => ipcRenderer.invoke('get-audio-metadata', path),
+
+  fetchLyrics: (artist: string, title: string, duration?: number) =>
+    ipcRenderer.invoke('fetch-lyrics', artist, title, duration),
+
+  transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string) =>
+    ipcRenderer.invoke('transcribe-file', path, turbo ?? false, vocalsPath, lyrics, syncedLyrics),
 
   separateAudio: (path: string, turbo?: boolean) =>
     ipcRenderer.invoke('separate-audio', path, turbo ?? false),
@@ -147,6 +163,16 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('add-history-entry', entry),
 
   deleteHistoryEntry: (id: string) => ipcRenderer.invoke('delete-history-entry', id),
+
+  onTranscriptionProgress: (callback: (progress: SeparationProgress) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: SeparationProgress): void => {
+      callback(progress)
+    }
+    ipcRenderer.on('transcription-progress', handler)
+    return () => {
+      ipcRenderer.removeListener('transcription-progress', handler)
+    }
+  },
 
   onSeparationProgress: (callback: (progress: SeparationProgress) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: SeparationProgress): void => {
