@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { submitFeedback } from '../lib/firebase'
+import { logFeedbackSubmitted } from '../lib/analytics'
 
 interface FeedbackModalProps {
   isOpen: boolean
@@ -19,6 +20,7 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
     setError(null)
     try {
       await submitFeedback({ message: message.trim() })
+      logFeedbackSubmitted()
       setSuccess(true)
       setMessage('')
     } catch (err) {

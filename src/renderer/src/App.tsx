@@ -4,9 +4,11 @@ import type {
   BatchAppAction,
   CensorType,
   SongEntry,
-  CensorWord
+  CensorWord,
+  TranscribedWord
 } from './types'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { logSongsImported, logExportStarted, logExportCompleted } from './lib/analytics'
 import { useQueueProcessor } from './hooks/useQueueProcessor'
 import FileUpload from './components/FileUpload'
 import QueueList from './components/QueueList'
@@ -204,6 +206,20 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         ...state,
         currentlyProcessingId: null,
         processingQueue: state.processingQueue.filter((id) => id !== action.id)
+      }
+
+    case 'ADD_MANUAL_WORD':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.songId
+            ? {
+                ...s,
+                words: [...s.words, action.word].sort((a, b) => a.start - b.start),
+                censoredFilePath: null
+              }
+            : s
+        )
       }
 
     case 'TOGGLE_PROFANITY':
@@ -449,6 +465,7 @@ function MainApp(): React.JSX.Element {
         type: 'ADD_SONGS',
         songs: files.map((f) => ({ filePath: f.path, fileName: f.name }))
       })
+      logSongsImported(files.length)
     },
     []
   )
@@ -479,6 +496,11 @@ function MainApp(): React.JSX.Element {
   // Toggle profanity for a word
   const handleToggleProfanity = useCallback((songId: string, wordIndex: number) => {
     dispatch({ type: 'TOGGLE_PROFANITY', songId, wordIndex })
+  }, [])
+
+  // Add a manual censor word
+  const handleAddManualWord = useCallback((songId: string, word: TranscribedWord) => {
+    dispatch({ type: 'ADD_MANUAL_WORD', songId, word })
   }, [])
 
   // Set censor type for a word
@@ -549,6 +571,7 @@ function MainApp(): React.JSX.Element {
     }
 
     dispatch({ type: 'START_EXPORT_ALL', total: exportableSongs.length })
+    logExportStarted(exportableSongs.length)
 
     let completed = 0
     let successfulExports = 0
@@ -612,6 +635,7 @@ function MainApp(): React.JSX.Element {
     }
 
     dispatch({ type: 'EXPORT_ALL_COMPLETE' })
+    logExportCompleted(successfulExports)
     exportingRef.current = false
   }, [state.songs, checkCanProcess, recordUsage])
 
@@ -717,6 +741,7 @@ function MainApp(): React.JSX.Element {
                 onToggleProfanity={handleToggleProfanity}
                 onSetCensorType={handleSetWordCensorType}
                 onSetSongCensorType={handleSetSongCensorType}
+                onAddManualWord={handleAddManualWord}
                 onMarkReviewed={handleMarkReviewed}
                 onClose={handleCloseExpanded}
               />

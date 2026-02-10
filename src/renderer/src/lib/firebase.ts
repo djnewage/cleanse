@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app'
+import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics'
 import { getAuth, connectAuthEmulator } from 'firebase/auth'
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore'
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions'
@@ -11,7 +12,8 @@ const firebaseConfig = {
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'demo-project',
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'demo-project.appspot.com',
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '000000000000',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:000000000000:web:0000000000000000000000'
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:000000000000:web:0000000000000000000000',
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || undefined
 }
 
 // Initialize Firebase
@@ -21,6 +23,16 @@ const app = initializeApp(firebaseConfig)
 export const auth = getAuth(app)
 export const db = getFirestore(app)
 export const functions = getFunctions(app)
+
+// Initialize Analytics (production only, requires measurementId)
+export let analytics: Analytics | null = null
+if (!import.meta.env.DEV && firebaseConfig.measurementId) {
+  isSupported().then((supported) => {
+    if (supported) {
+      analytics = getAnalytics(app)
+    }
+  })
+}
 
 // Connect to emulators in development
 if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true') {

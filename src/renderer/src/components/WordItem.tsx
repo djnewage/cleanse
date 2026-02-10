@@ -98,6 +98,11 @@ function WordItemInner({
           LY
         </span>
       )}
+      {word.detection_source === 'manual' && (
+        <span className="text-[8px] leading-none font-sans font-semibold text-purple-400 ml-0.5">
+          MN
+        </span>
+      )}
     </button>
   )
 }

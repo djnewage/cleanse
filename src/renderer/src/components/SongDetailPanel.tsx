@@ -1,4 +1,4 @@
-import type { SongEntry, CensorType } from '../types'
+import type { SongEntry, CensorType, TranscribedWord } from '../types'
 import TranscriptEditor from './TranscriptEditor'
 import AudioPreview from './AudioPreview'
 import { usePlaybackTime } from '../hooks/usePlaybackTime'
@@ -8,6 +8,7 @@ interface SongDetailPanelProps {
   onToggleProfanity: (songId: string, wordIndex: number) => void
   onSetCensorType: (songId: string, wordIndex: number, censorType: CensorType) => void
   onSetSongCensorType: (songId: string, censorType: CensorType) => void
+  onAddManualWord: (songId: string, word: TranscribedWord) => void
   onMarkReviewed: (songId: string) => void
   onClose: () => void
 }
@@ -17,6 +18,7 @@ export default function SongDetailPanel({
   onToggleProfanity,
   onSetCensorType,
   onSetSongCensorType,
+  onAddManualWord,
   onMarkReviewed,
   onClose
 }: SongDetailPanelProps): React.JSX.Element {
@@ -28,6 +30,10 @@ export default function SongDetailPanel({
 
   const handleSetCensorType = (index: number, censorType: CensorType) => {
     onSetCensorType(song.id, index, censorType)
+  }
+
+  const handleAddManualWord = (word: TranscribedWord) => {
+    onAddManualWord(song.id, word)
   }
 
   const profanityCount = song.words.filter((w) => w.is_profanity).length
@@ -71,6 +77,7 @@ export default function SongDetailPanel({
           words={song.words}
           onToggleProfanity={handleToggleProfanity}
           onSetCensorType={handleSetCensorType}
+          onAddManualWord={handleAddManualWord}
           defaultCensorType={song.defaultCensorType}
           language={song.language}
           duration={song.duration}

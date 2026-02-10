@@ -247,8 +247,30 @@ export function getBackendLogPath(): string | null {
 
 export async function fetchBackend(
   endpoint: string,
-  options?: RequestInit
+  options?: RequestInit & { timeoutMs?: number }
 ): Promise<Response> {
+  const { timeoutMs = 600_000, ...fetchOptions } = options ?? {}
   const url = `http://127.0.0.1:${backendPort}${endpoint}`
-  return fetch(url, options)
+  const maxRetries = 2
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const resp = await fetch(url, { ...fetchOptions, signal: controller.signal })
+      clearTimeout(timer)
+      return resp
+    } catch (err) {
+      clearTimeout(timer)
+      const errMsg = err instanceof Error ? err.message : String(err)
+      if (attempt < maxRetries && isBackendAlive()) {
+        writeLog(`[fetch] ${endpoint} attempt ${attempt + 1} failed (${errMsg}), retrying in 2s...`)
+        await new Promise((r) => setTimeout(r, 2000))
+        continue
+      }
+      throw err
+    }
+  }
+  // Unreachable — loop always returns or throws — but satisfies TypeScript
+  throw new Error(`fetchBackend: exhausted retries for ${endpoint}`)
 }

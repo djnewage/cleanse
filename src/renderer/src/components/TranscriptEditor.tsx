@@ -1,13 +1,15 @@
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback, useState } from 'react'
 import type { TranscribedWord, CensorType } from '../types'
 import type { PlaybackStatus } from './WordItem'
 import WordItem from './WordItem'
+import AddCensorForm from './AddCensorForm'
 import { useActiveWordIndex } from '../hooks/useActiveWordIndex'
 
 interface TranscriptEditorProps {
   words: TranscribedWord[]
   onToggleProfanity: (index: number) => void
   onSetCensorType: (index: number, type: CensorType) => void
+  onAddManualWord: (word: TranscribedWord) => void
   defaultCensorType: CensorType
   language: string
   duration: number
@@ -19,6 +21,7 @@ export default function TranscriptEditor({
   words,
   onToggleProfanity,
   onSetCensorType,
+  onAddManualWord,
   defaultCensorType,
   language,
   duration,
@@ -28,6 +31,12 @@ export default function TranscriptEditor({
   const profanityCount = words.filter((w) => w.is_profanity).length
   const activeIndex = useActiveWordIndex(words, currentTime)
   const wordRefsMap = useRef<Map<number, HTMLButtonElement>>(new Map())
+  const [showAddForm, setShowAddForm] = useState(false)
+
+  const handleAddManualWord = (word: TranscribedWord): void => {
+    onAddManualWord(word)
+    setShowAddForm(false)
+  }
 
   const formatDuration = (seconds: number): string => {
     const m = Math.floor(seconds / 60)
@@ -70,6 +79,12 @@ export default function TranscriptEditor({
           <span>Words: {words.length}</span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAddForm(true)}
+            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300 hover:bg-blue-800/50 transition-colors"
+          >
+            + Add Censor
+          </button>
           <span
             className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
               profanityCount > 0
@@ -84,7 +99,17 @@ export default function TranscriptEditor({
 
       <p className="text-xs text-zinc-500">
         Click a word to toggle its profanity flag. Right-click a flagged word to cycle censor type.
+        Use &quot;Add Censor&quot; to manually mark missed words.
       </p>
+
+      {showAddForm && (
+        <AddCensorForm
+          currentTime={currentTime}
+          duration={duration}
+          onConfirm={handleAddManualWord}
+          onCancel={() => setShowAddForm(false)}
+        />
+      )}
 
       <div className="bg-zinc-900/50 rounded-lg p-4 max-h-80 overflow-y-auto border border-zinc-800">
         <div className="flex flex-wrap">

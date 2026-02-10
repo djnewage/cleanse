@@ -5,7 +5,7 @@ export interface TranscribedWord {
   confidence: number
   is_profanity: boolean
   censor_type?: CensorType
-  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics'
+  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics' | 'manual'
 }
 
 export interface CensorWord {
@@ -110,6 +110,7 @@ export type BatchAppAction =
   | { type: 'SEPARATION_COMPLETE'; id: string; vocalsPath: string; accompanimentPath: string }
   | { type: 'SET_SONG_READY'; id: string }
   | { type: 'SET_SONG_ERROR'; id: string; message: string }
+  | { type: 'ADD_MANUAL_WORD'; songId: string; word: TranscribedWord }
   | { type: 'TOGGLE_PROFANITY'; songId: string; wordIndex: number }
   | { type: 'SET_WORD_CENSOR_TYPE'; songId: string; wordIndex: number; censorType: CensorType }
   | { type: 'SET_SONG_CENSOR_TYPE'; songId: string; censorType: CensorType }

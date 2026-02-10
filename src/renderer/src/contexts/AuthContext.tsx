@@ -9,6 +9,7 @@ import {
 } from 'firebase/auth'
 import { doc, onSnapshot } from 'firebase/firestore'
 import { auth, db, incrementUsage, canProcessSong, createCheckoutSession, createPortalSession } from '../lib/firebase'
+import { logLogin, logSignUp, logSignOut, logCheckoutInitiated } from '../lib/analytics'
 import type { UserData, UsageInfo } from '../types'
 
 interface AuthContextType {
@@ -110,6 +111,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     setIsLoading(true)
     try {
       await signInWithEmailAndPassword(auth, email, password)
+      logLogin()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Sign in failed'
       setError(message)
@@ -125,6 +127,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     setIsLoading(true)
     try {
       await createUserWithEmailAndPassword(auth, email, password)
+      logSignUp()
       // User document will be created by Cloud Function trigger
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Sign up failed'
@@ -140,6 +143,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     setError(null)
     try {
       await firebaseSignOut(auth)
+      logSignOut()
       setUserData(null)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Sign out failed'
@@ -209,6 +213,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
 
     try {
       const result = await createCheckoutSession({})
+      logCheckoutInitiated()
       if (result.data.url) {
         // Open in system browser
         window.electronAPI?.openExternal?.(result.data.url) ||
