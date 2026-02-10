@@ -24,15 +24,10 @@ export const auth = getAuth(app)
 export const db = getFirestore(app)
 export const functions = getFunctions(app)
 
-// Initialize Analytics (production only, requires measurementId)
-// Export a promise so callers can await it — avoids race conditions where
-// logEvent is called before the async init finishes.
-// In Electron, isSupported() can return false, so we skip that check and
-// initialise directly (gtag works fine in Electron's Chromium renderer).
-export const analyticsReady: Promise<Analytics | null> =
-  !import.meta.env.DEV && firebaseConfig.measurementId
-    ? Promise.resolve(getAnalytics(app)).catch(() => null)
-    : Promise.resolve(null)
+// Initialize Analytics when measurementId is configured
+export const analyticsReady: Promise<Analytics | null> = firebaseConfig.measurementId
+  ? Promise.resolve(getAnalytics(app)).catch(() => null)
+  : Promise.resolve(null)
 
 // Connect to emulators in development
 if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true') {
