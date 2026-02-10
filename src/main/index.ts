@@ -63,7 +63,7 @@ function createWindow(): void {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    mainWindow.loadURL('app://./index.html')
   }
 }
 
@@ -350,6 +350,26 @@ function getAudioMimeType(filePath: string): string {
   return mimeTypes[ext] || 'application/octet-stream'
 }
 
+function getMimeType(filePath: string): string {
+  const ext = extname(filePath).toLowerCase()
+  const mimeTypes: Record<string, string> = {
+    '.html': 'text/html',
+    '.js': 'text/javascript',
+    '.css': 'text/css',
+    '.json': 'application/json',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf'
+  }
+  return mimeTypes[ext] || 'application/octet-stream'
+}
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'media',
@@ -358,6 +378,14 @@ protocol.registerSchemesAsPrivileged([
       standard: false,
       supportFetchAPI: true,
       stream: true
+    }
+  },
+  {
+    scheme: 'app',
+    privileges: {
+      secure: true,
+      standard: true,
+      supportFetchAPI: true
     }
   }
 ])
@@ -426,6 +454,47 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.error('[media protocol] Failed to load:', filePath, err)
       return new Response('File not found', { status: 404 })
+    }
+  })
+
+  // Serve renderer files via app:// protocol so the origin is treated as secure
+  // (required for Firebase Analytics / gtag.js which refuses file:// origins)
+  const rendererDir = join(__dirname, '../renderer')
+
+  protocol.handle('app', async (request) => {
+    const url = new URL(request.url)
+    let filePath = decodeURIComponent(url.pathname)
+
+    if (filePath === '/' || filePath === '') {
+      filePath = '/index.html'
+    }
+
+    const resolvedPath = join(rendererDir, filePath)
+
+    // Prevent directory traversal
+    if (!resolvedPath.startsWith(rendererDir)) {
+      return new Response('Forbidden', { status: 403 })
+    }
+
+    try {
+      const fileStat = await stat(resolvedPath)
+      if (!fileStat.isFile()) {
+        return new Response('Not found', { status: 404 })
+      }
+
+      const mimeType = getMimeType(resolvedPath)
+      const nodeStream = createReadStream(resolvedPath)
+      const webStream = Readable.toWeb(nodeStream) as ReadableStream
+
+      return new Response(webStream, {
+        status: 200,
+        headers: {
+          'Content-Type': mimeType,
+          'Content-Length': String(fileStat.size)
+        }
+      })
+    } catch {
+      return new Response('Not found', { status: 404 })
     }
   })
 
