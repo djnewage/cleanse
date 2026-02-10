@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app'
-import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics'
+import { getAnalytics, type Analytics } from 'firebase/analytics'
 import { getAuth, connectAuthEmulator } from 'firebase/auth'
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore'
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions'
@@ -25,14 +25,14 @@ export const db = getFirestore(app)
 export const functions = getFunctions(app)
 
 // Initialize Analytics (production only, requires measurementId)
-export let analytics: Analytics | null = null
-if (!import.meta.env.DEV && firebaseConfig.measurementId) {
-  isSupported().then((supported) => {
-    if (supported) {
-      analytics = getAnalytics(app)
-    }
-  })
-}
+// Export a promise so callers can await it — avoids race conditions where
+// logEvent is called before the async init finishes.
+// In Electron, isSupported() can return false, so we skip that check and
+// initialise directly (gtag works fine in Electron's Chromium renderer).
+export const analyticsReady: Promise<Analytics | null> =
+  !import.meta.env.DEV && firebaseConfig.measurementId
+    ? Promise.resolve(getAnalytics(app)).catch(() => null)
+    : Promise.resolve(null)
 
 // Connect to emulators in development
 if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true') {

@@ -1,10 +1,10 @@
 import { logEvent } from 'firebase/analytics'
-import { analytics } from './firebase'
+import { analyticsReady } from './firebase'
 
 function log(event: string, params?: Record<string, string | number>) {
-  if (analytics) {
-    logEvent(analytics, event, params)
-  }
+  analyticsReady.then((a) => {
+    if (a) logEvent(a, event, params)
+  })
 }
 
 export function logLogin() {
