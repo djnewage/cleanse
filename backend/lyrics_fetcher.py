@@ -2,13 +2,22 @@
 
 import re
 import sys
+from pathlib import Path
 
 import requests
 from tinytag import TinyTag
 
 from better_profanity import profanity
+from profanity_detector import _normalize_word
 
 profanity.load_censor_words()
+
+# Load custom words for music/rap context
+custom_words_file = Path(__file__).parent / "custom_profanity.txt"
+if custom_words_file.exists():
+    with open(custom_words_file, 'r', encoding='utf-8') as f:
+        custom_words = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        profanity.add_censor_words(custom_words)
 
 LRCLIB_BASE = "https://lrclib.net/api"
 USER_AGENT = "Cleanse Audio Censor App/1.0 (https://github.com/cleanse)"
@@ -30,14 +39,43 @@ def extract_metadata(file_path: str) -> dict:
         return {"artist": None, "title": None, "album": None, "duration": None}
 
 
+def _extract_first_artist(artist: str) -> str:
+    """
+    Extract the first/primary artist from a multi-artist string.
+
+    Examples:
+        "Playboi Carti, Future, & Travis Scott" → "Playboi Carti"
+        "Playboi Carti & Future" → "Playboi Carti"
+        "Playboi Carti ft. Future" → "Playboi Carti"
+        "Playboi Carti feat. Future" → "Playboi Carti"
+        "Playboi Carti (feat. Future)" → "Playboi Carti"
+    """
+    # Remove parenthetical featured artists first: "Artist (feat. Other)" → "Artist"
+    # This must be done before splitting to handle cases like "Artist (feat. Other)"
+    cleaned = re.sub(r'\s*\([^)]*feat[\.\\s][^)]*\)', '', artist, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\([^)]*ft[\.\\s][^)]*\)', '', cleaned, flags=re.IGNORECASE)
+
+    # Split on common delimiters and take first part
+    for delimiter in [',', ' & ', ' and ', ' ft.', ' ft ', ' feat.', ' feat ', ' featuring ']:
+        if delimiter in cleaned:
+            first = cleaned.split(delimiter)[0].strip()
+            # Remove trailing parentheses if present
+            first = first.rstrip('(').strip()
+            return first
+
+    first = cleaned
+
+    return first.strip()
+
+
 def fetch_lyrics(artist: str | None, title: str | None, duration: float | None = None) -> dict | None:
-    """Fetch lyrics from LRCLIB. Returns {plain_lyrics, synced_lyrics} or None."""
+    """Fetch lyrics from LRCLIB with progressive fallback. Returns {plain_lyrics, synced_lyrics} or None."""
     if not artist or not title:
         return None
 
     headers = {"User-Agent": USER_AGENT}
 
-    # Try exact match first
+    # STEP 1: Try exact match with full artist name
     try:
         params = {"artist_name": artist, "track_name": title}
         if duration is not None:
@@ -60,7 +98,7 @@ def fetch_lyrics(artist: str | None, title: str | None, duration: float | None =
     except Exception as e:
         print(f"[Lyrics] Exact match failed: {e}", file=sys.stderr)
 
-    # Fallback to search
+    # STEP 2: Try search with full artist name
     try:
         params = {"track_name": title, "artist_name": artist}
         resp = requests.get(
@@ -80,9 +118,58 @@ def fetch_lyrics(artist: str | None, title: str | None, duration: float | None =
                         "synced_lyrics": best.get("syncedLyrics"),
                     }
     except Exception as e:
-        print(f"[Lyrics] Search failed: {e}", file=sys.stderr)
+        print(f"[Lyrics] Search with full artist failed: {e}", file=sys.stderr)
 
-    print(f"[Lyrics] No lyrics found for '{artist} - {title}'", file=sys.stderr)
+    # STEP 3: Try with first artist only (extract before comma/ampersand)
+    first_artist = _extract_first_artist(artist)
+    if first_artist and first_artist != artist:
+        try:
+            print(f"[Lyrics] Trying first artist only: '{first_artist}'", file=sys.stderr)
+            params = {"track_name": title, "artist_name": first_artist}
+            resp = requests.get(
+                f"{LRCLIB_BASE}/search",
+                params=params,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                results = resp.json()
+                if results and len(results) > 0:
+                    best = results[0]
+                    if best.get("plainLyrics") or best.get("syncedLyrics"):
+                        print(f"[Lyrics] Found match with first artist: '{first_artist} - {title}'", file=sys.stderr)
+                        return {
+                            "plain_lyrics": best.get("plainLyrics"),
+                            "synced_lyrics": best.get("syncedLyrics"),
+                        }
+        except Exception as e:
+            print(f"[Lyrics] First artist search failed: {e}", file=sys.stderr)
+
+    # STEP 4: Try title-only search as last resort
+    try:
+        print(f"[Lyrics] Trying title-only search: '{title}'", file=sys.stderr)
+        params = {"track_name": title}  # No artist_name parameter
+        resp = requests.get(
+            f"{LRCLIB_BASE}/search",
+            params=params,
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code == 200:
+            results = resp.json()
+            if results and len(results) > 0:
+                # Take first result but log ambiguity warning
+                best = results[0]
+                if best.get("plainLyrics") or best.get("syncedLyrics"):
+                    print(f"[Lyrics] Found title-only match (ambiguous): '{title}' (matched artist: {best.get('artistName')})", file=sys.stderr)
+                    return {
+                        "plain_lyrics": best.get("plainLyrics"),
+                        "synced_lyrics": best.get("syncedLyrics"),
+                    }
+    except Exception as e:
+        print(f"[Lyrics] Title-only search failed: {e}", file=sys.stderr)
+
+    print(f"[Lyrics] No lyrics found after all attempts for '{artist} - {title}'", file=sys.stderr)
     return None
 
 
@@ -123,7 +210,9 @@ def find_lyrics_profanity(
         word_duration = line_duration / num_words
 
         for j, word in enumerate(words_in_line):
-            if not profanity.contains_profanity(word):
+            # Check if any normalized variation of the word is profane
+            variations = _normalize_word(word)
+            if not any(profanity.contains_profanity(v) for v in variations):
                 continue
 
             # Estimate word timestamp: center each word in its slot within the line

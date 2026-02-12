@@ -93,6 +93,12 @@ export function usePlaybackTime(): PlaybackTimeState {
         node.addEventListener('pause', handlePause)
         node.addEventListener('ended', handleEnded)
         node.addEventListener('seeked', handleSeeked)
+
+        // CRITICAL: Always sync initial time, even if not playing
+        // This prevents the blocking condition in TranscriptEditor from staying true
+        lastReportedTimeRef.current = node.currentTime
+        setCurrentTime(node.currentTime)
+
         // Sync initial state in case element is already playing
         if (!node.paused) {
           setIsPlaying(true)

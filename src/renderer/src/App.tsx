@@ -1,4 +1,4 @@
-import { useReducer, useEffect, useCallback, useRef, useState } from 'react'
+import { useReducer, useEffect, useCallback, useRef, useState, useMemo } from 'react'
 import type {
   BatchAppState,
   BatchAppAction,
@@ -37,7 +37,8 @@ const initialState: BatchAppState = {
   isExportingAll: false,
   exportProgress: null,
   turboEnabled: false,
-  deviceInfo: null
+  deviceInfo: null,
+  crossfadeMs: 30
 }
 
 function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
@@ -59,17 +60,18 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         separationProgress: null,
         transcriptionProgress: null,
         censoredFilePath: null,
+        previewFilePath: null,
+        isGeneratingPreview: false,
         defaultCensorType: state.globalDefaultCensorType,
         userReviewed: false,
         errorMessage: null,
         metadata: null,
         lyrics: null
       }))
-      const newIds = newSongs.map((s) => s.id)
       return {
         ...state,
-        songs: [...state.songs, ...newSongs],
-        processingQueue: [...state.processingQueue, ...newIds]
+        songs: [...state.songs, ...newSongs]
+        // Don't add to processingQueue yet - wait for metadata to be fetched
       }
     }
 
@@ -96,13 +98,22 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
     case 'START_PROCESSING':
       return { ...state, currentlyProcessingId: action.id }
 
-    case 'SET_SONG_METADATA':
+    case 'SET_SONG_METADATA': {
+      const song = state.songs.find((s) => s.id === action.id)
+      const shouldAddToQueue = song &&
+                              song.status === 'pending' &&
+                              !state.processingQueue.includes(action.id)
+
       return {
         ...state,
         songs: state.songs.map((s) =>
           s.id === action.id ? { ...s, metadata: action.metadata } : s
-        )
+        ),
+        processingQueue: shouldAddToQueue
+          ? [...state.processingQueue, action.id]
+          : state.processingQueue
       }
+    }
 
     case 'SET_SONG_LYRICS':
       return {
@@ -216,7 +227,8 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
             ? {
                 ...s,
                 words: [...s.words, action.word].sort((a, b) => a.start - b.start),
-                censoredFilePath: null
+                censoredFilePath: null,
+                previewFilePath: null
               }
             : s
         )
@@ -232,7 +244,8 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
                 words: s.words.map((w, i) =>
                   i === action.wordIndex ? { ...w, is_profanity: !w.is_profanity } : w
                 ),
-                censoredFilePath: null
+                censoredFilePath: null,
+                previewFilePath: null
               }
             : s
         )
@@ -248,7 +261,8 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
                 words: s.words.map((w, i) =>
                   i === action.wordIndex ? { ...w, censor_type: action.censorType } : w
                 ),
-                censoredFilePath: null
+                censoredFilePath: null,
+                previewFilePath: null
               }
             : s
         )
@@ -258,7 +272,43 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
       return {
         ...state,
         songs: state.songs.map((s) =>
-          s.id === action.songId ? { ...s, defaultCensorType: action.censorType, censoredFilePath: null } : s
+          s.id === action.songId ? { ...s, defaultCensorType: action.censorType, censoredFilePath: null, previewFilePath: null } : s
+        )
+      }
+
+    case 'START_PREVIEW_GENERATION':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, isGeneratingPreview: true } : s
+        )
+      }
+
+    case 'PREVIEW_GENERATED':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id
+            ? { ...s, previewFilePath: action.previewPath, isGeneratingPreview: false }
+            : s
+        )
+      }
+
+    case 'PREVIEW_GENERATION_FAILED':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id
+            ? { ...s, isGeneratingPreview: false, errorMessage: action.error }
+            : s
+        )
+      }
+
+    case 'CLEAR_PREVIEW':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id ? { ...s, previewFilePath: null } : s
         )
       }
 
@@ -346,6 +396,9 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
     case 'SET_TURBO_ENABLED':
       return { ...state, turboEnabled: action.enabled }
 
+    case 'SET_CROSSFADE_MS':
+      return { ...state, crossfadeMs: action.ms }
+
     default:
       return state
   }
@@ -354,6 +407,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
 function MainApp(): React.JSX.Element {
   const [state, dispatch] = useReducer(reducer, initialState)
   const exportingRef = useRef(false)
+  const generationRequestRef = useRef<number>(0)
   const [showPaywall, setShowPaywall] = useState(false)
   const [showFeedback, setShowFeedback] = useState(false)
   const [updateState, setUpdateState] = useState<{
@@ -365,6 +419,19 @@ function MainApp(): React.JSX.Element {
   }>({ show: false, version: '', releaseNotes: '', downloadProgress: null, downloaded: false })
 
   const { isAuthenticated, isLoading: authLoading, checkCanProcess, recordUsage } = useAuth()
+
+  // Memoized signature of expanded song's censored words
+  const expandedSongWordsSignature = useMemo(() => {
+    if (!state.expandedSongId) return null
+    const song = state.songs.find((s) => s.id === state.expandedSongId)
+    if (!song) return null
+
+    // Create signature from profane words + their censor types
+    return song.words
+      .filter((w) => w.is_profanity)
+      .map((w) => `${w.word}:${w.start}:${w.end}:${w.censor_type ?? song.defaultCensorType}`)
+      .join('|')
+  }, [state.expandedSongId, state.songs])
 
   // Use the queue processor hook
   const { retrySong } = useQueueProcessor({
@@ -471,12 +538,103 @@ function MainApp(): React.JSX.Element {
   )
 
   // Toggle expanded song
-  const handleToggleExpand = useCallback((id: string) => {
-    dispatch({
-      type: 'SET_EXPANDED_SONG',
-      id: state.expandedSongId === id ? null : id
-    })
-  }, [state.expandedSongId])
+  const handleToggleExpand = useCallback(async (id: string) => {
+    const song = state.songs.find((s) => s.id === id)
+
+    if (state.expandedSongId === id) {
+      // Closing - cancel any in-flight preview generation
+      generationRequestRef.current = Date.now() // Invalidate current request
+      dispatch({ type: 'SET_EXPANDED_SONG', id: null })
+    } else {
+      // Opening
+      dispatch({ type: 'SET_EXPANDED_SONG', id })
+
+      // Generate preview if song is ready and no preview exists and has profanity
+      if (song && song.status === 'ready' && !song.previewFilePath && !song.isGeneratingPreview) {
+        const profaneWords = song.words.filter((w) => w.is_profanity)
+        if (profaneWords.length > 0) {
+          dispatch({ type: 'START_PREVIEW_GENERATION', id })
+
+          try {
+            const censorWords: CensorWord[] = profaneWords.map((w) => ({
+              word: w.word,
+              start: w.start,
+              end: w.end,
+              censor_type: w.censor_type ?? song.defaultCensorType
+            }))
+
+            const previewPath = await window.electronAPI.previewAudio({
+              filePath: song.filePath,
+              censorWords,
+              vocalsPath: song.vocalsPath ?? undefined,
+              accompanimentPath: song.accompanimentPath ?? undefined,
+              crossfadeMs: state.crossfadeMs
+            })
+
+            dispatch({ type: 'PREVIEW_GENERATED', id, previewPath })
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            dispatch({ type: 'PREVIEW_GENERATION_FAILED', id, error: message })
+          }
+        }
+      }
+    }
+  }, [state.expandedSongId, state.songs, state.crossfadeMs])
+
+  // Auto-regenerate preview when words change while panel is open
+  useEffect(() => {
+    // Only regenerate if panel is open and song is ready
+    if (!state.expandedSongId) return
+
+    const song = state.songs.find((s) => s.id === state.expandedSongId)
+    if (!song || song.status !== 'ready') return
+
+    // Don't regenerate if preview exists or already generating
+    if (song.previewFilePath || song.isGeneratingPreview) return
+
+    // Only regenerate if there are profane words to censor
+    const profaneWords = song.words.filter((w) => w.is_profanity)
+    if (profaneWords.length === 0) return
+
+    // Debounce: Set timeout to regenerate preview after 500ms
+    const timeoutId = setTimeout(async () => {
+      // Generate unique request ID to track staleness
+      const requestId = Date.now()
+      generationRequestRef.current = requestId
+
+      dispatch({ type: 'START_PREVIEW_GENERATION', id: song.id })
+
+      try {
+        const censorWords: CensorWord[] = profaneWords.map((w) => ({
+          word: w.word,
+          start: w.start,
+          end: w.end,
+          censor_type: w.censor_type ?? song.defaultCensorType
+        }))
+
+        const previewPath = await window.electronAPI.previewAudio({
+          filePath: song.filePath,
+          censorWords,
+          vocalsPath: song.vocalsPath ?? undefined,
+          accompanimentPath: song.accompanimentPath ?? undefined,
+          crossfadeMs: state.crossfadeMs
+        })
+
+        // Only update if this request is still current
+        if (generationRequestRef.current === requestId) {
+          dispatch({ type: 'PREVIEW_GENERATED', id: song.id, previewPath })
+        }
+      } catch (error) {
+        // Only update error if this request is still current
+        if (generationRequestRef.current === requestId) {
+          const message = error instanceof Error ? error.message : String(error)
+          dispatch({ type: 'PREVIEW_GENERATION_FAILED', id: song.id, error: message })
+        }
+      }
+    }, 500)
+
+    return () => clearTimeout(timeoutId)
+  }, [state.expandedSongId, expandedSongWordsSignature, state.crossfadeMs])
 
   // Remove song from queue
   const handleRemoveSong = useCallback((id: string) => {
@@ -496,17 +654,20 @@ function MainApp(): React.JSX.Element {
   // Toggle profanity for a word
   const handleToggleProfanity = useCallback((songId: string, wordIndex: number) => {
     dispatch({ type: 'TOGGLE_PROFANITY', songId, wordIndex })
+    dispatch({ type: 'CLEAR_PREVIEW', id: songId })
   }, [])
 
   // Add a manual censor word
   const handleAddManualWord = useCallback((songId: string, word: TranscribedWord) => {
     dispatch({ type: 'ADD_MANUAL_WORD', songId, word })
+    dispatch({ type: 'CLEAR_PREVIEW', id: songId })
   }, [])
 
   // Set censor type for a word
   const handleSetWordCensorType = useCallback(
     (songId: string, wordIndex: number, censorType: CensorType) => {
       dispatch({ type: 'SET_WORD_CENSOR_TYPE', songId, wordIndex, censorType })
+      dispatch({ type: 'CLEAR_PREVIEW', id: songId })
     },
     []
   )
@@ -514,6 +675,7 @@ function MainApp(): React.JSX.Element {
   // Set censor type for a song
   const handleSetSongCensorType = useCallback((songId: string, censorType: CensorType) => {
     dispatch({ type: 'SET_SONG_CENSOR_TYPE', songId, censorType })
+    dispatch({ type: 'CLEAR_PREVIEW', id: songId })
   }, [])
 
   // Mark song as reviewed
@@ -598,7 +760,8 @@ function MainApp(): React.JSX.Element {
           censorWords,
           outputPath,
           song.vocalsPath ?? undefined,
-          song.accompanimentPath ?? undefined
+          song.accompanimentPath ?? undefined,
+          state.crossfadeMs
         )
 
         dispatch({ type: 'EXPORT_COMPLETE', id: song.id, outputPath: result.output_path })
@@ -729,6 +892,7 @@ function MainApp(): React.JSX.Element {
             <QueueList
               songs={state.songs}
               expandedSongId={state.expandedSongId}
+              globalCensorType={state.globalDefaultCensorType}
               onToggleExpand={handleToggleExpand}
               onRemoveSong={handleRemoveSong}
               onRetrySong={retrySong}
@@ -754,6 +918,8 @@ function MainApp(): React.JSX.Element {
               completedCount={completedCount}
               globalCensorType={state.globalDefaultCensorType}
               onSetGlobalCensorType={handleSetGlobalCensorType}
+              crossfadeMs={state.crossfadeMs}
+              onSetCrossfadeMs={(ms) => dispatch({ type: 'SET_CROSSFADE_MS', ms })}
               onExportAll={handleExportAll}
               onClearAll={handleClearAll}
               isExporting={state.isExportingAll}

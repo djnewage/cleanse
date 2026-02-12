@@ -17,6 +17,7 @@ export function useQueueProcessor({
   dispatch
 }: UseQueueProcessorProps) {
   const isProcessingRef = useRef(false)
+  const startedIdsRef = useRef(new Set<string>())
 
   // Subscribe to separation progress for the currently processing song
   useEffect(() => {
@@ -129,12 +130,17 @@ export function useQueueProcessor({
         return
       }
 
+      // Prevent StrictMode double-fire from processing the same song twice
+      if (startedIdsRef.current.has(nextId)) return
+      startedIdsRef.current.add(nextId)
+
       isProcessingRef.current = true
       dispatch({ type: 'START_PROCESSING', id: nextId })
 
       await processSong(nextId)
 
       isProcessingRef.current = false
+      startedIdsRef.current.delete(nextId)
     }
 
     processNext()
@@ -143,6 +149,7 @@ export function useQueueProcessor({
   // Retry a failed song
   const retrySong = useCallback(
     (songId: string) => {
+      startedIdsRef.current.delete(songId)
       dispatch({ type: 'RETRY_SONG', id: songId })
     },
     [dispatch]

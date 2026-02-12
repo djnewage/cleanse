@@ -3,6 +3,8 @@ import { join, extname } from 'path'
 import { createReadStream } from 'fs'
 import { stat } from 'fs/promises'
 import { Readable } from 'stream'
+import { existsSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import log from 'electron-log'
@@ -13,6 +15,7 @@ import {
   isBackendAlive,
   getBackendLogPath,
   fetchBackend,
+  fetchBackendStreaming,
   setProgressCallback,
   setTranscriptionProgressCallback,
   getDeviceInfo
@@ -21,7 +24,7 @@ import { getHistory, addHistoryEntry, deleteHistoryEntry } from './history-store
 
 async function describeBackendError(originalMsg: string): Promise<string> {
   // Yield to event loop so the child process 'exit' event can propagate
-  await new Promise((resolve) => setTimeout(resolve, 100))
+  await new Promise((resolve) => setTimeout(resolve, 500))
   const logPath = getBackendLogPath()
   const logHint = logPath ? ` Check logs: ${logPath}` : ''
   if (!isBackendAlive()) {
@@ -134,14 +137,21 @@ ipcMain.handle('get-audio-metadata', async (_event, filePath: string) => {
 
 ipcMain.handle('fetch-lyrics', async (_event, artist: string, title: string, duration?: number) => {
   try {
+    console.log(`[Lyrics] Fetching for: "${artist}" - "${title}"`)
     const resp = await fetchBackend('/fetch-lyrics', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ artist, title, duration })
     })
-    if (!resp.ok) return { plain_lyrics: null, synced_lyrics: null }
-    return await resp.json()
-  } catch {
+    if (!resp.ok) {
+      console.log(`[Lyrics] Fetch failed: HTTP ${resp.status}`)
+      return { plain_lyrics: null, synced_lyrics: null }
+    }
+    const result = await resp.json()
+    console.log(`[Lyrics] Success: plain=${!!result.plain_lyrics}, synced=${!!result.synced_lyrics}`)
+    return result
+  } catch (err) {
+    console.error('[Lyrics] Fetch error:', err)
     return { plain_lyrics: null, synced_lyrics: null }
   }
 })
@@ -164,28 +174,21 @@ ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolea
       body.synced_lyrics = syncedLyrics
     }
 
-    const resp = await fetchBackend('/transcribe', {
+    const result = await fetchBackendStreaming<{
+      words: Array<Record<string, unknown>>
+      duration: number
+      language: string
+    }>('/transcribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     })
 
-    if (!resp.ok) {
-      const err = await resp.json()
-      const detail = err.detail
-      const message =
-        typeof detail === 'string'
-          ? detail
-          : Array.isArray(detail)
-            ? detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ')
-            : JSON.stringify(detail)
-      throw new Error(message || 'Transcription failed')
-    }
-
-    return await resp.json()
+    return result
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    throw new Error(`Transcription error: ${await describeBackendError(msg)}`)
+    const cause = err instanceof Error && err.cause ? ` [cause: ${err.cause}]` : ''
+    throw new Error(`Transcription error: ${await describeBackendError(msg + cause)}`)
   } finally {
     setTranscriptionProgressCallback(null)
   }
@@ -198,32 +201,74 @@ ipcMain.handle('separate-audio', async (_event, filePath: string, turbo: boolean
       mainWindow?.webContents.send('separation-progress', data)
     })
 
-    const resp = await fetchBackend('/separate', {
+    const result = await fetchBackendStreaming<{
+      vocals_path: string
+      accompaniment_path: string
+    }>('/separate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: filePath, turbo })
     })
 
-    if (!resp.ok) {
-      const err = await resp.json()
-      const detail = err.detail
-      const message =
-        typeof detail === 'string'
-          ? detail
-          : Array.isArray(detail)
-            ? detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ')
-            : JSON.stringify(detail)
-      throw new Error(message || 'Separation failed')
-    }
-
-    return await resp.json()
+    return result
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    throw new Error(`Separation error: ${await describeBackendError(msg)}`)
+    const cause = err instanceof Error && err.cause ? ` [cause: ${err.cause}]` : ''
+    throw new Error(`Separation error: ${await describeBackendError(msg + cause)}`)
   } finally {
     setProgressCallback(null)
   }
 })
+
+ipcMain.handle(
+  'preview-audio',
+  async (
+    _event,
+    args: {
+      filePath: string
+      censorWords: Array<{ word: string; start: number; end: number; censor_type: string }>
+      vocalsPath?: string
+      accompanimentPath?: string
+      crossfadeMs: number
+    }
+  ) => {
+    try {
+      const body: Record<string, unknown> = {
+        path: args.filePath,
+        words: args.censorWords,
+        crossfade_ms: args.crossfadeMs
+      }
+      if (args.vocalsPath && args.accompanimentPath) {
+        body.vocals_path = args.vocalsPath
+        body.accompaniment_path = args.accompanimentPath
+      }
+
+      const resp = await fetchBackend('/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+
+      if (!resp.ok) {
+        const err = await resp.json()
+        const detail = err.detail
+        const message =
+          typeof detail === 'string'
+            ? detail
+            : Array.isArray(detail)
+              ? detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ')
+              : JSON.stringify(detail)
+        throw new Error(message || 'Preview generation failed')
+      }
+
+      const result = await resp.json()
+      return result.output_path
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(`Preview error: ${await describeBackendError(msg)}`)
+    }
+  }
+)
 
 ipcMain.handle(
   'censor-audio',
@@ -233,13 +278,17 @@ ipcMain.handle(
     words: Array<{ word: string; start: number; end: number; censor_type: string }>,
     outputPath?: string,
     vocalsPath?: string,
-    accompanimentPath?: string
+    accompanimentPath?: string,
+    crossfadeMs?: number
   ) => {
     try {
       const body: Record<string, unknown> = { path: filePath, words, output_path: outputPath }
       if (vocalsPath && accompanimentPath) {
         body.vocals_path = vocalsPath
         body.accompaniment_path = accompanimentPath
+      }
+      if (crossfadeMs !== undefined) {
+        body.crossfade_ms = crossfadeMs
       }
 
       const resp = await fetchBackend('/censor', {
@@ -534,6 +583,16 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   stopPythonBackend()
+
+  // Clean up preview directory
+  const previewDir = join(tmpdir(), 'cleanse-preview')
+  if (existsSync(previewDir)) {
+    try {
+      rmSync(previewDir, { recursive: true, force: true })
+    } catch (err) {
+      console.error('[Main] Failed to cleanup preview directory:', err)
+    }
+  }
 })
 
 app.on('window-all-closed', () => {

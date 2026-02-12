@@ -6,6 +6,8 @@ interface BatchControlsProps {
   completedCount: number
   globalCensorType: CensorType
   onSetGlobalCensorType: (type: CensorType) => void
+  crossfadeMs: number
+  onSetCrossfadeMs: (ms: number) => void
   onExportAll: () => void
   onClearAll: () => void
   isExporting: boolean
@@ -26,6 +28,8 @@ export default function BatchControls({
   completedCount,
   globalCensorType,
   onSetGlobalCensorType,
+  crossfadeMs,
+  onSetCrossfadeMs,
   onExportAll,
   onClearAll,
   isExporting,
@@ -42,7 +46,12 @@ export default function BatchControls({
         <div className="flex items-center gap-4">
           {/* Global censor type */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500">Global censor:</span>
+            <span
+              className="text-xs text-zinc-500 cursor-help"
+              title="Default for all songs (can override per song during review)"
+            >
+              Default:
+            </span>
             <div className="flex rounded-md overflow-hidden border border-zinc-700">
               {censorOptions.map((opt) => (
                 <button
@@ -63,6 +72,22 @@ export default function BatchControls({
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Crossfade control */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-500">Crossfade:</span>
+            <input
+              type="range"
+              min={5}
+              max={50}
+              step={5}
+              value={crossfadeMs}
+              onChange={(e) => onSetCrossfadeMs(Number(e.target.value))}
+              disabled={disabled}
+              className="w-20 h-1 accent-blue-600 bg-zinc-700 rounded-full appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            <span className="text-xs text-zinc-400 w-8">{crossfadeMs}ms</span>
           </div>
         </div>
 

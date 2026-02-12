@@ -1,9 +1,10 @@
-import type { SongEntry } from '../types'
+import type { SongEntry, CensorType } from '../types'
 import QueueItem from './QueueItem'
 
 interface QueueListProps {
   songs: SongEntry[]
   expandedSongId: string | null
+  globalCensorType: CensorType
   onToggleExpand: (id: string) => void
   onRemoveSong: (id: string) => void
   onRetrySong: (id: string) => void
@@ -12,6 +13,7 @@ interface QueueListProps {
 export default function QueueList({
   songs,
   expandedSongId,
+  globalCensorType,
   onToggleExpand,
   onRemoveSong,
   onRetrySong
@@ -47,6 +49,7 @@ export default function QueueList({
             key={song.id}
             song={song}
             isExpanded={expandedSongId === song.id}
+            globalCensorType={globalCensorType}
             onToggleExpand={() => onToggleExpand(song.id)}
             onRemove={() => onRemoveSong(song.id)}
             onRetry={() => onRetrySong(song.id)}

@@ -263,14 +263,113 @@ export async function fetchBackend(
     } catch (err) {
       clearTimeout(timer)
       const errMsg = err instanceof Error ? err.message : String(err)
+      const errCause =
+        err instanceof Error && err.cause ? ` (cause: ${JSON.stringify(err.cause)})` : ''
       if (attempt < maxRetries && isBackendAlive()) {
-        writeLog(`[fetch] ${endpoint} attempt ${attempt + 1} failed (${errMsg}), retrying in 2s...`)
+        writeLog(
+          `[fetch] ${endpoint} attempt ${attempt + 1} failed (${errMsg}${errCause}), retrying in 2s...`
+        )
         await new Promise((r) => setTimeout(r, 2000))
         continue
       }
+      writeLog(`[fetch] ${endpoint} failed after ${attempt + 1} attempts: ${errMsg}${errCause}`)
       throw err
     }
   }
   // Unreachable — loop always returns or throws — but satisfies TypeScript
   throw new Error(`fetchBackend: exhausted retries for ${endpoint}`)
+}
+
+/**
+ * Fetch a streaming NDJSON endpoint (for long-running operations like /separate
+ * and /transcribe). Reads the response body line-by-line, ignores heartbeat
+ * lines, and returns the parsed result. No retries — restarting a multi-minute
+ * operation from scratch would be counterproductive.
+ */
+export async function fetchBackendStreaming<T = unknown>(
+  endpoint: string,
+  options?: RequestInit & { timeoutMs?: number }
+): Promise<T> {
+  const { timeoutMs = 600_000, ...fetchOptions } = options ?? {}
+  const url = `http://127.0.0.1:${backendPort}${endpoint}`
+  const controller = new AbortController()
+
+  // Idle timeout: resets each time a heartbeat arrives.
+  // timeoutMs = max silence before aborting (not total operation time).
+  let timer = setTimeout(() => controller.abort(), timeoutMs)
+  const resetTimer = (): void => {
+    clearTimeout(timer)
+    timer = setTimeout(() => controller.abort(), timeoutMs)
+  }
+
+  let resp: Response
+  try {
+    resp = await fetch(url, { ...fetchOptions, signal: controller.signal })
+  } catch (err) {
+    clearTimeout(timer)
+    const errMsg = err instanceof Error ? err.message : String(err)
+    const errCause =
+      err instanceof Error && err.cause ? ` (cause: ${JSON.stringify(err.cause)})` : ''
+    writeLog(`[fetch-streaming] ${endpoint} connection failed: ${errMsg}${errCause}`)
+    throw err
+  }
+
+  if (!resp.ok) {
+    clearTimeout(timer)
+    const text = await resp.text()
+    throw new Error(`Backend returned ${resp.status}: ${text}`)
+  }
+
+  if (!resp.body) {
+    clearTimeout(timer)
+    throw new Error('Backend returned empty body for streaming endpoint')
+  }
+
+  try {
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+
+      const lines = buffer.split('\n')
+      buffer = lines.pop()! // keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+
+        let parsed: { type: string; data?: T; detail?: string }
+        try {
+          parsed = JSON.parse(line)
+        } catch {
+          writeLog(`[fetch-streaming] ${endpoint} unparseable line: ${line}`)
+          continue
+        }
+
+        if (parsed.type === 'heartbeat') {
+          resetTimer() // Backend is alive — reset idle timeout
+          continue
+        }
+
+        if (parsed.type === 'error') {
+          throw new Error(parsed.detail || 'Backend streaming error')
+        }
+
+        if (parsed.type === 'result') {
+          clearTimeout(timer)
+          return parsed.data as T
+        }
+      }
+    }
+  } catch (err) {
+    clearTimeout(timer)
+    throw err
+  }
+
+  clearTimeout(timer)
+  throw new Error(`Backend stream ended without a result for ${endpoint}`)
 }

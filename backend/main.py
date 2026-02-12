@@ -1,8 +1,11 @@
 import argparse
+import asyncio
+import json as json_module
 import multiprocessing
 import os
 import sys
 import tempfile
+import threading
 
 # Required for PyInstaller: without this, multiprocessing child processes
 # re-execute main.py and crash on argparse (they receive internal args like
@@ -24,6 +27,7 @@ AudioSegment.ffprobe = imageio_ffmpeg.get_ffmpeg_exe()
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from transcribe import transcribe_audio
@@ -33,6 +37,11 @@ from vocal_separator import separate as separate_vocals
 from device_info import detect_device
 from lyrics_fetcher import extract_metadata, fetch_lyrics, find_lyrics_profanity
 
+# Configuration: Dual-pass transcription (transcribe both mix + vocals)
+# Set CLEANSE_DUAL_PASS=true to enable for higher accuracy (slower)
+# TODO: Add dual-pass toggle in settings UI
+ENABLE_DUAL_PASS = os.environ.get("CLEANSE_DUAL_PASS", "false").lower() == "true"
+
 app = FastAPI(title="Cleanse Backend")
 
 app.add_middleware(
@@ -41,6 +50,51 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+async def _streaming_heartbeat_wrapper(sync_fn, *args, **kwargs):
+    """Run sync_fn in a background thread, yielding NDJSON heartbeats until done.
+
+    Yields JSON lines: {"type":"heartbeat"}, {"type":"result","data":...},
+    or {"type":"error","detail":...}.
+
+    Uses run_in_executor (default ThreadPoolExecutor) instead of raw
+    threading.Thread to preserve macOS/Apple Silicon QoS scheduling —
+    raw daemon threads get lower QoS and run on efficiency cores.
+    """
+    result_holder = {}
+    done_event = threading.Event()
+    worker_thread = None
+
+    def run():
+        nonlocal worker_thread
+        worker_thread = threading.current_thread()
+        try:
+            result_holder["data"] = sync_fn(*args, **kwargs)
+        except Exception as e:
+            result_holder["error"] = str(e)
+        finally:
+            done_event.set()
+
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, run)
+
+    while not done_event.is_set():
+        if worker_thread is not None and not worker_thread.is_alive():
+            detail = result_holder.get("error", "Worker thread died unexpectedly")
+            yield json_module.dumps({"type": "error", "detail": detail}) + "\n"
+            return
+
+        yield json_module.dumps({"type": "heartbeat"}) + "\n"
+        for _ in range(4):
+            if done_event.is_set():
+                break
+            await asyncio.sleep(0.5)
+
+    if "error" in result_holder:
+        yield json_module.dumps({"type": "error", "detail": result_holder["error"]}) + "\n"
+    else:
+        yield json_module.dumps({"type": "result", "data": result_holder["data"]}) + "\n"
 
 
 class MetadataRequest(BaseModel):
@@ -73,6 +127,7 @@ class CensorRequest(BaseModel):
     output_path: str | None = None
     vocals_path: str | None = None
     accompaniment_path: str | None = None
+    crossfade_ms: int = 30
 
 
 @app.get("/health")
@@ -146,13 +201,13 @@ def merge_word_lists(
 
 
 @app.post("/transcribe")
-def transcribe(req: TranscribeRequest):
+async def transcribe(req: TranscribeRequest):
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
-    dual_pass = req.vocals_path and os.path.isfile(req.vocals_path)
+    dual_pass = ENABLE_DUAL_PASS and req.vocals_path and os.path.isfile(req.vocals_path)
 
-    try:
+    def _do_transcribe():
         # Pass 1: Transcribe the full mix
         if dual_pass:
             result = transcribe_audio(
@@ -192,19 +247,57 @@ def transcribe(req: TranscribeRequest):
             "duration": result["duration"],
             "language": detected_language,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    return StreamingResponse(
+        _streaming_heartbeat_wrapper(_do_transcribe),
+        media_type="application/x-ndjson",
+    )
 
 
 @app.post("/separate")
-def separate(req: SeparateRequest):
+async def separate(req: SeparateRequest):
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
+    output_dir = os.path.join(tempfile.gettempdir(), "cleanse-separated")
+    return StreamingResponse(
+        _streaming_heartbeat_wrapper(separate_vocals, req.path, output_dir, turbo=req.turbo),
+        media_type="application/x-ndjson",
+    )
+
+
+@app.post("/preview")
+def preview(req: CensorRequest):
+    """Generate temporary censored preview for reviewing before export."""
+    if not os.path.isfile(req.path):
+        raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
+
+    if not req.words:
+        raise HTTPException(status_code=400, detail="No words to censor")
+
     try:
-        output_dir = os.path.join(tempfile.gettempdir(), "cleanse-separated")
-        result = separate_vocals(req.path, output_dir, turbo=req.turbo)
-        return result
+        # Generate temp output path
+        temp_dir = os.path.join(tempfile.gettempdir(), "cleanse-preview")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # Create preview filename with timestamp to handle edits
+        base = os.path.basename(req.path)
+        name, ext = os.path.splitext(base)
+        import time
+        preview_path = os.path.join(temp_dir, f"{name}_preview_{int(time.time())}{ext}")
+
+        words_dicts = [w.model_dump() for w in req.words]
+
+        # Censor audio (same as export)
+        if req.vocals_path and req.accompaniment_path:
+            result_path = censor_audio_vocals_only(
+                req.vocals_path, req.accompaniment_path, words_dicts, preview_path,
+                crossfade_ms=req.crossfade_ms,
+            )
+        else:
+            result_path = censor_audio(req.path, words_dicts, preview_path, crossfade_ms=req.crossfade_ms)
+
+        return {"output_path": result_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -227,10 +320,11 @@ def censor(req: CensorRequest):
 
         if req.vocals_path and req.accompaniment_path:
             result_path = censor_audio_vocals_only(
-                req.vocals_path, req.accompaniment_path, words_dicts, output_path
+                req.vocals_path, req.accompaniment_path, words_dicts, output_path,
+                crossfade_ms=req.crossfade_ms,
             )
         else:
-            result_path = censor_audio(req.path, words_dicts, output_path)
+            result_path = censor_audio(req.path, words_dicts, output_path, crossfade_ms=req.crossfade_ms)
 
         return {"output_path": result_path}
     except Exception as e:

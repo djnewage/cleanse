@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { SongEntry, CensorType, TranscribedWord } from '../types'
 import TranscriptEditor from './TranscriptEditor'
 import AudioPreview from './AudioPreview'
@@ -23,6 +24,7 @@ export default function SongDetailPanel({
   onClose
 }: SongDetailPanelProps): React.JSX.Element {
   const { currentTime, isPlaying, audioRef } = usePlaybackTime()
+  const [lyricsExpanded, setLyricsExpanded] = useState(false)
 
   const handleToggleProfanity = (index: number) => {
     onToggleProfanity(song.id, index)
@@ -34,6 +36,73 @@ export default function SongDetailPanel({
 
   const handleAddManualWord = (word: TranscribedWord) => {
     onAddManualWord(song.id, word)
+  }
+
+  const checkIfProfane = (word: string): boolean => {
+    if (!word.trim()) return false
+
+    // Remove punctuation from start/end
+    const cleaned = word.trim().toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '')
+    if (!cleaned) return false
+
+    // Common profanity list (matches backend custom_profanity.txt)
+    const profanityList = [
+      'fuck',
+      'fuckin',
+      'fucking',
+      'shit',
+      'bitch',
+      'ass',
+      'damn',
+      'hell',
+      'nigga',
+      'niggas',
+      'niggaz',
+      'ho',
+      'hoe',
+      'hoes',
+      'hos',
+      'thot',
+      'thots',
+      'cunt',
+      'pussy',
+      'dick',
+      'cock',
+      'bastard'
+    ]
+
+    return profanityList.includes(cleaned)
+  }
+
+  const renderLyricsWithHighlights = (lyrics: string) => {
+    // Split lyrics into words while preserving whitespace and line breaks
+    const lines = lyrics.split('\n')
+
+    return lines.map((line, lineIdx) => {
+      const words = line.split(/(\s+)/) // Split by whitespace but keep delimiters
+
+      return (
+        <div key={lineIdx}>
+          {words.map((word, wordIdx) => {
+            // Check if this word (or its normalized form) is profane
+            const isProfane = checkIfProfane(word)
+
+            if (isProfane && word.trim()) {
+              return (
+                <span
+                  key={wordIdx}
+                  className="bg-red-900/40 text-red-300 px-0.5 rounded"
+                  title="Profanity detected"
+                >
+                  {word}
+                </span>
+              )
+            }
+            return <span key={wordIdx}>{word}</span>
+          })}
+        </div>
+      )
+    })
   }
 
   const profanityCount = song.words.filter((w) => w.is_profanity).length
@@ -71,6 +140,44 @@ export default function SongDetailPanel({
         </div>
       )}
 
+      {/* Fetched Lyrics Section */}
+      {song.lyrics && (song.lyrics.plain || song.lyrics.synced) && (
+        <div className="mb-6 rounded-lg border border-gray-700 bg-gray-800/50 p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-300">
+              Fetched Lyrics
+              {song.lyrics.synced && (
+                <span className="ml-2 rounded bg-green-900/30 px-2 py-0.5 text-xs text-green-400">
+                  Synced
+                </span>
+              )}
+            </h3>
+            <button
+              onClick={() => setLyricsExpanded(!lyricsExpanded)}
+              className="text-xs text-gray-400 hover:text-gray-300"
+            >
+              {lyricsExpanded ? 'Collapse' : 'Expand'}
+            </button>
+          </div>
+
+          {lyricsExpanded && song.lyrics.plain && (
+            <div className="max-h-96 overflow-y-auto rounded bg-gray-900/50 p-3">
+              <div className="text-xs leading-relaxed text-gray-300 font-mono whitespace-pre-wrap">
+                {renderLyricsWithHighlights(song.lyrics.plain)}
+              </div>
+            </div>
+          )}
+
+          {!lyricsExpanded && (
+            <p className="text-xs text-gray-500">
+              {song.lyrics.plain
+                ? `${song.lyrics.plain.split('\n').length} lines • Click Expand to view`
+                : 'Synced lyrics available (timing data only)'}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Transcript editor */}
       {song.words.length > 0 && (
         <TranscriptEditor
@@ -88,7 +195,12 @@ export default function SongDetailPanel({
 
       {/* Song-level censor type selector */}
       <div className="flex items-center gap-4">
-        <span className="text-xs text-zinc-500">Censor type for this song:</span>
+        <span
+          className="text-xs text-zinc-500 cursor-help"
+          title="Custom censor type for this song (overrides default)"
+        >
+          Censor type:
+        </span>
         <div className="flex rounded-md overflow-hidden border border-zinc-700">
           {(['mute', 'beep', 'reverse', 'tape_stop'] as CensorType[]).map((type) => (
             <button
@@ -120,9 +232,17 @@ export default function SongDetailPanel({
       {/* Audio preview: shown during review (ready) and after export */}
       {showAudioPreview && (
         <div className="pt-2">
+          {/* Show preview generation status */}
+          {song.isGeneratingPreview && (
+            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-3 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded">
+              <div className="w-3 h-3 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin" />
+              <span>Generating censored preview...</span>
+            </div>
+          )}
+
           <AudioPreview
             originalPath={song.filePath}
-            censoredPath={song.censoredFilePath}
+            censoredPath={song.previewFilePath || song.censoredFilePath}
             audioRef={audioRef}
             onClearFile={song.censoredFilePath ? () => {} : undefined}
           />

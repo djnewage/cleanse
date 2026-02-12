@@ -46,15 +46,15 @@ def _make_replacement(audio: AudioSegment, start_ms: int, end_ms: int, censor_ty
         return AudioSegment.silent(duration=duration_ms)
 
 
-def _splice_with_crossfade(audio: AudioSegment, start_ms: int, end_ms: int, replacement: AudioSegment) -> AudioSegment:
+def _splice_with_crossfade(audio: AudioSegment, start_ms: int, end_ms: int, replacement: AudioSegment, crossfade_ms: int = CROSSFADE_MS) -> AudioSegment:
     """Splice a replacement into audio with crossfade at boundaries."""
     before = audio[:start_ms]
     after = audio[end_ms:]
 
-    if len(before) >= CROSSFADE_MS and len(after) >= CROSSFADE_MS:
-        before_tail = before[-CROSSFADE_MS:].fade_out(CROSSFADE_MS)
-        after_head = after[:CROSSFADE_MS].fade_in(CROSSFADE_MS)
-        return before[:-CROSSFADE_MS] + before_tail + replacement + after_head + after[CROSSFADE_MS:]
+    if crossfade_ms > 0 and len(before) >= crossfade_ms and len(after) >= crossfade_ms:
+        before_tail = before[-crossfade_ms:].fade_out(crossfade_ms)
+        after_head = after[:crossfade_ms].fade_in(crossfade_ms)
+        return before[:-crossfade_ms] + before_tail + replacement + after_head + after[crossfade_ms:]
     return before + replacement + after
 
 
@@ -71,6 +71,7 @@ def censor_audio(
     input_path: str,
     words: list[dict],
     output_path: str,
+    crossfade_ms: int = CROSSFADE_MS,
 ) -> str:
     """
     Censor specified words in an audio file (full mix).
@@ -79,6 +80,7 @@ def censor_audio(
         input_path: Path to the original audio file
         words: List of {"word": str, "start": float, "end": float, "censor_type": str}
         output_path: Where to save the censored audio
+        crossfade_ms: Duration of crossfade at edit boundaries
 
     Returns:
         The output file path
@@ -93,7 +95,7 @@ def censor_audio(
 
         censor_type = w.get("censor_type", "mute")
         replacement = _make_replacement(audio, start_ms, end_ms, censor_type)
-        audio = _splice_with_crossfade(audio, start_ms, end_ms, replacement)
+        audio = _splice_with_crossfade(audio, start_ms, end_ms, replacement, crossfade_ms)
 
     return _export(audio, output_path)
 
@@ -103,6 +105,7 @@ def censor_audio_vocals_only(
     accompaniment_path: str,
     words: list[dict],
     output_path: str,
+    crossfade_ms: int = CROSSFADE_MS,
 ) -> str:
     """
     Censor only the vocals track, then remix with untouched accompaniment.
@@ -112,6 +115,7 @@ def censor_audio_vocals_only(
         accompaniment_path: Path to the accompaniment (instrumental) audio
         words: List of {"word": str, "start": float, "end": float, "censor_type": str}
         output_path: Where to save the final mixed output
+        crossfade_ms: Duration of crossfade at edit boundaries
 
     Returns:
         The output file path
@@ -127,7 +131,7 @@ def censor_audio_vocals_only(
 
         censor_type = w.get("censor_type", "mute")
         replacement = _make_replacement(vocals, start_ms, end_ms, censor_type)
-        vocals = _splice_with_crossfade(vocals, start_ms, end_ms, replacement)
+        vocals = _splice_with_crossfade(vocals, start_ms, end_ms, replacement, crossfade_ms)
 
     # Mix censored vocals back with the untouched accompaniment
     mixed = accompaniment.overlay(vocals)

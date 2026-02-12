@@ -1,0 +1,18 @@
+# Custom profanity words for music/rap context
+# These words are intentionally excluded from better-profanity's default list
+# to avoid false positives in general text, but are profanity in music context
+
+# Common slang
+ho
+hoe
+hoes
+
+# N-word variants (commonly used in rap/hip-hop)
+nigga
+niggas
+niggaz
+
+# Other slang
+bish
+thot
+thots

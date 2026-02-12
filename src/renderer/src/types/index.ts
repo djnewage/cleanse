@@ -70,6 +70,8 @@ export interface SongEntry {
   separationProgress: SeparationProgress | null
   transcriptionProgress: SeparationProgress | null
   censoredFilePath: string | null
+  previewFilePath: string | null
+  isGeneratingPreview: boolean
   defaultCensorType: CensorType
   userReviewed: boolean
   errorMessage: string | null
@@ -89,6 +91,7 @@ export interface BatchAppState {
   exportProgress: { completed: number; total: number } | null
   turboEnabled: boolean
   deviceInfo: DeviceInfo | null
+  crossfadeMs: number
 }
 
 export type BatchAppAction =
@@ -128,6 +131,11 @@ export type BatchAppAction =
   | { type: 'DELETE_HISTORY_ENTRY'; id: string }
   | { type: 'SET_DEVICE_INFO'; deviceInfo: DeviceInfo }
   | { type: 'SET_TURBO_ENABLED'; enabled: boolean }
+  | { type: 'SET_CROSSFADE_MS'; ms: number }
+  | { type: 'START_PREVIEW_GENERATION'; id: string }
+  | { type: 'PREVIEW_GENERATED'; id: string; previewPath: string }
+  | { type: 'PREVIEW_GENERATION_FAILED'; id: string; error: string }
+  | { type: 'CLEAR_PREVIEW'; id: string }
 
 // Legacy single-file types (for backwards compatibility)
 export type AppStatus = 'idle' | 'loading-backend' | 'ready' | 'transcribing' | 'separating' | 'censoring' | 'error'

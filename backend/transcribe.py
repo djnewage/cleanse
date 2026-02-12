@@ -135,9 +135,18 @@ def get_model(turbo: bool = False):
             device = "cpu"
             compute_type = "int8"
     else:
-        device = "cpu"
-        compute_type = "int8"
+        # Normal mode: use GPU if available for speed
+        from device_info import detect_device
+        device_info = detect_device()
 
+        if device_info["device_type"] == "cuda":
+            device = "cuda"
+            compute_type = "int8_float16"  # Mixed precision: faster than int8, lower VRAM than float16
+        else:
+            device = "cpu"
+            compute_type = "int8"
+
+    # TODO: Make model size configurable via UI settings
     print(
         f"[Transcribe] Loading faster-whisper 'medium' model (device={device}, compute={compute_type}, turbo={turbo})...",
         file=sys.stderr,
@@ -182,7 +191,8 @@ def transcribe_audio(
     print(f"[Transcribe] Decoding audio via ffmpeg: {file_path}", file=sys.stderr)
     audio_array = _decode_audio_ffmpeg(file_path, sampling_rate=16000)
 
-    beam_size = 1 if turbo else 5
+    # TODO: Make beam_size configurable (1/3/5)
+    beam_size = 1 if turbo else 3
     print(f"[Transcribe] beam_size={beam_size}, turbo={turbo}", file=sys.stderr)
 
     _report_progress("transcribing", round(progress_offset + progress_scale * 0.10, 1), "Transcribing audio...")

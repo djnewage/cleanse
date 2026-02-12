@@ -43,12 +43,20 @@ export interface ElectronAPI {
   fetchLyrics: (artist: string, title: string, duration?: number) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null }>
   transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string) => Promise<TranscriptionResult>
   separateAudio: (path: string, turbo?: boolean) => Promise<SeparationResult>
+  previewAudio: (args: {
+    filePath: string
+    censorWords: CensorWord[]
+    vocalsPath?: string
+    accompanimentPath?: string
+    crossfadeMs: number
+  }) => Promise<string>
   censorAudio: (
     path: string,
     words: CensorWord[],
     outputPath?: string,
     vocalsPath?: string,
-    accompanimentPath?: string
+    accompanimentPath?: string,
+    crossfadeMs?: number
   ) => Promise<{ output_path: string }>
   getBackendStatus: () => Promise<{ ready: boolean }>
   getDeviceInfo: () => Promise<DeviceInfo>
@@ -128,8 +136,16 @@ const electronAPI: ElectronAPI = {
   separateAudio: (path: string, turbo?: boolean) =>
     ipcRenderer.invoke('separate-audio', path, turbo ?? false),
 
-  censorAudio: (path: string, words: CensorWord[], outputPath?: string, vocalsPath?: string, accompanimentPath?: string) =>
-    ipcRenderer.invoke('censor-audio', path, words, outputPath, vocalsPath, accompanimentPath),
+  previewAudio: (args: {
+    filePath: string
+    censorWords: CensorWord[]
+    vocalsPath?: string
+    accompanimentPath?: string
+    crossfadeMs: number
+  }) => ipcRenderer.invoke('preview-audio', args),
+
+  censorAudio: (path: string, words: CensorWord[], outputPath?: string, vocalsPath?: string, accompanimentPath?: string, crossfadeMs?: number) =>
+    ipcRenderer.invoke('censor-audio', path, words, outputPath, vocalsPath, accompanimentPath, crossfadeMs),
 
   getBackendStatus: () => ipcRenderer.invoke('get-backend-status'),
 
