@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app'
-import { getAnalytics, type Analytics } from 'firebase/analytics'
+import { initializeAnalytics, type Analytics } from 'firebase/analytics'
 import { getAuth, connectAuthEmulator } from 'firebase/auth'
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore'
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions'
@@ -25,8 +25,17 @@ export const db = getFirestore(app)
 export const functions = getFunctions(app)
 
 // Initialize Analytics when measurementId is configured
+// cookie_domain: 'none' is required because the production app runs at app:// protocol
+// which has no valid cookie domain — without this, gtag.js silently drops all events
 export const analyticsReady: Promise<Analytics | null> = firebaseConfig.measurementId
-  ? Promise.resolve(getAnalytics(app)).catch(() => null)
+  ? Promise.resolve(
+      initializeAnalytics(app, {
+        config: {
+          cookie_domain: 'none',
+          send_page_view: false
+        }
+      })
+    ).catch(() => null)
   : Promise.resolve(null)
 
 // Connect to emulators in development

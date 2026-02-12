@@ -4,6 +4,7 @@ dist/
 .DS_Store
 *.log
 backend/venv/
+backend/venv-x64/
 backend/__pycache__/
 backend/*.pyc
 backend/dist/

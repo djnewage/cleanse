@@ -1,6 +1,6 @@
 {
   "name": "cleanse",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "A desktop app for censoring profanity in audio files",
   "main": "./out/main/index.js",
   "author": "",
@@ -16,7 +16,9 @@
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:backend": "bash scripts/build-backend.sh",
+    "build:backend:x64": "bash scripts/build-backend-x64.sh",
     "build:mac": "npm run build:backend && electron-vite build && electron-builder --mac",
+    "build:mac:x64": "npm run build:backend:x64 && electron-vite build && electron-builder --mac --x64",
     "build:mac:dev": "npm run build:backend && electron-vite build && electron-builder --mac --arm64",
     "build:win": "npm run build && electron-builder --win",
     "build:linux": "electron-vite build && electron-builder --linux"
