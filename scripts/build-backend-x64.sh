@@ -30,21 +30,21 @@ if [ ! -d "$VENV_DIR" ]; then
   echo "==> Creating x64 virtual environment..."
   $ARCH_PREFIX python3 -m venv "$VENV_DIR"
   echo "==> Installing dependencies for x64..."
-  "$VENV_DIR/bin/pip" install --upgrade pip --quiet
-  "$VENV_DIR/bin/pip" install -r "$BACKEND_DIR/requirements.txt"
+  $ARCH_PREFIX "$VENV_DIR/bin/pip" install --upgrade pip --quiet
+  $ARCH_PREFIX "$VENV_DIR/bin/pip" install -r "$BACKEND_DIR/requirements.txt"
 fi
 
 PIP="$VENV_DIR/bin/pip"
 PYTHON="$VENV_DIR/bin/python3"
 
 # Ensure pyinstaller is installed
-"$PIP" install pyinstaller --quiet
+$ARCH_PREFIX "$PIP" install pyinstaller --quiet
 
 # Clean previous build artifacts
 rm -rf dist/cleanse-backend build/cleanse-backend
 
-# Run PyInstaller via the x64 venv python
-"$PYTHON" -m PyInstaller cleanse-backend.spec --noconfirm
+# Run PyInstaller under Rosetta so it produces an x86_64 binary
+$ARCH_PREFIX "$PYTHON" -m PyInstaller cleanse-backend.spec --noconfirm
 
 echo "==> x64 backend built successfully: backend/dist/cleanse-backend/"
 echo "==> Verify with: file backend/dist/cleanse-backend/cleanse-backend"

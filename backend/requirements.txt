@@ -8,6 +8,5 @@ requests>=2.32.0
 demucs>=4.0.0
 torch>=2.0.0
 torchaudio>=2.0.0
-torchcodec>=0.10.0
 imageio-ffmpeg>=0.5.1
 tinytag>=1.10.0
