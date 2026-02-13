@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/react'
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
 import {
   User,
@@ -46,6 +47,32 @@ export function useAuth(): AuthContextType {
     throw new Error('useAuth must be used within an AuthProvider')
   }
   return context
+}
+
+function friendlyAuthError(err: unknown): string {
+  const message = err instanceof Error ? err.message : ''
+  const match = message.match(/auth\/([a-z-]+)/)
+  const code = match?.[1]
+  switch (code) {
+    case 'invalid-credential':
+    case 'wrong-password':
+    case 'user-not-found':
+      return 'Invalid email or password'
+    case 'invalid-email':
+      return 'Please enter a valid email address'
+    case 'email-already-in-use':
+      return 'An account with this email already exists'
+    case 'weak-password':
+      return 'Password must be at least 6 characters'
+    case 'too-many-requests':
+      return 'Too many attempts. Please try again later'
+    case 'network-request-failed':
+      return 'Network error. Please check your connection'
+    case 'user-disabled':
+      return 'This account has been disabled'
+    default:
+      return message || 'Something went wrong. Please try again'
+  }
 }
 
 interface AuthProviderProps {
@@ -113,8 +140,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       await signInWithEmailAndPassword(auth, email, password)
       logLogin()
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Sign in failed'
-      setError(message)
+      setError(friendlyAuthError(err))
       throw err
     } finally {
       setIsLoading(false)
@@ -130,8 +156,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       logSignUp()
       // User document will be created by Cloud Function trigger
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Sign up failed'
-      setError(message)
+      setError(friendlyAuthError(err))
       throw err
     } finally {
       setIsLoading(false)
@@ -158,8 +183,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     try {
       await sendPasswordResetEmail(auth, email)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Password reset failed'
-      setError(message)
+      setError(friendlyAuthError(err))
       throw err
     }
   }, [])
@@ -220,6 +244,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
           window.open(result.data.url, '_blank')
       }
     } catch (err) {
+      Sentry.captureException(err)
       const message = err instanceof Error ? err.message : 'Failed to open checkout'
       setError(message)
       throw err

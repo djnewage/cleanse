@@ -1,5 +1,13 @@
 import { useEffect, useRef, useCallback } from 'react'
+import * as Sentry from '@sentry/react'
 import type { BatchAppAction, SongEntry } from '../types'
+import {
+  logSeparationCompleted,
+  logSeparationFailed,
+  logTranscriptionCompleted,
+  logTranscriptionFailed,
+  logLyricsFetched
+} from '../lib/analytics'
 
 interface UseQueueProcessorProps {
   songs: SongEntry[]
@@ -68,6 +76,7 @@ export function useQueueProcessor({
                 id: songId,
                 lyrics: { plain: lyricsResult.plain_lyrics, synced: lyricsResult.synced_lyrics }
               })
+              logLyricsFetched()
             }
           } catch {
             // Lyrics fetch is best-effort, continue without
@@ -83,6 +92,7 @@ export function useQueueProcessor({
           vocalsPath: separationResult.vocals_path,
           accompanimentPath: separationResult.accompaniment_path
         })
+        logSeparationCompleted()
 
         // Step 3: Dual-pass Transcription (with lyrics as initial_prompt + synced lyrics cross-ref)
         dispatch({ type: 'START_TRANSCRIPTION', id: songId })
@@ -100,11 +110,15 @@ export function useQueueProcessor({
           duration: transcriptionResult.duration,
           language: transcriptionResult.language
         })
+        logTranscriptionCompleted()
 
         // Mark as ready
         dispatch({ type: 'SET_SONG_READY', id: songId })
       } catch (err) {
+        Sentry.captureException(err)
         const message = err instanceof Error ? err.message : String(err)
+        if (message.includes('Separation')) logSeparationFailed()
+        else logTranscriptionFailed()
         dispatch({ type: 'SET_SONG_ERROR', id: songId, message })
       } finally {
         dispatch({ type: 'PROCESSING_COMPLETE', id: songId })

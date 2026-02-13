@@ -1,3 +1,11 @@
+import * as Sentry from '@sentry/electron/main'
+
+Sentry.init({
+  dsn: 'https://c27473b596f92b07557b89836e8e0941@o4510700679593984.ingest.us.sentry.io/4510875528921088',
+  release: 'cleanse@1.5.2',
+  integrations: (defaults) => defaults.filter((i) => i.name !== 'PreloadInjection')
+})
+
 import { app, shell, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
 import { join, extname } from 'path'
 import { createReadStream } from 'fs'
@@ -572,6 +580,7 @@ app.whenReady().then(async () => {
       console.error('[Main] Failed to fetch device info:', err)
     }
   } catch (err) {
+    Sentry.captureException(err)
     console.error('Failed to start Python backend:', err)
     mainWindow?.webContents.send('backend-status', { ready: false, error: (err as Error).message })
   }

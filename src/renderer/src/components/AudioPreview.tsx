@@ -1,4 +1,5 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
+import { logPreviewPlayed } from '../lib/analytics'
 
 interface AudioPreviewProps {
   originalPath: string | null
@@ -18,12 +19,21 @@ export default function AudioPreview({
   const primaryPath = censoredPath ?? originalPath
   const secondaryPath = censoredPath ? originalPath : null
 
+  const loggedRef = useRef(false)
+
   const primaryRefCallback = useCallback(
     (node: HTMLAudioElement | null) => {
       audioRef?.(node)
     },
     [audioRef]
   )
+
+  const handlePlay = useCallback(() => {
+    if (!loggedRef.current) {
+      logPreviewPlayed()
+      loggedRef.current = true
+    }
+  }, [])
 
   return (
     <div className="flex flex-col gap-4">
@@ -45,6 +55,7 @@ export default function AudioPreview({
             preload="auto"
             className="w-full"
             src={`media://${primaryPath}`}
+            onPlay={handlePlay}
           />
         </div>
       )}

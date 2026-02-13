@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/react'
 import { useReducer, useEffect, useCallback, useRef, useState, useMemo } from 'react'
 import type {
   BatchAppState,
@@ -8,7 +9,7 @@ import type {
   TranscribedWord
 } from './types'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { logSongsImported, logExportStarted, logExportCompleted } from './lib/analytics'
+import { logSongsImported, logExportStarted, logExportCompleted, logManualCensorAdded, logUpdateDownloaded } from './lib/analytics'
 import { useQueueProcessor } from './hooks/useQueueProcessor'
 import FileUpload from './components/FileUpload'
 import QueueList from './components/QueueList'
@@ -497,6 +498,7 @@ function MainApp(): React.JSX.Element {
 
     const unsubDownloaded = window.electronAPI.onUpdateDownloaded(() => {
       setUpdateState((prev) => ({ ...prev, downloaded: true, downloadProgress: 100 }))
+      logUpdateDownloaded()
     })
 
     return () => {
@@ -573,6 +575,7 @@ function MainApp(): React.JSX.Element {
 
             dispatch({ type: 'PREVIEW_GENERATED', id, previewPath })
           } catch (error) {
+            Sentry.captureException(error)
             const message = error instanceof Error ? error.message : String(error)
             dispatch({ type: 'PREVIEW_GENERATION_FAILED', id, error: message })
           }
@@ -625,6 +628,7 @@ function MainApp(): React.JSX.Element {
           dispatch({ type: 'PREVIEW_GENERATED', id: song.id, previewPath })
         }
       } catch (error) {
+        Sentry.captureException(error)
         // Only update error if this request is still current
         if (generationRequestRef.current === requestId) {
           const message = error instanceof Error ? error.message : String(error)
@@ -661,6 +665,7 @@ function MainApp(): React.JSX.Element {
   const handleAddManualWord = useCallback((songId: string, word: TranscribedWord) => {
     dispatch({ type: 'ADD_MANUAL_WORD', songId, word })
     dispatch({ type: 'CLEAR_PREVIEW', id: songId })
+    logManualCensorAdded()
   }, [])
 
   // Set censor type for a word
@@ -789,6 +794,7 @@ function MainApp(): React.JSX.Element {
         })
         dispatch({ type: 'ADD_HISTORY_ENTRY', entry: historyEntry })
       } catch (err) {
+        Sentry.captureException(err)
         const message = err instanceof Error ? err.message : String(err)
         dispatch({ type: 'SET_SONG_ERROR', id: song.id, message })
       }
