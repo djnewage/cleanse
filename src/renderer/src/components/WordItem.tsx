@@ -98,6 +98,16 @@ function WordItemInner({
           LY
         </span>
       )}
+      {word.detection_source === 'lyrics_gap' && (
+        <span className="text-[8px] leading-none font-sans font-semibold text-teal-400 ml-0.5">
+          LG
+        </span>
+      )}
+      {word.detection_source === 'lyrics_corrected' && (
+        <span className="text-[8px] leading-none font-sans font-semibold text-orange-400 ml-0.5">
+          LC
+        </span>
+      )}
       {word.detection_source === 'manual' && (
         <span className="text-[8px] leading-none font-sans font-semibold text-purple-400 ml-0.5">
           MN

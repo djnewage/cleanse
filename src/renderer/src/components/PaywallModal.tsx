@@ -20,7 +20,7 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
       // Don't close modal - user needs to complete checkout in browser
     } catch (err) {
       console.error('Checkout error:', err)
-      setCheckoutError(err instanceof Error ? err.message : 'Failed to open checkout')
+      setCheckoutError('Unable to open checkout. Please try again or contact support.')
     } finally {
       setCheckoutLoading(false)
     }

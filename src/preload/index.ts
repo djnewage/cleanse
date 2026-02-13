@@ -88,7 +88,7 @@ export interface TranscribedWord {
   end: number
   confidence: number
   is_profanity: boolean
-  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics' | 'manual'
+  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics' | 'lyrics_gap' | 'lyrics_corrected' | 'manual'
 }
 
 export interface CensorWord {

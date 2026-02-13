@@ -5,7 +5,7 @@ export interface TranscribedWord {
   confidence: number
   is_profanity: boolean
   censor_type?: CensorType
-  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics' | 'manual'
+  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics' | 'lyrics_gap' | 'lyrics_corrected' | 'manual'
 }
 
 export interface CensorWord {

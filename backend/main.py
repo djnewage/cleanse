@@ -36,6 +36,7 @@ from audio_processor import censor_audio, censor_audio_vocals_only
 from vocal_separator import separate as separate_vocals
 from device_info import detect_device
 from lyrics_fetcher import extract_metadata, fetch_lyrics, find_lyrics_profanity
+from lyrics_corrector import correct_words_with_lyrics, fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics
 
 # Configuration: Dual-pass transcription (transcribe both mix + vocals)
 # Set CLEANSE_DUAL_PASS=true to enable for higher accuracy (slower)
@@ -234,6 +235,24 @@ async def transcribe(req: TranscribeRequest):
             final_words = merge_word_lists(primary_words, secondary_words)
         else:
             final_words = primary_words
+
+        # Correct misheard words using synced lyrics (fuzzy matching)
+        if req.synced_lyrics:
+            final_words = correct_words_with_lyrics(final_words, req.synced_lyrics)
+
+        # Fill gaps where transcription is empty but synced lyrics have content
+        if req.synced_lyrics:
+            final_words = fill_gaps_with_lyrics(final_words, req.synced_lyrics)
+        elif req.lyrics:
+            # Fallback: use plain lyrics (no timestamps) with sequence alignment
+            final_words = fill_gaps_with_plain_lyrics(
+                final_words, req.lyrics, result["duration"]
+            )
+
+        # Re-flag profanity on all words (corrected words may now be profane,
+        # gap-filled words haven't been checked yet)
+        if req.synced_lyrics or req.lyrics:
+            final_words = flag_profanity(final_words)
 
         # Cross-reference with synced lyrics to find missed profanities
         if req.synced_lyrics:
