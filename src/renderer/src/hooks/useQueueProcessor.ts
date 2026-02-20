@@ -14,6 +14,7 @@ interface UseQueueProcessorProps {
   currentlyProcessingId: string | null
   processingQueue: string[]
   turboEnabled: boolean
+  dualPassEnabled: boolean
   dispatch: React.Dispatch<BatchAppAction>
 }
 
@@ -22,6 +23,7 @@ export function useQueueProcessor({
   currentlyProcessingId,
   processingQueue,
   turboEnabled,
+  dualPassEnabled,
   dispatch
 }: UseQueueProcessorProps) {
   const isProcessingRef = useRef(false)
@@ -101,7 +103,8 @@ export function useQueueProcessor({
           turboEnabled,
           separationResult.vocals_path,
           plainLyrics,
-          syncedLyrics
+          syncedLyrics,
+          dualPassEnabled
         )
         dispatch({
           type: 'TRANSCRIPTION_COMPLETE',
@@ -124,7 +127,7 @@ export function useQueueProcessor({
         dispatch({ type: 'PROCESSING_COMPLETE', id: songId })
       }
     },
-    [songs, turboEnabled, dispatch]
+    [songs, turboEnabled, dualPassEnabled, dispatch]
   )
 
   // Watch the queue and process songs sequentially

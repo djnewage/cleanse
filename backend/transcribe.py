@@ -164,6 +164,7 @@ def transcribe_audio(
     initial_prompt: str | None = None,
     progress_offset: float = 0.0,
     progress_scale: float = 100.0,
+    sensitive_mode: bool = False,
 ) -> dict:
     """
     Transcribe an audio file and return word-level timestamps.
@@ -200,13 +201,18 @@ def transcribe_audio(
     if initial_prompt:
         print(f"[Transcribe] Using initial_prompt ({len(initial_prompt)} chars)", file=sys.stderr)
 
-    segments, info = model.transcribe(
-        audio_array,
+    transcribe_kwargs = dict(
         beam_size=beam_size,
         word_timestamps=True,
         language=language,
         initial_prompt=initial_prompt,
     )
+    if sensitive_mode:
+        transcribe_kwargs["no_speech_threshold"] = 0.9
+        transcribe_kwargs["condition_on_previous_text"] = False
+        print("[Transcribe] Sensitive mode: no_speech_threshold=0.9, condition_on_previous_text=False", file=sys.stderr)
+
+    segments, info = model.transcribe(audio_array, **transcribe_kwargs)
 
     words = []
     last_end = 0.0

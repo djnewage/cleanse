@@ -17,11 +17,13 @@ import BatchControls from './components/BatchControls'
 import SongDetailPanel from './components/SongDetailPanel'
 import HistoryList from './components/HistoryList'
 import AuthScreen from './components/AuthScreen'
-import UsageIndicator from './components/UsageIndicator'
+import UserMenu from './components/UserMenu'
 import PaywallModal from './components/PaywallModal'
 import FeedbackModal from './components/FeedbackModal'
 import UpdateModal from './components/UpdateModal'
 import TurboToggle from './components/TurboToggle'
+import DualPassToggle from './components/DualPassToggle'
+import HelpModal from './components/HelpModal'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -38,6 +40,7 @@ const initialState: BatchAppState = {
   isExportingAll: false,
   exportProgress: null,
   turboEnabled: false,
+  dualPassEnabled: true,
   deviceInfo: null,
   crossfadeMs: 30
 }
@@ -235,6 +238,21 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         )
       }
 
+    case 'REMOVE_WORD':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.songId
+            ? {
+                ...s,
+                words: s.words.filter((_, i) => i !== action.wordIndex),
+                censoredFilePath: null,
+                previewFilePath: null
+              }
+            : s
+        )
+      }
+
     case 'TOGGLE_PROFANITY':
       return {
         ...state,
@@ -397,6 +415,9 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
     case 'SET_TURBO_ENABLED':
       return { ...state, turboEnabled: action.enabled }
 
+    case 'SET_DUAL_PASS_ENABLED':
+      return { ...state, dualPassEnabled: action.enabled }
+
     case 'SET_CROSSFADE_MS':
       return { ...state, crossfadeMs: action.ms }
 
@@ -411,6 +432,7 @@ function MainApp(): React.JSX.Element {
   const generationRequestRef = useRef<number>(0)
   const [showPaywall, setShowPaywall] = useState(false)
   const [showFeedback, setShowFeedback] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [updateState, setUpdateState] = useState<{
     show: boolean
     version: string
@@ -440,6 +462,7 @@ function MainApp(): React.JSX.Element {
     currentlyProcessingId: state.currentlyProcessingId,
     processingQueue: state.processingQueue,
     turboEnabled: state.turboEnabled,
+    dualPassEnabled: state.dualPassEnabled,
     dispatch
   })
 
@@ -668,6 +691,12 @@ function MainApp(): React.JSX.Element {
     logManualCensorAdded()
   }, [])
 
+  // Remove a word (manual censors)
+  const handleRemoveWord = useCallback((songId: string, wordIndex: number) => {
+    dispatch({ type: 'REMOVE_WORD', songId, wordIndex })
+    dispatch({ type: 'CLEAR_PREVIEW', id: songId })
+  }, [])
+
   // Set censor type for a word
   const handleSetWordCensorType = useCallback(
     (songId: string, wordIndex: number, censorType: CensorType) => {
@@ -813,6 +842,11 @@ function MainApp(): React.JSX.Element {
     dispatch({ type: 'SET_TURBO_ENABLED', enabled })
   }, [])
 
+  // Toggle dual-pass transcription (ad-lib detection)
+  const handleToggleDualPass = useCallback((enabled: boolean) => {
+    dispatch({ type: 'SET_DUAL_PASS_ENABLED', enabled })
+  }, [])
+
   // Show paywall modal
   const handleShowPaywall = useCallback(() => {
     setShowPaywall(true)
@@ -850,19 +884,35 @@ function MainApp(): React.JSX.Element {
         <div className="flex items-center justify-between no-drag">
           <div>
             <h1 className="text-xl font-bold">Cleanse</h1>
-            <p className="text-sm text-zinc-500">Batch censor profanity in audio files</p>
+            <p className="text-sm text-zinc-400">Batch censor profanity in audio files</p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* Help button */}
+            <button
+              onClick={() => setShowHelp(true)}
+              className="w-5 h-5 rounded-full border border-zinc-600 text-zinc-400 hover:text-zinc-300 hover:border-zinc-500 text-xs font-medium transition-colors flex items-center justify-center"
+              title="Quick reference"
+            >
+              ?
+            </button>
+
             {/* Feedback button */}
             <button
               onClick={() => setShowFeedback(true)}
-              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="text-xs text-zinc-400 hover:text-zinc-300 transition-colors"
             >
               Feedback
             </button>
 
-            {/* Usage indicator */}
-            <UsageIndicator onManageSubscription={handleShowPaywall} />
+            {/* Divider */}
+            <span className="text-zinc-700">|</span>
+
+            {/* Dual-pass toggle (ad-lib detection) */}
+            <DualPassToggle
+              enabled={state.dualPassEnabled}
+              isProcessing={isProcessing}
+              onToggle={handleToggleDualPass}
+            />
 
             {/* Turbo toggle */}
             <TurboToggle
@@ -872,6 +922,12 @@ function MainApp(): React.JSX.Element {
               onToggle={handleToggleTurbo}
             />
 
+            {/* Divider */}
+            <span className="text-zinc-700">|</span>
+
+            {/* User menu */}
+            <UserMenu onManageSubscription={handleShowPaywall} />
+
             {/* Backend status */}
             <div className="flex items-center gap-2">
               <span
@@ -879,7 +935,7 @@ function MainApp(): React.JSX.Element {
                   state.backendReady ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'
                 }`}
               />
-              <span className="text-xs text-zinc-500">
+              <span className="text-xs text-zinc-400">
                 {state.backendReady ? 'Ready' : 'Starting...'}
               </span>
             </div>
@@ -912,6 +968,7 @@ function MainApp(): React.JSX.Element {
                 onSetCensorType={handleSetWordCensorType}
                 onSetSongCensorType={handleSetSongCensorType}
                 onAddManualWord={handleAddManualWord}
+                onRemoveWord={handleRemoveWord}
                 onMarkReviewed={handleMarkReviewed}
                 onClose={handleCloseExpanded}
               />
@@ -940,6 +997,9 @@ function MainApp(): React.JSX.Element {
           <HistoryList history={state.history} onDelete={handleDeleteHistoryEntry} />
         )}
       </main>
+
+      {/* Help modal */}
+      <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
 
       {/* Feedback modal */}
       <FeedbackModal isOpen={showFeedback} onClose={() => setShowFeedback(false)} />

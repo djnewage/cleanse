@@ -38,10 +38,6 @@ from device_info import detect_device
 from lyrics_fetcher import extract_metadata, fetch_lyrics, find_lyrics_profanity
 from lyrics_corrector import correct_words_with_lyrics, fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics
 
-# Configuration: Dual-pass transcription (transcribe both mix + vocals)
-# Set CLEANSE_DUAL_PASS=true to enable for higher accuracy (slower)
-# TODO: Add dual-pass toggle in settings UI
-ENABLE_DUAL_PASS = os.environ.get("CLEANSE_DUAL_PASS", "false").lower() == "true"
 
 app = FastAPI(title="Cleanse Backend")
 
@@ -105,6 +101,7 @@ class MetadataRequest(BaseModel):
 class TranscribeRequest(BaseModel):
     path: str
     turbo: bool = False
+    dual_pass: bool = True
     vocals_path: str | None = None
     lyrics: str | None = None
     synced_lyrics: str | None = None
@@ -179,10 +176,13 @@ def merge_word_lists(
             # Check temporal overlap
             overlap = min(sec_word["end"], pri_word["end"]) - max(sec_word["start"], pri_word["start"])
             if overlap > 0:
-                merged[i]["is_profanity"] = True
-                merged[i]["detection_source"] = "vocals"
-                is_duplicate = True
-                break
+                # Only absorb as duplicate if the words match or primary is already profanity
+                if (sec_word["word"].lower().strip() == pri_word["word"].lower().strip()
+                        or pri_word.get("is_profanity")):
+                    merged[i]["is_profanity"] = True
+                    merged[i]["detection_source"] = "vocals"
+                    is_duplicate = True
+                    break
             # Check near-miss with same word text
             gap = min(
                 abs(sec_word["start"] - pri_word["end"]),
@@ -206,7 +206,7 @@ async def transcribe(req: TranscribeRequest):
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
-    dual_pass = ENABLE_DUAL_PASS and req.vocals_path and os.path.isfile(req.vocals_path)
+    dual_pass = req.dual_pass and req.vocals_path and os.path.isfile(req.vocals_path)
 
     def _do_transcribe():
         # Pass 1: Transcribe the full mix
@@ -230,8 +230,18 @@ async def transcribe(req: TranscribeRequest):
                 initial_prompt=req.lyrics,
                 progress_offset=50,
                 progress_scale=45,
+                sensitive_mode=True,
             )
             secondary_words = flag_profanity(vocals_result["words"])
+            raw_count = len(secondary_words)
+            raw_profanity = sum(1 for w in secondary_words if w.get("is_profanity"))
+            secondary_words = [w for w in secondary_words if w.get("confidence", 1.0) >= 0.3]
+            print(
+                f"[Dual-Pass] Vocals pass: {len(vocals_result['words'])} words, "
+                f"{raw_profanity} profanity, "
+                f"{len(secondary_words)} after confidence filter (removed {raw_count - len(secondary_words)})",
+                file=sys.stderr,
+            )
             final_words = merge_word_lists(primary_words, secondary_words)
         else:
             final_words = primary_words
