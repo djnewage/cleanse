@@ -41,7 +41,7 @@ export interface ElectronAPI {
   selectOutputDirectory: () => Promise<string | null>
   getAudioMetadata: (path: string) => Promise<AudioMetadata>
   fetchLyrics: (artist: string, title: string, duration?: number) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null }>
-  transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string) => Promise<TranscriptionResult>
+  transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean) => Promise<TranscriptionResult>
   separateAudio: (path: string, turbo?: boolean) => Promise<SeparationResult>
   previewAudio: (args: {
     filePath: string
@@ -130,8 +130,8 @@ const electronAPI: ElectronAPI = {
   fetchLyrics: (artist: string, title: string, duration?: number) =>
     ipcRenderer.invoke('fetch-lyrics', artist, title, duration),
 
-  transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string) =>
-    ipcRenderer.invoke('transcribe-file', path, turbo ?? false, vocalsPath, lyrics, syncedLyrics),
+  transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean) =>
+    ipcRenderer.invoke('transcribe-file', path, turbo ?? false, vocalsPath, lyrics, syncedLyrics, dualPass ?? true),
 
   separateAudio: (path: string, turbo?: boolean) =>
     ipcRenderer.invoke('separate-audio', path, turbo ?? false),

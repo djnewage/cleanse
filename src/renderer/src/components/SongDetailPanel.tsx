@@ -10,6 +10,7 @@ interface SongDetailPanelProps {
   onSetCensorType: (songId: string, wordIndex: number, censorType: CensorType) => void
   onSetSongCensorType: (songId: string, censorType: CensorType) => void
   onAddManualWord: (songId: string, word: TranscribedWord) => void
+  onRemoveWord: (songId: string, wordIndex: number) => void
   onMarkReviewed: (songId: string) => void
   onClose: () => void
 }
@@ -20,6 +21,7 @@ export default function SongDetailPanel({
   onSetCensorType,
   onSetSongCensorType,
   onAddManualWord,
+  onRemoveWord,
   onMarkReviewed,
   onClose
 }: SongDetailPanelProps): React.JSX.Element {
@@ -36,6 +38,10 @@ export default function SongDetailPanel({
 
   const handleAddManualWord = (word: TranscribedWord) => {
     onAddManualWord(song.id, word)
+  }
+
+  const handleRemoveWord = (index: number) => {
+    onRemoveWord(song.id, index)
   }
 
   const checkIfProfane = (word: string): boolean => {
@@ -185,6 +191,7 @@ export default function SongDetailPanel({
           onToggleProfanity={handleToggleProfanity}
           onSetCensorType={handleSetCensorType}
           onAddManualWord={handleAddManualWord}
+          onRemoveWord={handleRemoveWord}
           defaultCensorType={song.defaultCensorType}
           language={song.language}
           duration={song.duration}

@@ -12,6 +12,7 @@ interface WordItemProps {
   defaultCensorType: CensorType
   onToggle: (index: number) => void
   onSetCensorType: (index: number, type: CensorType) => void
+  onRemoveWord: (index: number) => void
   playbackStatus?: PlaybackStatus
   itemRef?: React.Ref<HTMLButtonElement>
 }
@@ -22,6 +23,7 @@ function WordItemInner({
   defaultCensorType,
   onToggle,
   onSetCensorType,
+  onRemoveWord,
   playbackStatus,
   itemRef
 }: WordItemProps): React.JSX.Element {
@@ -40,6 +42,15 @@ function WordItemInner({
     [index, word.is_profanity, word.censor_type, defaultCensorType, onSetCensorType]
   )
 
+  const handleRemove = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      e.preventDefault()
+      onRemoveWord(index)
+    },
+    [index, onRemoveWord]
+  )
+
   const formatTime = (seconds: number): string => {
     const m = Math.floor(seconds / 60)
     const s = Math.floor(seconds % 60)
@@ -48,6 +59,8 @@ function WordItemInner({
 
   const effectiveType = word.censor_type ?? defaultCensorType
   const hasOverride = word.censor_type !== undefined
+  const isAdlib = word.detection_source === 'adlib'
+  const isManual = word.detection_source === 'manual'
 
   // Determine styling based on playback status
   let statusClasses: string
@@ -56,14 +69,22 @@ function WordItemInner({
       ? 'bg-amber-500/70 text-white ring-1 ring-amber-400/60 shadow-[0_0_8px_rgba(245,158,11,0.4)] scale-105 karaoke-active'
       : 'bg-sky-500/60 text-white shadow-[0_0_8px_rgba(56,189,248,0.35)] scale-105 karaoke-active'
   } else if (playbackStatus === 'played') {
-    statusClasses = word.is_profanity
-      ? 'bg-red-900/40 text-red-400/70 ring-1 ring-red-500/30'
-      : 'bg-sky-900/30 text-sky-300/50'
+    if (word.is_profanity && isAdlib) {
+      statusClasses = 'bg-amber-900/40 text-amber-400/70 ring-1 ring-amber-500/30'
+    } else {
+      statusClasses = word.is_profanity
+        ? 'bg-red-900/40 text-red-400/70 ring-1 ring-red-500/30'
+        : 'bg-sky-900/30 text-sky-300/50'
+    }
   } else {
     // upcoming or undefined (no playback)
-    statusClasses = word.is_profanity
-      ? 'bg-red-900/60 text-red-300 hover:bg-red-800/60 ring-1 ring-red-500/50'
-      : 'bg-zinc-800/40 text-zinc-300 hover:bg-zinc-700/50'
+    if (word.is_profanity && isAdlib) {
+      statusClasses = 'bg-amber-900/60 text-amber-300 hover:bg-amber-800/60 ring-1 ring-amber-500/50'
+    } else {
+      statusClasses = word.is_profanity
+        ? 'bg-red-900/60 text-red-300 hover:bg-red-800/60 ring-1 ring-red-500/50'
+        : 'bg-zinc-800/40 text-zinc-300 hover:bg-zinc-700/50'
+    }
   }
 
   return (
@@ -73,7 +94,7 @@ function WordItemInner({
       onContextMenu={handleContextMenu}
       title={`${formatTime(word.start)} - ${formatTime(word.end)} (${Math.round(word.confidence * 100)}%)${word.is_profanity ? `\nCensor: ${effectiveType}${hasOverride ? '' : ' (default)'}\nRight-click to change` : ''}`}
       className={`
-        inline-flex items-baseline gap-0.5 px-1.5 py-0.5 m-0.5 rounded text-sm font-mono
+        group relative inline-flex items-baseline gap-0.5 px-1.5 py-0.5 m-0.5 rounded text-sm font-mono
         transition-all duration-200 ease-out
         ${statusClasses}
       `}
@@ -113,6 +134,16 @@ function WordItemInner({
           MN
         </span>
       )}
+      {isManual && (
+        <span
+          onClick={handleRemove}
+          onContextMenu={(e) => e.stopPropagation()}
+          className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-3.5 h-3.5 rounded-full bg-zinc-700 hover:bg-red-600 text-zinc-300 hover:text-white text-[9px] leading-none cursor-pointer transition-colors"
+          title="Remove manual censor"
+        >
+          &times;
+        </span>
+      )}
     </button>
   )
 }
@@ -124,6 +155,7 @@ const WordItem = React.memo(WordItemInner, (prev, next) => {
     prev.defaultCensorType === next.defaultCensorType &&
     prev.onToggle === next.onToggle &&
     prev.onSetCensorType === next.onSetCensorType &&
+    prev.onRemoveWord === next.onRemoveWord &&
     prev.playbackStatus === next.playbackStatus
   )
 })

@@ -90,6 +90,7 @@ export interface BatchAppState {
   isExportingAll: boolean
   exportProgress: { completed: number; total: number } | null
   turboEnabled: boolean
+  dualPassEnabled: boolean
   deviceInfo: DeviceInfo | null
   crossfadeMs: number
 }
@@ -114,6 +115,7 @@ export type BatchAppAction =
   | { type: 'SET_SONG_READY'; id: string }
   | { type: 'SET_SONG_ERROR'; id: string; message: string }
   | { type: 'ADD_MANUAL_WORD'; songId: string; word: TranscribedWord }
+  | { type: 'REMOVE_WORD'; songId: string; wordIndex: number }
   | { type: 'TOGGLE_PROFANITY'; songId: string; wordIndex: number }
   | { type: 'SET_WORD_CENSOR_TYPE'; songId: string; wordIndex: number; censorType: CensorType }
   | { type: 'SET_SONG_CENSOR_TYPE'; songId: string; censorType: CensorType }
@@ -131,6 +133,7 @@ export type BatchAppAction =
   | { type: 'DELETE_HISTORY_ENTRY'; id: string }
   | { type: 'SET_DEVICE_INFO'; deviceInfo: DeviceInfo }
   | { type: 'SET_TURBO_ENABLED'; enabled: boolean }
+  | { type: 'SET_DUAL_PASS_ENABLED'; enabled: boolean }
   | { type: 'SET_CROSSFADE_MS'; ms: number }
   | { type: 'START_PREVIEW_GENERATION'; id: string }
   | { type: 'PREVIEW_GENERATED'; id: string; previewPath: string }

@@ -164,14 +164,14 @@ ipcMain.handle('fetch-lyrics', async (_event, artist: string, title: string, dur
   }
 })
 
-ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolean = false, vocalsPath?: string, lyrics?: string, syncedLyrics?: string) => {
+ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolean = false, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass: boolean = true) => {
   try {
-    console.log('[IPC] transcribe-file called with:', filePath, 'turbo:', turbo, 'vocalsPath:', vocalsPath, 'hasLyrics:', !!lyrics)
+    console.log('[IPC] transcribe-file called with:', filePath, 'turbo:', turbo, 'vocalsPath:', vocalsPath, 'hasLyrics:', !!lyrics, 'dualPass:', dualPass)
     setTranscriptionProgressCallback((data) => {
       mainWindow?.webContents.send('transcription-progress', data)
     })
 
-    const body: Record<string, unknown> = { path: filePath, turbo }
+    const body: Record<string, unknown> = { path: filePath, turbo, dual_pass: dualPass }
     if (vocalsPath) {
       body.vocals_path = vocalsPath
     }

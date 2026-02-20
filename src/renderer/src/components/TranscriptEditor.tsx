@@ -10,6 +10,7 @@ interface TranscriptEditorProps {
   onToggleProfanity: (index: number) => void
   onSetCensorType: (index: number, type: CensorType) => void
   onAddManualWord: (word: TranscribedWord) => void
+  onRemoveWord: (index: number) => void
   defaultCensorType: CensorType
   language: string
   duration: number
@@ -22,6 +23,7 @@ export default function TranscriptEditor({
   onToggleProfanity,
   onSetCensorType,
   onAddManualWord,
+  onRemoveWord,
   defaultCensorType,
   language,
   duration,
@@ -99,7 +101,7 @@ export default function TranscriptEditor({
 
       <p className="text-xs text-zinc-500">
         Click a word to toggle its profanity flag. Right-click a flagged word to cycle censor type.
-        Use &quot;Add Censor&quot; to manually mark missed words.
+        Use &quot;Add Censor&quot; to manually mark missed words. Click &times; on manually added words to remove them.
       </p>
 
       {showAddForm && (
@@ -121,6 +123,7 @@ export default function TranscriptEditor({
               defaultCensorType={defaultCensorType}
               onToggle={onToggleProfanity}
               onSetCensorType={onSetCensorType}
+              onRemoveWord={onRemoveWord}
               playbackStatus={getPlaybackStatus(word, idx)}
               itemRef={(node) => setWordRef(idx, node)}
             />

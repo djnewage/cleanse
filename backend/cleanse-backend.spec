@@ -22,6 +22,7 @@ datas += collect_data_files('demucs')
 datas += collect_data_files('better_profanity')
 datas += collect_data_files('pydub')
 datas += collect_data_files('uvicorn')
+datas += collect_data_files('torchcodec')
 datas += collect_data_files('imageio_ffmpeg')
 
 # Hidden imports that PyInstaller's static analysis misses
@@ -31,6 +32,7 @@ hidden_imports += collect_submodules('faster_whisper')
 hidden_imports += collect_submodules('demucs')
 hidden_imports += collect_submodules('torch')
 hidden_imports += collect_submodules('torchaudio')
+hidden_imports += collect_submodules('torchcodec')
 hidden_imports += collect_submodules('pydub')
 hidden_imports += collect_submodules('numpy')
 hidden_imports += [
