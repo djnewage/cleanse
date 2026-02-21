@@ -87,13 +87,9 @@ def separate(input_path: str, output_dir: str, turbo: bool = False) -> dict:
     if wav.shape[0] == 1:
         wav = wav.repeat(2, 1)
 
-    # Determine device for separation
-    if turbo:
-        from device_info import get_device_string
-
-        device = get_device_string()
-    else:
-        device = "cpu"
+    # Always use the best available device for separation (demucs supports MPS)
+    from device_info import get_device_string
+    device = get_device_string()
 
     print(f"[Separator] Using device={device}, turbo={turbo}", file=sys.stderr)
 

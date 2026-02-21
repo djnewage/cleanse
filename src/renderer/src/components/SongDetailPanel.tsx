@@ -247,6 +247,12 @@ export default function SongDetailPanel({
             </div>
           )}
 
+          {!song.isGeneratingPreview && !song.previewFilePath && !song.censoredFilePath && song.errorMessage && (
+            <div className="text-xs text-red-400 mb-3 px-3 py-2 bg-red-900/20 border border-red-800 rounded">
+              Preview failed: {song.errorMessage}
+            </div>
+          )}
+
           <AudioPreview
             originalPath={song.filePath}
             censoredPath={song.previewFilePath || song.censoredFilePath}

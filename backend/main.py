@@ -18,12 +18,28 @@ import certifi
 os.environ.setdefault('SSL_CERT_FILE', certifi.where())
 os.environ.setdefault('REQUESTS_CA_BUNDLE', certifi.where())
 
+import shutil
 import imageio_ffmpeg
 from pydub import AudioSegment
 
 # Configure pydub to use the bundled ffmpeg (so end users don't need it installed)
-AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
-AudioSegment.ffprobe = imageio_ffmpeg.get_ffmpeg_exe()
+ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+AudioSegment.converter = ffmpeg_exe
+
+# Ensure common binary locations are on PATH so pydub can find ffprobe
+_extra_paths = ['/opt/homebrew/bin', '/usr/local/bin', os.path.dirname(ffmpeg_exe)]
+_current_path = os.environ.get('PATH', '')
+for _p in _extra_paths:
+    if _p not in _current_path:
+        _current_path = _p + os.pathsep + _current_path
+os.environ['PATH'] = _current_path
+
+# Find real ffprobe binary (pydub needs it for audio format detection)
+_ffprobe_path = shutil.which('ffprobe')
+if _ffprobe_path:
+    AudioSegment.ffprobe = _ffprobe_path
+else:
+    print("[Warning] ffprobe not found on PATH — pydub audio loading may fail", file=sys.stderr)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
