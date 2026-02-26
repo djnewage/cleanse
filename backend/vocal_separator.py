@@ -99,7 +99,16 @@ def separate(input_path: str, output_dir: str, turbo: bool = False) -> dict:
     try:
         tqdm_module.tqdm = ProgressReporter
         with torch.no_grad():
-            sources = apply_model(model, wav.unsqueeze(0), device=device, progress=True)
+            try:
+                sources = apply_model(model, wav.unsqueeze(0), device=device, progress=True)
+            except (NotImplementedError, RuntimeError) as e:
+                if device != "cpu" and ("65536" in str(e) or "MPS" in str(e)):
+                    print(f"[Separator] {device} failed ({e}), falling back to CPU", file=sys.stderr)
+                    model.to("cpu")
+                    _report_progress("applying_model", 10, "GPU unavailable for this file, using CPU...")
+                    sources = apply_model(model, wav.unsqueeze(0), device="cpu", progress=True)
+                else:
+                    raise
     finally:
         tqdm_module.tqdm = original_tqdm
 
