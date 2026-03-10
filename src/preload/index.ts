@@ -40,7 +40,7 @@ export interface ElectronAPI {
   selectOutputPath: (defaultName: string) => Promise<string | null>
   selectOutputDirectory: () => Promise<string | null>
   getAudioMetadata: (path: string) => Promise<AudioMetadata>
-  fetchLyrics: (artist: string, title: string, duration?: number) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null }>
+  fetchLyrics: (artist: string, title: string, duration?: number) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null; lyrics_source?: string | null }>
   transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean) => Promise<TranscriptionResult>
   separateAudio: (path: string, turbo?: boolean) => Promise<SeparationResult>
   previewAudio: (args: {
@@ -74,6 +74,7 @@ export interface ElectronAPI {
   addHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => Promise<HistoryEntry>
   deleteHistoryEntry: (id: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
+  getMachineId: () => Promise<string>
 }
 
 export interface TranscriptionResult {
@@ -234,7 +235,9 @@ const electronAPI: ElectronAPI = {
 
   installUpdate: () => ipcRenderer.invoke('install-update'),
 
-  openExternal: (url: string) => ipcRenderer.invoke('open-external', url)
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+
+  getMachineId: () => ipcRenderer.invoke('get-machine-id')
 }
 
 if (process.contextIsolated) {

@@ -171,7 +171,7 @@ def metadata(req: MetadataRequest):
 def fetch_lyrics_endpoint(req: FetchLyricsRequest):
     result = fetch_lyrics(req.artist, req.title, req.duration)
     if result is None:
-        return {"plain_lyrics": None, "synced_lyrics": None}
+        return {"plain_lyrics": None, "synced_lyrics": None, "lyrics_source": None}
     return result
 
 

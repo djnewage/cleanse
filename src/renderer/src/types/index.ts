@@ -52,6 +52,7 @@ export interface AudioMetadata {
 export interface SongLyrics {
   plain: string | null
   synced: string | null
+  source?: 'genius' | 'lrclib' | null
 }
 
 // Batch Processing Types

@@ -152,6 +152,15 @@ export default function SongDetailPanel({
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-300">
               Fetched Lyrics
+              {song.lyrics.source && (
+                <span className={`ml-2 rounded px-2 py-0.5 text-xs ${
+                  song.lyrics.source === 'genius'
+                    ? 'bg-yellow-900/30 text-yellow-400'
+                    : 'bg-blue-900/30 text-blue-400'
+                }`}>
+                  {song.lyrics.source === 'genius' ? 'Genius' : 'LRCLIB'}
+                </span>
+              )}
               {song.lyrics.synced && (
                 <span className="ml-2 rounded bg-green-900/30 px-2 py-0.5 text-xs text-green-400">
                   Synced

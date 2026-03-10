@@ -76,7 +76,11 @@ export function useQueueProcessor({
               dispatch({
                 type: 'SET_SONG_LYRICS',
                 id: songId,
-                lyrics: { plain: lyricsResult.plain_lyrics, synced: lyricsResult.synced_lyrics }
+                lyrics: {
+                  plain: lyricsResult.plain_lyrics,
+                  synced: lyricsResult.synced_lyrics,
+                  source: (lyricsResult.lyrics_source as 'genius' | 'lrclib' | null) ?? null
+                }
               })
               logLyricsFetched()
             }
