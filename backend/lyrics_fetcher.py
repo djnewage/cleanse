@@ -1,7 +1,9 @@
-"""Lyrics fetching from LRCLIB and audio metadata extraction."""
+"""Lyrics fetching from LRCLIB, Genius, and audio metadata extraction."""
 
+import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
@@ -22,6 +24,67 @@ if custom_words_file.exists():
 LRCLIB_BASE = "https://lrclib.net/api"
 USER_AGENT = "Cleanse Audio Censor App/1.0 (https://github.com/cleanse)"
 REQUEST_TIMEOUT = 5  # seconds
+
+# Genius API — lazy-initialized client
+_GENIUS_TOKEN = os.environ.get(
+    "GENIUS_API_TOKEN",
+    "GJ250xj50QesijWDbSUdSTFfYaS6bXvVcsrGhgQlS0vrRywaPf6LA4QegQi_pwIT",
+)
+_genius = None
+
+
+def _get_genius():
+    """Lazy-initialize the Genius client."""
+    global _genius
+    if _genius is None:
+        try:
+            import lyricsgenius
+            _genius = lyricsgenius.Genius(
+                _GENIUS_TOKEN,
+                verbose=False,
+                remove_section_headers=True,
+                retries=1,
+                timeout=8,
+            )
+        except Exception as e:
+            print(f"[Lyrics] Failed to initialize Genius client: {e}", file=sys.stderr)
+    return _genius
+
+
+def _clean_genius_lyrics(raw: str) -> str:
+    """Strip contributor header and trailing 'Embed' from Genius lyrics."""
+    lines = raw.strip().split("\n")
+
+    # First line is often "N ContributorsSong Title Lyrics" — remove if it matches
+    if lines and re.match(r'^\d+\s+Contributor', lines[0]):
+        lines = lines[1:]
+
+    # Last line often ends with "...Embed" or just "Embed"
+    if lines and lines[-1].rstrip().endswith("Embed"):
+        lines[-1] = re.sub(r'\d*Embed$', '', lines[-1]).rstrip()
+        if not lines[-1]:
+            lines = lines[:-1]
+
+    return "\n".join(lines).strip()
+
+
+def fetch_genius_lyrics(artist: str, title: str) -> str | None:
+    """Fetch plain lyrics from Genius. Returns cleaned text or None."""
+    genius = _get_genius()
+    if genius is None:
+        return None
+
+    try:
+        song = genius.search_song(title, artist)
+        if song and song.lyrics:
+            cleaned = _clean_genius_lyrics(song.lyrics)
+            if cleaned:
+                print(f"[Lyrics] Found Genius lyrics for '{artist} - {title}'", file=sys.stderr)
+                return cleaned
+    except Exception as e:
+        print(f"[Lyrics] Genius search failed: {e}", file=sys.stderr)
+
+    return None
 
 
 def extract_metadata(file_path: str) -> dict:
@@ -68,11 +131,8 @@ def _extract_first_artist(artist: str) -> str:
     return first.strip()
 
 
-def fetch_lyrics(artist: str | None, title: str | None, duration: float | None = None) -> dict | None:
+def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dict | None:
     """Fetch lyrics from LRCLIB with progressive fallback. Returns {plain_lyrics, synced_lyrics} or None."""
-    if not artist or not title:
-        return None
-
     headers = {"User-Agent": USER_AGENT}
 
     # STEP 1: Try exact match with full artist name
@@ -90,13 +150,13 @@ def fetch_lyrics(artist: str | None, title: str | None, duration: float | None =
         if resp.status_code == 200:
             data = resp.json()
             if data.get("plainLyrics") or data.get("syncedLyrics"):
-                print(f"[Lyrics] Found exact match for '{artist} - {title}'", file=sys.stderr)
+                print(f"[Lyrics] Found LRCLIB exact match for '{artist} - {title}'", file=sys.stderr)
                 return {
                     "plain_lyrics": data.get("plainLyrics"),
                     "synced_lyrics": data.get("syncedLyrics"),
                 }
     except Exception as e:
-        print(f"[Lyrics] Exact match failed: {e}", file=sys.stderr)
+        print(f"[Lyrics] LRCLIB exact match failed: {e}", file=sys.stderr)
 
     # STEP 2: Try search with full artist name
     try:
@@ -112,13 +172,13 @@ def fetch_lyrics(artist: str | None, title: str | None, duration: float | None =
             if results and len(results) > 0:
                 best = results[0]
                 if best.get("plainLyrics") or best.get("syncedLyrics"):
-                    print(f"[Lyrics] Found search match for '{artist} - {title}'", file=sys.stderr)
+                    print(f"[Lyrics] Found LRCLIB search match for '{artist} - {title}'", file=sys.stderr)
                     return {
                         "plain_lyrics": best.get("plainLyrics"),
                         "synced_lyrics": best.get("syncedLyrics"),
                     }
     except Exception as e:
-        print(f"[Lyrics] Search with full artist failed: {e}", file=sys.stderr)
+        print(f"[Lyrics] LRCLIB search with full artist failed: {e}", file=sys.stderr)
 
     # STEP 3: Try with first artist only (extract before comma/ampersand)
     first_artist = _extract_first_artist(artist)
@@ -137,17 +197,17 @@ def fetch_lyrics(artist: str | None, title: str | None, duration: float | None =
                 if results and len(results) > 0:
                     best = results[0]
                     if best.get("plainLyrics") or best.get("syncedLyrics"):
-                        print(f"[Lyrics] Found match with first artist: '{first_artist} - {title}'", file=sys.stderr)
+                        print(f"[Lyrics] Found LRCLIB match with first artist: '{first_artist} - {title}'", file=sys.stderr)
                         return {
                             "plain_lyrics": best.get("plainLyrics"),
                             "synced_lyrics": best.get("syncedLyrics"),
                         }
         except Exception as e:
-            print(f"[Lyrics] First artist search failed: {e}", file=sys.stderr)
+            print(f"[Lyrics] LRCLIB first artist search failed: {e}", file=sys.stderr)
 
     # STEP 4: Try title-only search as last resort
     try:
-        print(f"[Lyrics] Trying title-only search: '{title}'", file=sys.stderr)
+        print(f"[Lyrics] Trying LRCLIB title-only search: '{title}'", file=sys.stderr)
         params = {"track_name": title}  # No artist_name parameter
         resp = requests.get(
             f"{LRCLIB_BASE}/search",
@@ -158,19 +218,72 @@ def fetch_lyrics(artist: str | None, title: str | None, duration: float | None =
         if resp.status_code == 200:
             results = resp.json()
             if results and len(results) > 0:
-                # Take first result but log ambiguity warning
                 best = results[0]
                 if best.get("plainLyrics") or best.get("syncedLyrics"):
-                    print(f"[Lyrics] Found title-only match (ambiguous): '{title}' (matched artist: {best.get('artistName')})", file=sys.stderr)
+                    print(f"[Lyrics] Found LRCLIB title-only match (ambiguous): '{title}' (matched artist: {best.get('artistName')})", file=sys.stderr)
                     return {
                         "plain_lyrics": best.get("plainLyrics"),
                         "synced_lyrics": best.get("syncedLyrics"),
                     }
     except Exception as e:
-        print(f"[Lyrics] Title-only search failed: {e}", file=sys.stderr)
+        print(f"[Lyrics] LRCLIB title-only search failed: {e}", file=sys.stderr)
 
-    print(f"[Lyrics] No lyrics found after all attempts for '{artist} - {title}'", file=sys.stderr)
     return None
+
+
+def fetch_lyrics(artist: str | None, title: str | None, duration: float | None = None) -> dict | None:
+    """Fetch lyrics from Genius and LRCLIB in parallel.
+
+    Returns {plain_lyrics, synced_lyrics, lyrics_source} or None.
+    Genius plain lyrics preferred over LRCLIB plain; LRCLIB synced always used.
+    """
+    if not artist or not title:
+        return None
+
+    genius_result = None
+    lrclib_result = None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        genius_future = executor.submit(fetch_genius_lyrics, artist, title)
+        lrclib_future = executor.submit(_fetch_lrclib, artist, title, duration)
+
+        try:
+            genius_result = genius_future.result(timeout=15)
+        except Exception as e:
+            print(f"[Lyrics] Genius future failed: {e}", file=sys.stderr)
+
+        try:
+            lrclib_result = lrclib_future.result(timeout=15)
+        except Exception as e:
+            print(f"[Lyrics] LRCLIB future failed: {e}", file=sys.stderr)
+
+    # Merge results: prefer Genius plain lyrics, always use LRCLIB synced
+    synced_lyrics = lrclib_result.get("synced_lyrics") if lrclib_result else None
+    lrclib_plain = lrclib_result.get("plain_lyrics") if lrclib_result else None
+
+    if genius_result:
+        plain_lyrics = genius_result
+        lyrics_source = "genius"
+    elif lrclib_plain:
+        plain_lyrics = lrclib_plain
+        lyrics_source = "lrclib"
+    else:
+        plain_lyrics = None
+        lyrics_source = None
+
+    # If we have synced but no plain, source is lrclib
+    if not plain_lyrics and synced_lyrics:
+        lyrics_source = "lrclib"
+
+    if not plain_lyrics and not synced_lyrics:
+        print(f"[Lyrics] No lyrics found after all attempts for '{artist} - {title}'", file=sys.stderr)
+        return None
+
+    return {
+        "plain_lyrics": plain_lyrics,
+        "synced_lyrics": synced_lyrics,
+        "lyrics_source": lyrics_source,
+    }
 
 
 def parse_synced_lyrics(synced_lyrics: str) -> list[dict]:

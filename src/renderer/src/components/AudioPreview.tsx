@@ -14,33 +14,75 @@ export default function AudioPreview({
   onClearFile,
   audioRef
 }: AudioPreviewProps): React.JSX.Element {
-  // The primary audio element is censored if available, else original.
-  // We use a combined ref callback to attach the external audioRef to the primary element.
   const primaryPath = censoredPath ?? originalPath
   const secondaryPath = censoredPath ? originalPath : null
 
   const loggedRef = useRef(false)
+  const primaryNodeRef = useRef<HTMLAudioElement | null>(null)
+  const secondaryNodeRef = useRef<HTMLAudioElement | null>(null)
 
-  const primaryRefCallback = useCallback(
+  // Attach audioRef to whichever element starts playing, pause the other
+  const activateElement = useCallback(
     (node: HTMLAudioElement | null) => {
       audioRef?.(node)
     },
     [audioRef]
   )
 
-  const handlePlay = useCallback(() => {
+  const primaryRefCallback = useCallback(
+    (node: HTMLAudioElement | null) => {
+      primaryNodeRef.current = node
+      // Default: attach ref to primary on mount
+      activateElement(node)
+    },
+    [activateElement]
+  )
+
+  const secondaryRefCallback = useCallback(
+    (node: HTMLAudioElement | null) => {
+      secondaryNodeRef.current = node
+    },
+    []
+  )
+
+  const handlePrimaryPlay = useCallback(() => {
+    // Pause the other player and switch karaoke tracking to this one
+    if (secondaryNodeRef.current && !secondaryNodeRef.current.paused) {
+      secondaryNodeRef.current.pause()
+    }
+    activateElement(primaryNodeRef.current)
     if (!loggedRef.current) {
       logPreviewPlayed()
       loggedRef.current = true
     }
-  }, [])
+  }, [activateElement])
+
+  const handleSecondaryPlay = useCallback(() => {
+    // Pause the other player and switch karaoke tracking to this one
+    if (primaryNodeRef.current && !primaryNodeRef.current.paused) {
+      primaryNodeRef.current.pause()
+    }
+    activateElement(secondaryNodeRef.current)
+    if (!loggedRef.current) {
+      logPreviewPlayed()
+      loggedRef.current = true
+    }
+  }, [activateElement])
 
   return (
     <div className="flex flex-col gap-4">
       {secondaryPath && (
         <div>
           <label className="block text-sm font-medium text-zinc-400 mb-1">Original</label>
-          <audio key={secondaryPath} controls preload="auto" className="w-full" src={`media://${secondaryPath}`} />
+          <audio
+            ref={secondaryRefCallback}
+            key={secondaryPath}
+            controls
+            preload="auto"
+            className="w-full"
+            src={`media://${secondaryPath}`}
+            onPlay={handleSecondaryPlay}
+          />
         </div>
       )}
       {primaryPath && (
@@ -55,7 +97,7 @@ export default function AudioPreview({
             preload="auto"
             className="w-full"
             src={`media://${primaryPath}`}
-            onPlay={handlePlay}
+            onPlay={handlePrimaryPlay}
           />
         </div>
       )}
