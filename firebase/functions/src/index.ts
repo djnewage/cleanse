@@ -37,6 +37,14 @@ interface UserDoc {
 // Free tier limit
 const FREE_SONGS_LIMIT = 5;
 
+// Device document interface
+interface DeviceDoc {
+  totalSongsProcessed: number;
+  linkedUids: string[];
+  firstSeenAt: admin.firestore.Timestamp;
+  lastSeenAt: admin.firestore.Timestamp;
+}
+
 /**
  * Auth trigger: Create user document when a new user signs up
  */
@@ -58,6 +66,52 @@ export const createUser = functions.auth.user().onCreate(async (user) => {
 });
 
 /**
+ * Callable function: Register a device and link the current user to it
+ */
+export const registerDevice = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+  }
+
+  const deviceId = data?.deviceId;
+  if (!deviceId || typeof deviceId !== 'string' || deviceId.length < 16) {
+    throw new functions.https.HttpsError('invalid-argument', 'Valid deviceId is required');
+  }
+
+  const uid = context.auth.uid;
+  const deviceRef = db.collection('devices').doc(deviceId);
+
+  const result = await db.runTransaction(async (transaction) => {
+    const deviceDoc = await transaction.get(deviceRef);
+
+    if (!deviceDoc.exists) {
+      const newDevice: DeviceDoc = {
+        totalSongsProcessed: 0,
+        linkedUids: [uid],
+        firstSeenAt: admin.firestore.Timestamp.now(),
+        lastSeenAt: admin.firestore.Timestamp.now()
+      };
+      transaction.set(deviceRef, newDevice);
+      return { canProcess: true, songsRemaining: FREE_SONGS_LIMIT };
+    }
+
+    const deviceData = deviceDoc.data() as DeviceDoc;
+    transaction.update(deviceRef, {
+      linkedUids: admin.firestore.FieldValue.arrayUnion(uid),
+      lastSeenAt: admin.firestore.Timestamp.now()
+    });
+
+    const remaining = Math.max(0, FREE_SONGS_LIMIT - deviceData.totalSongsProcessed);
+    return {
+      canProcess: deviceData.totalSongsProcessed < FREE_SONGS_LIMIT,
+      songsRemaining: remaining
+    };
+  });
+
+  return { success: true, ...result };
+});
+
+/**
  * Callable function: Increment usage count after successful export
  */
 export const incrementUsage = functions.https.onCall(async (data, context) => {
@@ -67,6 +121,8 @@ export const incrementUsage = functions.https.onCall(async (data, context) => {
 
   const uid = context.auth.uid;
   const userRef = db.collection('users').doc(uid);
+  const deviceId = data?.deviceId;
+  const deviceRef = deviceId ? db.collection('devices').doc(deviceId) : null;
 
   await db.runTransaction(async (transaction) => {
     const userDoc = await transaction.get(userRef);
@@ -76,23 +132,42 @@ export const incrementUsage = functions.https.onCall(async (data, context) => {
     }
 
     const userData = userDoc.data() as UserDoc;
+    const isSubscribed = userData.subscription.lifetime || userData.subscription.status === 'active';
 
-    // Check if user can process (has subscription or under free limit)
-    const canProcess =
-      userData.subscription.lifetime ||
-      userData.subscription.status === 'active' ||
-      userData.songsProcessed < FREE_SONGS_LIMIT;
-
-    if (!canProcess) {
-      throw new functions.https.HttpsError(
-        'resource-exhausted',
-        'Free tier limit reached. Please subscribe to continue.'
-      );
+    if (!isSubscribed) {
+      if (deviceRef) {
+        // Device-level limit check
+        const deviceDoc = await transaction.get(deviceRef);
+        const deviceSongs = deviceDoc.exists ? (deviceDoc.data() as DeviceDoc).totalSongsProcessed : 0;
+        if (deviceSongs >= FREE_SONGS_LIMIT) {
+          throw new functions.https.HttpsError(
+            'resource-exhausted',
+            'Free tier limit reached. Please subscribe to continue.'
+          );
+        }
+      } else {
+        // Fallback: per-account limit
+        if (userData.songsProcessed >= FREE_SONGS_LIMIT) {
+          throw new functions.https.HttpsError(
+            'resource-exhausted',
+            'Free tier limit reached. Please subscribe to continue.'
+          );
+        }
+      }
     }
 
+    // Always increment user count
     transaction.update(userRef, {
       songsProcessed: admin.firestore.FieldValue.increment(1)
     });
+
+    // Also increment device count if deviceId provided
+    if (deviceRef) {
+      transaction.update(deviceRef, {
+        totalSongsProcessed: admin.firestore.FieldValue.increment(1),
+        lastSeenAt: admin.firestore.Timestamp.now()
+      });
+    }
   });
 
   return { success: true };
@@ -114,19 +189,40 @@ export const canProcessSong = functions.https.onCall(async (data, context) => {
   }
 
   const userData = userDoc.data() as UserDoc;
+  const isSubscribed = userData.subscription.lifetime || userData.subscription.status === 'active';
 
-  const canProcess =
-    userData.subscription.lifetime ||
-    userData.subscription.status === 'active' ||
-    userData.songsProcessed < FREE_SONGS_LIMIT;
+  // Subscribers bypass all device checks
+  if (isSubscribed) {
+    return {
+      canProcess: true,
+      songsProcessed: userData.songsProcessed,
+      songsRemaining: -1,
+      isSubscribed: true
+    };
+  }
 
+  const deviceId = data?.deviceId;
+
+  if (deviceId) {
+    // Device-level limit check
+    const deviceDoc = await db.collection('devices').doc(deviceId).get();
+    const deviceSongs = deviceDoc.exists ? (deviceDoc.data() as DeviceDoc).totalSongsProcessed : 0;
+    const remaining = Math.max(0, FREE_SONGS_LIMIT - deviceSongs);
+
+    return {
+      canProcess: deviceSongs < FREE_SONGS_LIMIT,
+      songsProcessed: deviceSongs,
+      songsRemaining: remaining,
+      isSubscribed: false
+    };
+  }
+
+  // Fallback: per-account limit (backwards compat)
   return {
-    canProcess,
+    canProcess: userData.songsProcessed < FREE_SONGS_LIMIT,
     songsProcessed: userData.songsProcessed,
-    songsRemaining: (userData.subscription.lifetime || userData.subscription.status === 'active')
-      ? -1 // unlimited
-      : Math.max(0, FREE_SONGS_LIMIT - userData.songsProcessed),
-    isSubscribed: userData.subscription.lifetime || userData.subscription.status === 'active'
+    songsRemaining: Math.max(0, FREE_SONGS_LIMIT - userData.songsProcessed),
+    isSubscribed: false
   };
 });
 

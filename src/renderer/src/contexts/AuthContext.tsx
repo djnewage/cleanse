@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/react'
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react'
 import {
   User,
   onAuthStateChanged,
@@ -9,7 +9,7 @@ import {
   sendPasswordResetEmail
 } from 'firebase/auth'
 import { doc, onSnapshot } from 'firebase/firestore'
-import { auth, db, incrementUsage, canProcessSong, createCheckoutSession, createPortalSession } from '../lib/firebase'
+import { auth, db, incrementUsage, canProcessSong, createCheckoutSession, createPortalSession, registerDevice } from '../lib/firebase'
 import { logLogin, logSignUp, logSignOut, logCheckoutInitiated } from '../lib/analytics'
 import type { UserData, UsageInfo } from '../types'
 
@@ -85,6 +85,27 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Machine ID for device-level usage tracking
+  const [machineId, setMachineId] = useState<string | null>(null)
+  const machineIdPromiseRef = useRef<Promise<string> | null>(null)
+
+  useEffect(() => {
+    const promise = window.electronAPI.getMachineId().then((id) => {
+      setMachineId(id)
+      return id
+    }).catch((err) => {
+      console.error('Failed to get machine ID:', err)
+      return ''
+    })
+    machineIdPromiseRef.current = promise
+  }, [])
+
+  const getMachineId = useCallback(async (): Promise<string> => {
+    if (machineId) return machineId
+    if (machineIdPromiseRef.current) return machineIdPromiseRef.current
+    return ''
+  }, [machineId])
+
   // Listen to auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
@@ -139,13 +160,18 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     try {
       await signInWithEmailAndPassword(auth, email, password)
       logLogin()
+      // Register device on sign-in
+      const deviceId = await getMachineId()
+      if (deviceId) {
+        registerDevice({ deviceId }).catch((err) => console.error('Failed to register device on sign-in:', err))
+      }
     } catch (err) {
       setError(friendlyAuthError(err))
       throw err
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [getMachineId])
 
   // Sign up with email/password
   const signUp = useCallback(async (email: string, password: string) => {
@@ -155,13 +181,18 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       await createUserWithEmailAndPassword(auth, email, password)
       logSignUp()
       // User document will be created by Cloud Function trigger
+      // Register device on sign-up
+      const deviceId = await getMachineId()
+      if (deviceId) {
+        registerDevice({ deviceId }).catch((err) => console.error('Failed to register device on sign-up:', err))
+      }
     } catch (err) {
       setError(friendlyAuthError(err))
       throw err
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [getMachineId])
 
   // Sign out
   const signOut = useCallback(async () => {
@@ -200,7 +231,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     }
 
     try {
-      const result = await canProcessSong()
+      const deviceId = await getMachineId()
+      const result = await canProcessSong({ deviceId })
       return result.data
     } catch (err) {
       console.error('Error checking usage:', err)
@@ -217,19 +249,20 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       }
       return { canProcess: false, songsProcessed: 0, songsRemaining: 0, isSubscribed: false }
     }
-  }, [user, userData])
+  }, [user, userData, getMachineId])
 
   // Record usage after successful export
   const recordUsage = useCallback(async () => {
     if (!user) return
 
     try {
-      await incrementUsage()
+      const deviceId = await getMachineId()
+      await incrementUsage({ deviceId })
     } catch (err) {
       console.error('Error recording usage:', err)
       // Don't throw - the export succeeded, we just failed to record it
     }
-  }, [user])
+  }, [user, getMachineId])
 
   // Open Stripe Checkout
   const openCheckout = useCallback(async () => {

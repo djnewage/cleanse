@@ -31,14 +31,16 @@ if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true
 }
 
 // Cloud Function wrappers
-export const incrementUsage = httpsCallable<void, { success: boolean }>(functions, 'incrementUsage')
+export const incrementUsage = httpsCallable<{ deviceId: string }, { success: boolean }>(functions, 'incrementUsage')
 
-export const canProcessSong = httpsCallable<void, {
+export const canProcessSong = httpsCallable<{ deviceId: string }, {
   canProcess: boolean
   songsProcessed: number
   songsRemaining: number
   isSubscribed: boolean
 }>(functions, 'canProcessSong')
+
+export const registerDevice = httpsCallable<{ deviceId: string }, { success: boolean; canProcess: boolean; songsRemaining: number }>(functions, 'registerDevice')
 
 export const createCheckoutSession = httpsCallable<
   { successUrl?: string; cancelUrl?: string },

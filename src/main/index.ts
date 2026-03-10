@@ -1,12 +1,13 @@
 import * as Sentry from '@sentry/electron/main'
+import { app } from 'electron'
 
 Sentry.init({
   dsn: 'https://c27473b596f92b07557b89836e8e0941@o4510700679593984.ingest.us.sentry.io/4510875528921088',
-  release: 'cleanse@1.5.2',
+  release: `cleanse@${app.getVersion()}`,
   integrations: (defaults) => defaults.filter((i) => i.name !== 'PreloadInjection')
 })
 
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
+import { shell, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
 import { join, extname } from 'path'
 import { createReadStream } from 'fs'
 import { stat } from 'fs/promises'
@@ -29,6 +30,7 @@ import {
   getDeviceInfo
 } from './python-bridge'
 import { getHistory, addHistoryEntry, deleteHistoryEntry } from './history-store'
+import { getHashedMachineId } from './machineId'
 
 async function describeBackendError(originalMsg: string): Promise<string> {
   // Yield to event loop so the child process 'exit' event can propagate
@@ -79,6 +81,10 @@ function createWindow(): void {
 }
 
 // --- IPC Handlers ---
+
+ipcMain.handle('get-machine-id', () => {
+  return getHashedMachineId()
+})
 
 ipcMain.handle('select-audio-file', async () => {
   if (!mainWindow) return null

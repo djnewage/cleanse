@@ -8,6 +8,12 @@ service cloud.firestore {
       allow write: if false; // Only Cloud Functions can write
     }
 
+    // Devices collection - any authenticated user can read, writes only through Cloud Functions
+    match /devices/{deviceId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
     // Deny all other access
     match /{document=**} {
       allow read, write: if false;

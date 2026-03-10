@@ -57,3 +57,31 @@ class TestFlagProfanity:
         words = [{"word": "shit!", "start": 0.0, "end": 0.5, "confidence": 0.9}]
         result = flag_profanity(words)
         assert result[0]["is_profanity"] is True
+
+
+class TestCustomWordCoverage:
+    """Verify newly added custom words are detected as profanity."""
+
+    def _check_words(self, word_list):
+        words = [
+            {"word": w, "start": 0.0, "end": 0.5, "confidence": 0.9}
+            for w in word_list
+        ]
+        results = flag_profanity(words)
+        for r in results:
+            assert r["is_profanity"] is True, f"'{r['word']}' was not flagged"
+
+    def test_english_slang_sample(self):
+        self._check_words([
+            "fuckboy", "dipshit", "sonofabitch", "asswipe", "dickface", "bullshitting",
+        ])
+
+    def test_spanish_profanities(self):
+        self._check_words([
+            "mierda", "puta", "cabron", "pendejo", "verga", "coño", "joder", "culo",
+        ])
+
+    def test_compound_and_slang(self):
+        self._check_words([
+            "assbag", "assclown", "dickbag", "pisshead", "thottie", "bustanut",
+        ])
