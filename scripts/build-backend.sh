@@ -12,6 +12,9 @@ echo "==> Building Python backend with PyInstaller..."
 
 cd "$BACKEND_DIR"
 
+# Target macOS 12+ to avoid requiring newer Accelerate symbols (e.g. $NEWLAPACK$ILP64)
+export MACOSX_DEPLOYMENT_TARGET=12.0
+
 # Use venv binaries directly (more reliable than `source activate` in scripts)
 VENV_DIR="$BACKEND_DIR/venv"
 if [ ! -d "$VENV_DIR" ]; then
