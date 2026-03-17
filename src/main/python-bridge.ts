@@ -72,11 +72,16 @@ function getBackendCommand(): { command: string; args: string[] } {
   return { command: pythonPath, args: ['main.py', '--port', String(backendPort)] }
 }
 
-async function pollHealth(port: number, timeoutMs: number = 30000): Promise<boolean> {
+async function pollHealth(
+  port: number,
+  timeoutMs: number = 30000,
+  shouldAbort?: () => boolean
+): Promise<boolean> {
   const start = Date.now()
   const interval = 500
 
   while (Date.now() - start < timeoutMs) {
+    if (shouldAbort?.()) return false
     try {
       const response = await fetch(`http://127.0.0.1:${port}/health`)
       if (response.ok) {
@@ -143,11 +148,20 @@ export async function startPythonBackend(): Promise<number> {
     }
   })
 
+  // Collect stderr so we can surface it if the process crashes during startup
+  const stderrChunks: string[] = []
+
   pythonProcess.stderr?.on('data', (data: Buffer) => {
     const text = data.toString().trim()
     console.log(`[Python] ${text}`)
     writeLog(`[stderr] ${text}`)
+    if (!isReady) {
+      stderrChunks.push(text)
+    }
   })
+
+  // Track early exit so pollHealth can bail out immediately
+  let earlyExitCode: number | null = null
 
   pythonProcess.on('error', (err) => {
     console.error('[Python] Failed to start:', err.message)
@@ -159,22 +173,33 @@ export async function startPythonBackend(): Promise<number> {
     console.log(`[Python] Process exited with code ${code} signal ${signal}`)
     writeLog(`[exit] code=${code} signal=${signal}`)
     isReady = false
+    if (!isReady && code !== null && code !== 0) {
+      earlyExitCode = code
+    }
     pythonProcess = null
   })
 
   // Wait for backend to be ready
   console.log('[Python] Waiting for backend to be ready...')
-  const ready = await pollHealth(backendPort, 30000)
+  const ready = await pollHealth(backendPort, 30000, () => earlyExitCode !== null)
 
   if (ready) {
     isReady = true
     console.log('[Python] Backend is ready!')
     writeLog('[startup] Backend is ready')
   } else {
-    console.error('[Python] Backend failed to start within timeout')
-    writeLog('[startup] Backend failed to start within timeout')
+    const stderr = stderrChunks.join('\n').slice(-2000)
+    const detail = earlyExitCode !== null
+      ? `Backend process exited with code ${earlyExitCode}`
+      : 'Backend did not respond within 30 seconds'
+    const message = stderr
+      ? `${detail}:\n${stderr}`
+      : detail
+
+    console.error(`[Python] ${message}`)
+    writeLog(`[startup] ${message}`)
     stopPythonBackend()
-    throw new Error('Python backend failed to start')
+    throw new Error(message)
   }
 
   return backendPort

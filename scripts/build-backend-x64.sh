@@ -14,6 +14,9 @@ echo "==> Building Python backend for x64 (Intel Mac)..."
 
 cd "$BACKEND_DIR"
 
+# Target macOS 12+ to avoid requiring newer Accelerate symbols (e.g. $NEWLAPACK$ILP64)
+export MACOSX_DEPLOYMENT_TARGET=12.0
+
 # Detect if we're on ARM64 and need to use Rosetta
 ARCH=$(uname -m)
 if [ "$ARCH" = "arm64" ]; then
