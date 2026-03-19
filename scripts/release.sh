@@ -28,7 +28,7 @@ if gh release view "$TAG" &>/dev/null; then
 fi
 
 # Find built artifacts
-DMG_FILES=$(ls dist/*.dmg 2>/dev/null || true)
+DMG_FILES=$(ls dist/*-${VERSION}-*.dmg 2>/dev/null || true)
 if [ -z "$DMG_FILES" ]; then
   echo "Error: No .dmg files found in dist/"
   echo "Run 'npm run build:mac' first."
