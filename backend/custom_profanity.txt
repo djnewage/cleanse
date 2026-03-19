@@ -6,13 +6,39 @@
 ho
 hoe
 hoes
+skank
+skanks
 
 # N-word variants (commonly used in rap/hip-hop)
 nigga
 niggas
 niggaz
+nigguh
+nukka
+nikka
 
 # Other slang
 bish
 thot
 thots
+thottie
+thotties
+mofo
+
+# Phonetic / compound variants
+mothafucka
+mothafuckas
+mothafuckin
+muthafucka
+muthafuckas
+muthafuckin
+
+# Alternative spellings
+biatch
+biotch
+beyotch
+azz
+shyt
+fck
+effin
+dayum

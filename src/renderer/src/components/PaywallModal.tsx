@@ -43,7 +43,7 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-zinc-500 hover:text-white text-lg"
+          className="absolute top-4 right-4 text-zinc-400 hover:text-white text-lg"
         >
           ✕
         </button>
@@ -59,7 +59,7 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
         </h2>
 
         {/* Description */}
-        <p className="text-zinc-400 text-center mb-6">
+        <p className="text-zinc-300 text-center mb-6">
           You've used all {FREE_SONGS_LIMIT} of your free songs.
           Subscribe to continue cleansing unlimited songs!
         </p>
@@ -67,7 +67,7 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
         {/* Usage stats */}
         <div className="bg-zinc-800/50 rounded-lg p-4 mb-6">
           <div className="flex justify-between items-center text-sm">
-            <span className="text-zinc-400">Songs processed</span>
+            <span className="text-zinc-300">Songs processed</span>
             <span className="text-white font-medium">{songsProcessed} / {FREE_SONGS_LIMIT}</span>
           </div>
           <div className="mt-2 h-2 bg-zinc-700 rounded-full overflow-hidden">
@@ -120,7 +120,7 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
             w-full py-3 rounded-lg font-medium text-sm transition-colors
             ${
               checkoutLoading || isLoading
-                ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
                 : 'bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700'
             }
           `}
@@ -138,7 +138,7 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
         {/* Cancel link */}
         <button
           onClick={onClose}
-          className="w-full mt-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="w-full mt-3 py-2 text-sm text-zinc-400 hover:text-zinc-300 transition-colors"
         >
           Maybe later
         </button>

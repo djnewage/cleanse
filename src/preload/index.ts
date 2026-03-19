@@ -49,6 +49,8 @@ export interface ElectronAPI {
     vocalsPath?: string
     accompanimentPath?: string
     crossfadeMs: number
+    paddingBeforeMs?: number
+    paddingAfterMs?: number
   }) => Promise<string>
   censorAudio: (
     path: string,
@@ -56,7 +58,9 @@ export interface ElectronAPI {
     outputPath?: string,
     vocalsPath?: string,
     accompanimentPath?: string,
-    crossfadeMs?: number
+    crossfadeMs?: number,
+    paddingBeforeMs?: number,
+    paddingAfterMs?: number
   ) => Promise<{ output_path: string }>
   getBackendStatus: () => Promise<{ ready: boolean }>
   getDeviceInfo: () => Promise<DeviceInfo>
@@ -143,10 +147,12 @@ const electronAPI: ElectronAPI = {
     vocalsPath?: string
     accompanimentPath?: string
     crossfadeMs: number
+    paddingBeforeMs?: number
+    paddingAfterMs?: number
   }) => ipcRenderer.invoke('preview-audio', args),
 
-  censorAudio: (path: string, words: CensorWord[], outputPath?: string, vocalsPath?: string, accompanimentPath?: string, crossfadeMs?: number) =>
-    ipcRenderer.invoke('censor-audio', path, words, outputPath, vocalsPath, accompanimentPath, crossfadeMs),
+  censorAudio: (path: string, words: CensorWord[], outputPath?: string, vocalsPath?: string, accompanimentPath?: string, crossfadeMs?: number, paddingBeforeMs?: number, paddingAfterMs?: number) =>
+    ipcRenderer.invoke('censor-audio', path, words, outputPath, vocalsPath, accompanimentPath, crossfadeMs, paddingBeforeMs, paddingAfterMs),
 
   getBackendStatus: () => ipcRenderer.invoke('get-backend-status'),
 
@@ -162,7 +168,7 @@ const electronAPI: ElectronAPI = {
     }
   },
 
-  getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  getPathForFile: (file: File) => decodeURIComponent(webUtils.getPathForFile(file)),
 
   onBackendStatus: (callback: (status: BackendStatus) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: BackendStatus): void => {

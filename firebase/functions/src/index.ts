@@ -25,6 +25,10 @@ interface UserDoc {
   email: string;
   createdAt: admin.firestore.Timestamp;
   songsProcessed: number;
+  songsImported: number;
+  songsReady: number;
+  songsExported: number;
+  lastActiveAt: admin.firestore.Timestamp;
   subscription: {
     status: 'none' | 'active' | 'canceled' | 'past_due';
     lifetime?: boolean;
@@ -45,6 +49,10 @@ export const createUser = functions.auth.user().onCreate(async (user) => {
     email: user.email || '',
     createdAt: admin.firestore.Timestamp.now(),
     songsProcessed: 0,
+    songsImported: 0,
+    songsReady: 0,
+    songsExported: 0,
+    lastActiveAt: admin.firestore.Timestamp.now(),
     subscription: {
       status: 'none',
       stripeCustomerId: null,
@@ -91,8 +99,39 @@ export const incrementUsage = functions.https.onCall(async (data, context) => {
     }
 
     transaction.update(userRef, {
-      songsProcessed: admin.firestore.FieldValue.increment(1)
+      songsProcessed: admin.firestore.FieldValue.increment(1),
+      songsExported: admin.firestore.FieldValue.increment(1),
+      lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+  });
+
+  return { success: true };
+});
+
+/**
+ * Callable function: Record a funnel metric (songsImported, songsReady)
+ */
+export const recordMetric = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+  }
+
+  const { field, count } = data as { field: string; count: number };
+
+  // Whitelist allowed metric fields
+  const allowed = ['songsImported', 'songsReady'];
+  if (!allowed.includes(field)) {
+    throw new functions.https.HttpsError('invalid-argument', `Invalid metric field: ${field}`);
+  }
+
+  if (typeof count !== 'number' || count < 1) {
+    throw new functions.https.HttpsError('invalid-argument', 'Count must be a positive number');
+  }
+
+  const userRef = db.collection('users').doc(context.auth.uid);
+  await userRef.update({
+    [field]: admin.firestore.FieldValue.increment(count),
+    lastActiveAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
   return { success: true };

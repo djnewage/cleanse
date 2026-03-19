@@ -94,6 +94,7 @@ export interface BatchAppState {
   dualPassEnabled: boolean
   deviceInfo: DeviceInfo | null
   crossfadeMs: number
+  paddingMs: number
 }
 
 export type BatchAppAction =
@@ -118,7 +119,8 @@ export type BatchAppAction =
   | { type: 'ADD_MANUAL_WORD'; songId: string; word: TranscribedWord }
   | { type: 'REMOVE_WORD'; songId: string; wordIndex: number }
   | { type: 'TOGGLE_PROFANITY'; songId: string; wordIndex: number }
-  | { type: 'SET_WORD_CENSOR_TYPE'; songId: string; wordIndex: number; censorType: CensorType }
+  | { type: 'SET_WORD_CENSOR_TYPE'; songId: string; wordIndex: number; censorType: CensorType | undefined }
+  | { type: 'RESET_ALL_WORD_CENSOR_TYPES'; songId: string }
   | { type: 'SET_SONG_CENSOR_TYPE'; songId: string; censorType: CensorType }
   | { type: 'SET_GLOBAL_CENSOR_TYPE'; censorType: CensorType }
   | { type: 'MARK_SONG_REVIEWED'; id: string }
@@ -136,6 +138,7 @@ export type BatchAppAction =
   | { type: 'SET_TURBO_ENABLED'; enabled: boolean }
   | { type: 'SET_DUAL_PASS_ENABLED'; enabled: boolean }
   | { type: 'SET_CROSSFADE_MS'; ms: number }
+  | { type: 'SET_PADDING_MS'; ms: number }
   | { type: 'START_PREVIEW_GENERATION'; id: string }
   | { type: 'PREVIEW_GENERATED'; id: string; previewPath: string }
   | { type: 'PREVIEW_GENERATION_FAILED'; id: string; error: string }

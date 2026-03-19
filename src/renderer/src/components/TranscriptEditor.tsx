@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react'
+import { useRef, useEffect, useCallback, useState, useMemo } from 'react'
 import type { TranscribedWord, CensorType } from '../types'
 import type { PlaybackStatus } from './WordItem'
 import WordItem from './WordItem'
@@ -8,7 +8,7 @@ import { useActiveWordIndex } from '../hooks/useActiveWordIndex'
 interface TranscriptEditorProps {
   words: TranscribedWord[]
   onToggleProfanity: (index: number) => void
-  onSetCensorType: (index: number, type: CensorType) => void
+  onSetCensorType: (index: number, type: CensorType | undefined) => void
   onAddManualWord: (word: TranscribedWord) => void
   onRemoveWord: (index: number) => void
   defaultCensorType: CensorType
@@ -16,6 +16,8 @@ interface TranscriptEditorProps {
   duration: number
   currentTime?: number
   isPlaying?: boolean
+  onSeekTo?: (time: number) => void
+  onTogglePlayback?: () => void
 }
 
 export default function TranscriptEditor({
@@ -28,12 +30,69 @@ export default function TranscriptEditor({
   language,
   duration,
   currentTime = 0,
-  isPlaying = false
+  isPlaying = false,
+  onSeekTo,
+  onTogglePlayback
 }: TranscriptEditorProps): React.JSX.Element {
   const profanityCount = words.filter((w) => w.is_profanity).length
   const activeIndex = useActiveWordIndex(words, currentTime)
   const wordRefsMap = useRef<Map<number, HTMLButtonElement>>(new Map())
   const [showAddForm, setShowAddForm] = useState(false)
+
+  // Keyboard navigation between flagged words
+  const profanityIndices = useMemo(
+    () => words.map((w, i) => (w.is_profanity ? i : -1)).filter((i) => i >= 0),
+    [words]
+  )
+  const [focusedProfanityPos, setFocusedProfanityPos] = useState(-1)
+
+  // Reset focused position when profanity flags change
+  useEffect(() => {
+    setFocusedProfanityPos(-1)
+  }, [profanityIndices.length])
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (profanityIndices.length === 0) return
+
+      if (e.key === ' ') {
+        e.preventDefault()
+        onTogglePlayback?.()
+        return
+      }
+
+      let nextPos: number | null = null
+      if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        nextPos =
+          focusedProfanityPos < profanityIndices.length - 1
+            ? focusedProfanityPos + 1
+            : 0
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        nextPos =
+          focusedProfanityPos > 0
+            ? focusedProfanityPos - 1
+            : profanityIndices.length - 1
+      }
+
+      if (nextPos !== null) {
+        setFocusedProfanityPos(nextPos)
+        const wordIdx = profanityIndices[nextPos]
+        const el = wordRefsMap.current.get(wordIdx)
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          el.focus()
+        }
+        // Seek audio to the word's timestamp
+        const word = words[wordIdx]
+        if (word && onSeekTo) {
+          onSeekTo(word.start)
+        }
+      }
+    },
+    [profanityIndices, focusedProfanityPos, words, onSeekTo, onTogglePlayback]
+  )
 
   const handleAddManualWord = (word: TranscribedWord): void => {
     onAddManualWord(word)
@@ -74,7 +133,7 @@ export default function TranscriptEditor({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between text-sm text-zinc-400">
+      <div className="flex items-center justify-between text-sm text-zinc-300">
         <div className="flex gap-4">
           <span>Duration: {formatDuration(duration)}</span>
           <span>Language: {language.toUpperCase()}</span>
@@ -99,9 +158,16 @@ export default function TranscriptEditor({
         </div>
       </div>
 
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-zinc-400">
         Click a word to toggle its profanity flag. Right-click a flagged word to cycle censor type.
         Use &quot;Add Censor&quot; to manually mark missed words. Click &times; on manually added words to remove them.
+        Use &larr; &rarr; arrow keys to jump between flagged words.
+        Adjusting Crossfade or Censor Range above will automatically update the preview.
+      </p>
+
+      <p className="text-xs text-amber-300/80 bg-amber-900/20 border border-amber-800/40 rounded px-3 py-2 mt-1">
+        <strong>Note:</strong> AI transcription may not be 100% accurate and can miss profanities.
+        Please review the transcript carefully and use &quot;Add Censor&quot; to manually flag any missed words.
       </p>
 
       {showAddForm && (
@@ -113,7 +179,11 @@ export default function TranscriptEditor({
         />
       )}
 
-      <div className="bg-zinc-900/50 rounded-lg p-4 max-h-80 overflow-y-auto border border-zinc-800">
+      <div
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        className="bg-zinc-900/50 rounded-lg p-4 max-h-80 overflow-y-auto border border-zinc-800 focus:outline-none focus-within:border-blue-500 transition-colors"
+      >
         <div className="flex flex-wrap">
           {words.map((word, idx) => (
             <WordItem

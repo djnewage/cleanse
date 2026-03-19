@@ -66,7 +66,7 @@ export default function QueueItem({
         onClick={canExpand ? onToggleExpand : undefined}
       >
         {/* Expand/collapse indicator */}
-        <span className={`text-zinc-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
+        <span className={`text-zinc-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
           {canExpand ? '▶' : '○'}
         </span>
 
@@ -77,7 +77,7 @@ export default function QueueItem({
               ? `${song.metadata.artist} - ${song.metadata.title}`
               : song.fileName}
           </p>
-          <div className="flex items-center gap-3 text-xs text-zinc-500">
+          <div className="flex items-center gap-3 text-xs text-zinc-400">
             {song.metadata?.artist && song.metadata?.title && (
               <span className="truncate max-w-[200px]" title={song.fileName}>{song.fileName}</span>
             )}
@@ -129,7 +129,7 @@ export default function QueueItem({
                 e.stopPropagation()
                 onRemove()
               }}
-              className="p-1 text-zinc-500 hover:text-red-400 transition-colors"
+              className="p-1 text-zinc-400 hover:text-red-400 transition-colors"
               title="Remove from queue"
             >
               ✕
@@ -141,7 +141,7 @@ export default function QueueItem({
       {/* Progress bar for processing states */}
       {song.status === 'separating' && song.separationProgress && (
         <div className="px-4 pb-3">
-          <div className="flex items-center justify-between mb-1 text-xs text-zinc-500">
+          <div className="flex items-center justify-between mb-1 text-xs text-zinc-400">
             <span>{song.separationProgress.message}</span>
             <span>{Math.round(song.separationProgress.progress)}%</span>
           </div>
@@ -159,7 +159,7 @@ export default function QueueItem({
         <div className="px-4 pb-3">
           {song.transcriptionProgress ? (
             <>
-              <div className="flex items-center justify-between mb-1 text-xs text-zinc-500">
+              <div className="flex items-center justify-between mb-1 text-xs text-zinc-400">
                 <span>{song.transcriptionProgress.message}</span>
                 <span>{Math.round(song.transcriptionProgress.progress)}%</span>
               </div>
@@ -171,7 +171,7 @@ export default function QueueItem({
               </div>
             </>
           ) : (
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
+            <div className="flex items-center gap-2 text-xs text-zinc-400">
               <div className="w-3 h-3 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin" />
               <span>{song.status === 'transcribing_vocals' ? 'Scanning isolated vocals...' : 'Transcribing audio...'}</span>
             </div>
@@ -182,7 +182,7 @@ export default function QueueItem({
       {/* Fetching lyrics indicator */}
       {song.status === 'fetching_lyrics' && (
         <div className="px-4 pb-3">
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
+          <div className="flex items-center gap-2 text-xs text-zinc-400">
             <div className="w-3 h-3 border-2 border-zinc-600 border-t-cyan-400 rounded-full animate-spin" />
             <span>Fetching lyrics...</span>
           </div>

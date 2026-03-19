@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/react'
+import pkg from '../../../package.json'
 import { useReducer, useEffect, useCallback, useRef, useState, useMemo } from 'react'
 import type {
   BatchAppState,
@@ -42,7 +43,8 @@ const initialState: BatchAppState = {
   turboEnabled: false,
   dualPassEnabled: true,
   deviceInfo: null,
-  crossfadeMs: 30
+  crossfadeMs: 30,
+  paddingMs: 100
 }
 
 function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
@@ -287,6 +289,21 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         )
       }
 
+    case 'RESET_ALL_WORD_CENSOR_TYPES':
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.songId
+            ? {
+                ...s,
+                words: s.words.map((w) => ({ ...w, censor_type: undefined })),
+                censoredFilePath: null,
+                previewFilePath: null
+              }
+            : s
+        )
+      }
+
     case 'SET_SONG_CENSOR_TYPE':
       return {
         ...state,
@@ -421,6 +438,9 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
     case 'SET_CROSSFADE_MS':
       return { ...state, crossfadeMs: action.ms }
 
+    case 'SET_PADDING_MS':
+      return { ...state, paddingMs: action.ms }
+
     default:
       return state
   }
@@ -441,7 +461,7 @@ function MainApp(): React.JSX.Element {
     downloaded: boolean
   }>({ show: false, version: '', releaseNotes: '', downloadProgress: null, downloaded: false })
 
-  const { isAuthenticated, isLoading: authLoading, checkCanProcess, recordUsage } = useAuth()
+  const { isAuthenticated, isLoading: authLoading, checkCanProcess, recordUsage, recordSongsImported, recordSongsReady } = useAuth()
 
   // Memoized signature of expanded song's censored words
   const expandedSongWordsSignature = useMemo(() => {
@@ -463,7 +483,8 @@ function MainApp(): React.JSX.Element {
     processingQueue: state.processingQueue,
     turboEnabled: state.turboEnabled,
     dualPassEnabled: state.dualPassEnabled,
-    dispatch
+    dispatch,
+    onSongReady: recordSongsReady
   })
 
   // Listen for backend status updates
@@ -558,8 +579,9 @@ function MainApp(): React.JSX.Element {
         songs: files.map((f) => ({ filePath: f.path, fileName: f.name }))
       })
       logSongsImported(files.length)
+      recordSongsImported(files.length)
     },
-    []
+    [recordSongsImported]
   )
 
   // Toggle expanded song
@@ -593,7 +615,9 @@ function MainApp(): React.JSX.Element {
               censorWords,
               vocalsPath: song.vocalsPath ?? undefined,
               accompanimentPath: song.accompanimentPath ?? undefined,
-              crossfadeMs: state.crossfadeMs
+              crossfadeMs: state.crossfadeMs,
+              paddingBeforeMs: Math.round(state.paddingMs / 2),
+              paddingAfterMs: state.paddingMs
             })
 
             dispatch({ type: 'PREVIEW_GENERATED', id, previewPath })
@@ -605,7 +629,16 @@ function MainApp(): React.JSX.Element {
         }
       }
     }
-  }, [state.expandedSongId, state.songs, state.crossfadeMs])
+  }, [state.expandedSongId, state.songs, state.crossfadeMs, state.paddingMs])
+
+  // Clear preview when crossfade or padding changes so it regenerates
+  useEffect(() => {
+    if (!state.expandedSongId) return
+    const song = state.songs.find((s) => s.id === state.expandedSongId)
+    if (song?.previewFilePath) {
+      dispatch({ type: 'CLEAR_PREVIEW', id: state.expandedSongId })
+    }
+  }, [state.crossfadeMs, state.paddingMs])
 
   // Auto-regenerate preview when words change while panel is open
   useEffect(() => {
@@ -643,7 +676,9 @@ function MainApp(): React.JSX.Element {
           censorWords,
           vocalsPath: song.vocalsPath ?? undefined,
           accompanimentPath: song.accompanimentPath ?? undefined,
-          crossfadeMs: state.crossfadeMs
+          crossfadeMs: state.crossfadeMs,
+          paddingBeforeMs: Math.round(state.paddingMs / 2),
+          paddingAfterMs: state.paddingMs
         })
 
         // Only update if this request is still current
@@ -661,7 +696,7 @@ function MainApp(): React.JSX.Element {
     }, 500)
 
     return () => clearTimeout(timeoutId)
-  }, [state.expandedSongId, expandedSongWordsSignature, state.crossfadeMs])
+  }, [state.expandedSongId, expandedSongWordsSignature, state.crossfadeMs, state.paddingMs])
 
   // Remove song from queue
   const handleRemoveSong = useCallback((id: string) => {
@@ -697,14 +732,20 @@ function MainApp(): React.JSX.Element {
     dispatch({ type: 'CLEAR_PREVIEW', id: songId })
   }, [])
 
-  // Set censor type for a word
+  // Set censor type for a word (undefined = reset to default)
   const handleSetWordCensorType = useCallback(
-    (songId: string, wordIndex: number, censorType: CensorType) => {
+    (songId: string, wordIndex: number, censorType: CensorType | undefined) => {
       dispatch({ type: 'SET_WORD_CENSOR_TYPE', songId, wordIndex, censorType })
       dispatch({ type: 'CLEAR_PREVIEW', id: songId })
     },
     []
   )
+
+  // Reset all per-word censor type overrides for a song
+  const handleResetAllWordCensorTypes = useCallback((songId: string) => {
+    dispatch({ type: 'RESET_ALL_WORD_CENSOR_TYPES', songId })
+    dispatch({ type: 'CLEAR_PREVIEW', id: songId })
+  }, [])
 
   // Set censor type for a song
   const handleSetSongCensorType = useCallback((songId: string, censorType: CensorType) => {
@@ -795,7 +836,9 @@ function MainApp(): React.JSX.Element {
           outputPath,
           song.vocalsPath ?? undefined,
           song.accompanimentPath ?? undefined,
-          state.crossfadeMs
+          state.crossfadeMs,
+          Math.round(state.paddingMs / 2),
+          state.paddingMs
         )
 
         dispatch({ type: 'EXPORT_COMPLETE', id: song.id, outputPath: result.output_path })
@@ -858,7 +901,7 @@ function MainApp(): React.JSX.Element {
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
         <div className="text-center">
           <div className="inline-block w-8 h-8 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin mb-3" />
-          <p className="text-zinc-400">Loading...</p>
+          <p className="text-zinc-300">Loading...</p>
         </div>
       </div>
     )
@@ -873,24 +916,20 @@ function MainApp(): React.JSX.Element {
   const readyCount = state.songs.filter((s) => s.status === 'ready').length
   const completedCount = state.songs.filter((s) => s.status === 'completed').length
   const isProcessing = state.currentlyProcessingId !== null
-  const expandedSong = state.expandedSongId
-    ? state.songs.find((s) => s.id === state.expandedSongId)
-    : null
-
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       {/* Header */}
       <header className="drag-region border-b border-zinc-800 px-6 py-4">
         <div className="flex items-center justify-between no-drag">
           <div>
-            <h1 className="text-xl font-bold">Cleanse</h1>
-            <p className="text-sm text-zinc-400">Batch censor profanity in audio files</p>
+            <h1 className="text-xl font-bold">Cleanse <span className="text-xs font-normal text-zinc-500">v{pkg.version}</span></h1>
+            <p className="text-sm text-zinc-300">Batch censor profanity in audio files</p>
           </div>
           <div className="flex items-center gap-3">
             {/* Help button */}
             <button
               onClick={() => setShowHelp(true)}
-              className="w-5 h-5 rounded-full border border-zinc-600 text-zinc-400 hover:text-zinc-300 hover:border-zinc-500 text-xs font-medium transition-colors flex items-center justify-center"
+              className="w-5 h-5 rounded-full border border-zinc-600 text-zinc-300 hover:text-zinc-300 hover:border-zinc-500 text-xs font-medium transition-colors flex items-center justify-center"
               title="Quick reference"
             >
               ?
@@ -899,7 +938,7 @@ function MainApp(): React.JSX.Element {
             {/* Feedback button */}
             <button
               onClick={() => setShowFeedback(true)}
-              className="text-xs text-zinc-400 hover:text-zinc-300 transition-colors"
+              className="text-xs text-zinc-300 hover:text-zinc-300 transition-colors"
             >
               Feedback
             </button>
@@ -935,7 +974,7 @@ function MainApp(): React.JSX.Element {
                   state.backendReady ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'
                 }`}
               />
-              <span className="text-xs text-zinc-400">
+              <span className="text-xs text-zinc-300">
                 {state.backendReady ? 'Ready' : 'Starting...'}
               </span>
             </div>
@@ -958,21 +997,20 @@ function MainApp(): React.JSX.Element {
               onToggleExpand={handleToggleExpand}
               onRemoveSong={handleRemoveSong}
               onRetrySong={retrySong}
+              renderDetailPanel={(song) => (
+                <SongDetailPanel
+                  song={song}
+                  onToggleProfanity={handleToggleProfanity}
+                  onSetCensorType={handleSetWordCensorType}
+                  onSetSongCensorType={handleSetSongCensorType}
+                  onResetAllWordCensorTypes={handleResetAllWordCensorTypes}
+                  onAddManualWord={handleAddManualWord}
+                  onRemoveWord={handleRemoveWord}
+                  onMarkReviewed={handleMarkReviewed}
+                  onClose={handleCloseExpanded}
+                />
+              )}
             />
-
-            {/* Expanded song detail panel */}
-            {expandedSong && (
-              <SongDetailPanel
-                song={expandedSong}
-                onToggleProfanity={handleToggleProfanity}
-                onSetCensorType={handleSetWordCensorType}
-                onSetSongCensorType={handleSetSongCensorType}
-                onAddManualWord={handleAddManualWord}
-                onRemoveWord={handleRemoveWord}
-                onMarkReviewed={handleMarkReviewed}
-                onClose={handleCloseExpanded}
-              />
-            )}
 
             {/* Batch controls */}
             <BatchControls
@@ -983,6 +1021,8 @@ function MainApp(): React.JSX.Element {
               onSetGlobalCensorType={handleSetGlobalCensorType}
               crossfadeMs={state.crossfadeMs}
               onSetCrossfadeMs={(ms) => dispatch({ type: 'SET_CROSSFADE_MS', ms })}
+              paddingMs={state.paddingMs}
+              onSetPaddingMs={(ms) => dispatch({ type: 'SET_PADDING_MS', ms })}
               onExportAll={handleExportAll}
               onClearAll={handleClearAll}
               isExporting={state.isExportingAll}

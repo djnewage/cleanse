@@ -11,7 +11,7 @@ interface WordItemProps {
   index: number
   defaultCensorType: CensorType
   onToggle: (index: number) => void
-  onSetCensorType: (index: number, type: CensorType) => void
+  onSetCensorType: (index: number, type: CensorType | undefined) => void
   onRemoveWord: (index: number) => void
   playbackStatus?: PlaybackStatus
   itemRef?: React.Ref<HTMLButtonElement>
@@ -36,8 +36,14 @@ function WordItemInner({
       if (!word.is_profanity) return
       e.preventDefault()
       const current = word.censor_type ?? defaultCensorType
-      const nextIdx = (CENSOR_CYCLE.indexOf(current) + 1) % CENSOR_CYCLE.length
-      onSetCensorType(index, CENSOR_CYCLE[nextIdx])
+      const currentIdx = CENSOR_CYCLE.indexOf(current)
+      const nextIdx = currentIdx + 1
+      if (nextIdx >= CENSOR_CYCLE.length) {
+        // Cycled past last type — reset to song default
+        onSetCensorType(index, undefined)
+      } else {
+        onSetCensorType(index, CENSOR_CYCLE[nextIdx])
+      }
     },
     [index, word.is_profanity, word.censor_type, defaultCensorType, onSetCensorType]
   )
@@ -95,7 +101,8 @@ function WordItemInner({
       title={`${formatTime(word.start)} - ${formatTime(word.end)} (${Math.round(word.confidence * 100)}%)${word.is_profanity ? `\nCensor: ${effectiveType}${hasOverride ? '' : ' (default)'}\nRight-click to change` : ''}`}
       className={`
         group relative inline-flex items-baseline gap-0.5 px-1.5 py-0.5 m-0.5 rounded text-sm font-mono
-        transition-all duration-200 ease-out
+        transition-all duration-200 ease-out outline-none
+        focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 focus-visible:ring-offset-zinc-900
         ${statusClasses}
       `}
     >
@@ -103,30 +110,10 @@ function WordItemInner({
       {word.is_profanity && (
         <span
           className={`text-[9px] leading-none font-sans font-bold ${
-            hasOverride ? 'text-blue-400' : 'text-zinc-500'
+            hasOverride ? 'text-blue-400' : 'text-zinc-400'
           }`}
         >
           {CENSOR_LABEL[effectiveType]}
-        </span>
-      )}
-      {word.detection_source === 'adlib' && (
-        <span className="text-[8px] leading-none font-sans font-semibold text-amber-400 ml-0.5">
-          AD
-        </span>
-      )}
-      {word.detection_source === 'lyrics' && (
-        <span className="text-[8px] leading-none font-sans font-semibold text-cyan-400 ml-0.5">
-          LY
-        </span>
-      )}
-      {word.detection_source === 'lyrics_gap' && (
-        <span className="text-[8px] leading-none font-sans font-semibold text-teal-400 ml-0.5">
-          LG
-        </span>
-      )}
-      {word.detection_source === 'lyrics_corrected' && (
-        <span className="text-[8px] leading-none font-sans font-semibold text-orange-400 ml-0.5">
-          LC
         </span>
       )}
       {word.detection_source === 'manual' && (

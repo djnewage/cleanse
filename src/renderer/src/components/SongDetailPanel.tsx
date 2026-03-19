@@ -7,8 +7,9 @@ import { usePlaybackTime } from '../hooks/usePlaybackTime'
 interface SongDetailPanelProps {
   song: SongEntry
   onToggleProfanity: (songId: string, wordIndex: number) => void
-  onSetCensorType: (songId: string, wordIndex: number, censorType: CensorType) => void
+  onSetCensorType: (songId: string, wordIndex: number, censorType: CensorType | undefined) => void
   onSetSongCensorType: (songId: string, censorType: CensorType) => void
+  onResetAllWordCensorTypes: (songId: string) => void
   onAddManualWord: (songId: string, word: TranscribedWord) => void
   onRemoveWord: (songId: string, wordIndex: number) => void
   onMarkReviewed: (songId: string) => void
@@ -20,19 +21,20 @@ export default function SongDetailPanel({
   onToggleProfanity,
   onSetCensorType,
   onSetSongCensorType,
+  onResetAllWordCensorTypes,
   onAddManualWord,
   onRemoveWord,
   onMarkReviewed,
   onClose
 }: SongDetailPanelProps): React.JSX.Element {
-  const { currentTime, isPlaying, audioRef } = usePlaybackTime()
+  const { currentTime, isPlaying, audioRef, seekTo, togglePlayback } = usePlaybackTime()
   const [lyricsExpanded, setLyricsExpanded] = useState(false)
 
   const handleToggleProfanity = (index: number) => {
     onToggleProfanity(song.id, index)
   }
 
-  const handleSetCensorType = (index: number, censorType: CensorType) => {
+  const handleSetCensorType = (index: number, censorType: CensorType | undefined) => {
     onSetCensorType(song.id, index, censorType)
   }
 
@@ -132,7 +134,7 @@ export default function SongDetailPanel({
           )}
           <button
             onClick={onClose}
-            className="text-zinc-400 hover:text-white text-lg"
+            className="text-zinc-300 hover:text-white text-lg"
           >
             ✕
           </button>
@@ -206,13 +208,15 @@ export default function SongDetailPanel({
           duration={song.duration}
           currentTime={currentTime}
           isPlaying={isPlaying}
+          onSeekTo={seekTo}
+          onTogglePlayback={togglePlayback}
         />
       )}
 
       {/* Song-level censor type selector */}
       <div className="flex items-center gap-4">
         <span
-          className="text-xs text-zinc-500 cursor-help"
+          className="text-xs text-zinc-400 cursor-help"
           title="Custom censor type for this song (overrides default)"
         >
           Censor type:
@@ -227,7 +231,7 @@ export default function SongDetailPanel({
                 ${
                   song.defaultCensorType === type
                     ? 'bg-blue-600 text-white'
-                    : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-300'
+                    : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-300'
                 }
               `}
             >
@@ -235,10 +239,19 @@ export default function SongDetailPanel({
             </button>
           ))}
         </div>
+        {song.words.some((w) => w.censor_type !== undefined) && (
+          <button
+            onClick={() => onResetAllWordCensorTypes(song.id)}
+            className="px-2 py-1 text-xs font-medium text-blue-400 hover:text-blue-300 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-md transition-colors"
+            title="Reset all per-word censor type overrides back to the song default"
+          >
+            Reset overrides ({song.words.filter((w) => w.censor_type !== undefined).length})
+          </button>
+        )}
       </div>
 
       {/* Summary */}
-      <div className="text-xs text-zinc-500 flex items-center gap-4">
+      <div className="text-xs text-zinc-400 flex items-center gap-4">
         <span>{song.words.length} words total</span>
         <span>{profanityCount} marked for censoring</span>
         {song.userReviewed && <span className="text-green-400">User reviewed</span>}
@@ -250,9 +263,9 @@ export default function SongDetailPanel({
         <div className="pt-2">
           {/* Show preview generation status */}
           {song.isGeneratingPreview && (
-            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-3 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded">
+            <div className="flex items-center gap-2 text-xs text-zinc-400 mb-3 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded">
               <div className="w-3 h-3 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin" />
-              <span>Generating censored preview...</span>
+              <span>Updating preview...</span>
             </div>
           )}
 

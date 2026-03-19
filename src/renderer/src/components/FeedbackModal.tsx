@@ -54,7 +54,7 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
         {/* Close button */}
         <button
           onClick={handleClose}
-          className="absolute top-4 right-4 text-zinc-500 hover:text-white text-lg"
+          className="absolute top-4 right-4 text-zinc-400 hover:text-white text-lg"
         >
           ✕
         </button>
@@ -67,7 +67,7 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
             <h2 className="text-xl font-bold text-white text-center mb-2">
               Thanks for your feedback!
             </h2>
-            <p className="text-zinc-400 text-center mb-6">
+            <p className="text-zinc-300 text-center mb-6">
               We appreciate you taking the time to share your thoughts.
             </p>
             <button
@@ -82,7 +82,7 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
             <h2 className="text-xl font-bold text-white text-center mb-2">
               Send Feedback
             </h2>
-            <p className="text-zinc-400 text-center mb-6">
+            <p className="text-zinc-300 text-center mb-6">
               Let us know how we can improve Cleanse.
             </p>
 
@@ -107,7 +107,7 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
                 w-full py-3 rounded-lg font-medium text-sm transition-colors
                 ${
                   loading || !message.trim()
-                    ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                    ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700'
                 }
               `}
@@ -124,7 +124,7 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
 
             <button
               onClick={handleClose}
-              className="w-full mt-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="w-full mt-3 py-2 text-sm text-zinc-400 hover:text-zinc-300 transition-colors"
             >
               Cancel
             </button>

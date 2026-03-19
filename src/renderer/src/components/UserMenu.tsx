@@ -62,7 +62,7 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
         <div className="absolute right-0 top-full mt-2 w-64 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 py-2">
           {/* Email */}
           <div className="px-4 py-2 border-b border-zinc-700">
-            <p className="text-xs text-zinc-400 truncate">{userData?.email}</p>
+            <p className="text-xs text-zinc-300 truncate">{userData?.email}</p>
           </div>
 
           {/* Subscription info */}
@@ -73,7 +73,7 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
                   <span className="px-2 py-0.5 text-xs font-medium bg-emerald-900/50 text-emerald-300 rounded-full">
                     Pro
                   </span>
-                  <span className="text-xs text-zinc-400">
+                  <span className="text-xs text-zinc-300">
                     {userData?.subscription.lifetime
                       ? 'Lifetime'
                       : userData?.subscription.currentPeriodEnd
@@ -85,7 +85,7 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
             ) : (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-400">
+                  <span className="text-xs text-zinc-300">
                     {songsRemaining > 0 ? (
                       <>
                         <span className="text-zinc-300 font-medium">{songsRemaining}</span> of {FREE_SONGS_LIMIT} free songs
@@ -117,7 +117,7 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
             </button>
             <button
               onClick={handleSignOut}
-              className="w-full text-left px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-700 hover:text-zinc-300 transition-colors"
+              className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-700 hover:text-zinc-300 transition-colors"
             >
               Sign out
             </button>

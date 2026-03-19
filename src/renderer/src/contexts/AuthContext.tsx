@@ -9,7 +9,7 @@ import {
   sendPasswordResetEmail
 } from 'firebase/auth'
 import { doc, onSnapshot } from 'firebase/firestore'
-import { auth, db, incrementUsage, canProcessSong, createCheckoutSession, createPortalSession } from '../lib/firebase'
+import { auth, db, incrementUsage, canProcessSong, createCheckoutSession, createPortalSession, recordMetric } from '../lib/firebase'
 import { logLogin, logSignUp, logSignOut, logCheckoutInitiated } from '../lib/analytics'
 import type { UserData, UsageInfo } from '../types'
 
@@ -30,6 +30,8 @@ interface AuthContextType {
   // Usage/subscription methods
   checkCanProcess: () => Promise<UsageInfo>
   recordUsage: () => Promise<void>
+  recordSongsImported: (count: number) => Promise<void>
+  recordSongsReady: () => Promise<void>
   openCheckout: () => Promise<void>
   openCustomerPortal: () => Promise<void>
 
@@ -231,6 +233,26 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     }
   }, [user])
 
+  // Record songs imported to queue
+  const recordSongsImported = useCallback(async (count: number) => {
+    if (!user) return
+    try {
+      await recordMetric({ field: 'songsImported', count })
+    } catch (err) {
+      console.error('Error recording songsImported:', err)
+    }
+  }, [user])
+
+  // Record song reaching ready state
+  const recordSongsReady = useCallback(async () => {
+    if (!user) return
+    try {
+      await recordMetric({ field: 'songsReady', count: 1 })
+    } catch (err) {
+      console.error('Error recording songsReady:', err)
+    }
+  }, [user])
+
   // Open Stripe Checkout
   const openCheckout = useCallback(async () => {
     if (!user) return
@@ -285,6 +307,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     clearError,
     checkCanProcess,
     recordUsage,
+    recordSongsImported,
+    recordSongsReady,
     openCheckout,
     openCustomerPortal,
     isAuthenticated,

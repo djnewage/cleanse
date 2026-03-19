@@ -36,7 +36,7 @@ export default function UpdateModal({
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-zinc-500 hover:text-white text-lg"
+          className="absolute top-4 right-4 text-zinc-400 hover:text-white text-lg"
         >
           ✕
         </button>
@@ -45,14 +45,14 @@ export default function UpdateModal({
         <h2 className="text-xl font-bold text-white mb-1">
           Update Available
         </h2>
-        <p className="text-sm text-zinc-400 mb-4">
+        <p className="text-sm text-zinc-300 mb-4">
           Cleanse v{version} is ready
         </p>
 
         {/* Release notes */}
         {releaseNotes && (
           <div className="bg-zinc-800/50 rounded-lg p-4 mb-6 max-h-48 overflow-y-auto">
-            <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide mb-2">
+            <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide mb-2">
               What's new
             </p>
             <div className="text-sm text-zinc-300 whitespace-pre-wrap">
@@ -65,7 +65,7 @@ export default function UpdateModal({
         {isDownloading && (
           <div className="mb-6">
             <div className="flex justify-between items-center text-sm mb-2">
-              <span className="text-zinc-400">Downloading...</span>
+              <span className="text-zinc-300">Downloading...</span>
               <span className="text-white font-medium">{Math.round(downloadProgress)}%</span>
             </div>
             <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
@@ -88,7 +88,7 @@ export default function UpdateModal({
             </button>
             <button
               onClick={onClose}
-              className="w-full mt-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="w-full mt-3 py-2 text-sm text-zinc-400 hover:text-zinc-300 transition-colors"
             >
               Later
             </button>
@@ -96,7 +96,7 @@ export default function UpdateModal({
         ) : isDownloading ? (
           <button
             onClick={onClose}
-            className="w-full py-3 rounded-lg font-medium text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+            className="w-full py-3 rounded-lg font-medium text-sm text-zinc-400 hover:text-zinc-300 transition-colors"
           >
             Continue in background
           </button>
@@ -110,7 +110,7 @@ export default function UpdateModal({
             </button>
             <button
               onClick={onClose}
-              className="w-full mt-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="w-full mt-3 py-2 text-sm text-zinc-400 hover:text-zinc-300 transition-colors"
             >
               Maybe later
             </button>

@@ -60,7 +60,7 @@ export default function AuthScreen(): React.JSX.Element {
         {/* Logo/Title */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-white mb-2">Cleanse</h1>
-          <p className="text-zinc-400 text-sm">Censor profanity in audio files</p>
+          <p className="text-zinc-300 text-sm">Censor profanity in audio files</p>
         </div>
 
         {/* Auth form */}
@@ -90,7 +90,7 @@ export default function AuthScreen(): React.JSX.Element {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email field */}
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-zinc-400 mb-1">
+              <label htmlFor="email" className="block text-sm font-medium text-zinc-300 mb-1">
                 Email
               </label>
               <input
@@ -107,7 +107,7 @@ export default function AuthScreen(): React.JSX.Element {
             {/* Password field */}
             {mode !== 'reset' && (
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-zinc-400 mb-1">
+                <label htmlFor="password" className="block text-sm font-medium text-zinc-300 mb-1">
                   Password
                 </label>
                 <input
@@ -126,7 +126,7 @@ export default function AuthScreen(): React.JSX.Element {
             {/* Confirm password field (signup only) */}
             {mode === 'signup' && (
               <div>
-                <label htmlFor="confirmPassword" className="block text-sm font-medium text-zinc-400 mb-1">
+                <label htmlFor="confirmPassword" className="block text-sm font-medium text-zinc-300 mb-1">
                   Confirm Password
                 </label>
                 <input
@@ -150,7 +150,7 @@ export default function AuthScreen(): React.JSX.Element {
                 w-full py-2.5 rounded-lg font-medium text-sm transition-colors
                 ${
                   isLoading
-                    ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                    ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700'
                 }
               `}
@@ -176,7 +176,7 @@ export default function AuthScreen(): React.JSX.Element {
           <div className="mt-4 pt-4 border-t border-zinc-800 text-center text-sm">
             {mode === 'signin' && (
               <>
-                <p className="text-zinc-400">
+                <p className="text-zinc-300">
                   Don't have an account?{' '}
                   <button
                     onClick={() => switchMode('signup')}
@@ -185,10 +185,10 @@ export default function AuthScreen(): React.JSX.Element {
                     Sign up
                   </button>
                 </p>
-                <p className="text-zinc-500 mt-2">
+                <p className="text-zinc-400 mt-2">
                   <button
                     onClick={() => switchMode('reset')}
-                    className="text-zinc-400 hover:text-zinc-300"
+                    className="text-zinc-300 hover:text-zinc-300"
                   >
                     Forgot password?
                   </button>
@@ -197,7 +197,7 @@ export default function AuthScreen(): React.JSX.Element {
             )}
 
             {mode === 'signup' && (
-              <p className="text-zinc-400">
+              <p className="text-zinc-300">
                 Already have an account?{' '}
                 <button
                   onClick={() => switchMode('signin')}
@@ -209,7 +209,7 @@ export default function AuthScreen(): React.JSX.Element {
             )}
 
             {mode === 'reset' && (
-              <p className="text-zinc-400">
+              <p className="text-zinc-300">
                 Remember your password?{' '}
                 <button
                   onClick={() => switchMode('signin')}
@@ -223,7 +223,7 @@ export default function AuthScreen(): React.JSX.Element {
         </div>
 
         {/* Free tier info */}
-        <p className="text-center text-xs text-zinc-500 mt-6">
+        <p className="text-center text-xs text-zinc-400 mt-6">
           Start with 5 free songs. Subscribe for unlimited access.
         </p>
       </div>
