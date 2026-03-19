@@ -17,3 +17,4 @@ build/*
 !build/entitlements.mac.inherit.plist
 firebase/functions/lib/
 tsconfig.node.tsbuildinfo
+tsconfig.web.tsbuildinfo
