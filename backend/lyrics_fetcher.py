@@ -68,21 +68,90 @@ def _clean_genius_lyrics(raw: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _clean_search_title(title: str) -> str:
+    """Strip version/edit suffixes that confuse lyrics APIs.
+
+    Handles both simple tags like (remix) and named variants like
+    (Red Sip Remix), (DJ Snake Edit), (Cheyenne Giles Remix).
+    """
+    cleaned = re.sub(
+        r'\s*[\(\[]'
+        r'(?:[^)\]]*?\s)?'  # optional prefix words (e.g., "Red Sip ", "DJ Snake ")
+        r'(?:intro|outro|edit|remix|deluxe|clean|dirty|explicit|radio|'
+        r'extended|original|remaster|remastered|acoustic|live|demo|instrumental|version|'
+        r'skit|interlude|bonus|album|single)'
+        r'(?:\s*(?:edit|mix|version|cut))?'
+        r'\s*[\)\]]',
+        '', title, flags=re.IGNORECASE
+    ).strip()
+    return cleaned or title
+
+
+def _looks_like_lyrics(text: str) -> bool:
+    """Basic heuristic: reject content that doesn't look like song lyrics."""
+    lines = [l for l in text.strip().split('\n') if l.strip()]
+    if not lines:
+        return False
+
+    # Lyrics are typically short lines; prose has long paragraphs
+    avg_line_len = sum(len(l) for l in lines) / len(lines)
+    if avg_line_len > 120:
+        return False
+
+    # Lyrics typically have many short lines (< 80 chars)
+    short_lines = sum(1 for l in lines if len(l.strip()) < 80)
+    if short_lines / len(lines) < 0.5:
+        return False
+
+    return True
+
+
+def _artist_matches(requested: str, returned: str) -> bool:
+    """Check if returned artist reasonably matches requested artist."""
+    req = requested.lower().strip()
+    ret = returned.lower().strip()
+    if req in ret or ret in req:
+        return True
+    first_req = _extract_first_artist(requested).lower()
+    first_ret = _extract_first_artist(returned).lower()
+    if first_req in first_ret or first_ret in first_req:
+        return True
+    return False
+
+
 def fetch_genius_lyrics(artist: str, title: str) -> str | None:
     """Fetch plain lyrics from Genius. Returns cleaned text or None."""
     genius = _get_genius()
     if genius is None:
         return None
 
-    try:
-        song = genius.search_song(title, artist)
-        if song and song.lyrics:
-            cleaned = _clean_genius_lyrics(song.lyrics)
-            if cleaned:
-                print(f"[Lyrics] Found Genius lyrics for '{artist} - {title}'", file=sys.stderr)
+    # Try cleaned title first, then original if different
+    titles_to_try = [_clean_search_title(title)]
+    if titles_to_try[0] != title:
+        titles_to_try.append(title)
+
+    for search_title in titles_to_try:
+        try:
+            song = genius.search_song(search_title, artist)
+            if song and song.lyrics:
+                # Validate artist match
+                if song.artist and not _artist_matches(artist, song.artist):
+                    print(f"[Lyrics] Genius artist mismatch: requested '{artist}', got '{song.artist}'", file=sys.stderr)
+                    continue
+
+                cleaned = _clean_genius_lyrics(song.lyrics)
+                if not cleaned:
+                    continue
+
+                # Validate content looks like lyrics (not prose/essays)
+                if not _looks_like_lyrics(cleaned):
+                    print(f"[Lyrics] Genius result rejected (doesn't look like lyrics) for '{artist} - {search_title}'", file=sys.stderr)
+                    continue
+
+                print(f"[Lyrics] Found Genius lyrics for '{artist} - {search_title}'", file=sys.stderr)
                 return cleaned
-    except Exception as e:
-        print(f"[Lyrics] Genius search failed: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"[Lyrics] Genius search failed for '{search_title}': {e}", file=sys.stderr)
 
     return None
 
@@ -135,9 +204,12 @@ def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dic
     """Fetch lyrics from LRCLIB with progressive fallback. Returns {plain_lyrics, synced_lyrics} or None."""
     headers = {"User-Agent": USER_AGENT}
 
+    # Clean title for search (strip version/edit suffixes)
+    clean_title = _clean_search_title(title)
+
     # STEP 1: Try exact match with full artist name
     try:
-        params = {"artist_name": artist, "track_name": title}
+        params = {"artist_name": artist, "track_name": clean_title}
         if duration is not None:
             params["duration"] = str(int(duration))
 
@@ -160,7 +232,7 @@ def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dic
 
     # STEP 2: Try search with full artist name
     try:
-        params = {"track_name": title, "artist_name": artist}
+        params = {"track_name": clean_title, "artist_name": artist}
         resp = requests.get(
             f"{LRCLIB_BASE}/search",
             params=params,
@@ -185,7 +257,7 @@ def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dic
     if first_artist and first_artist != artist:
         try:
             print(f"[Lyrics] Trying first artist only: '{first_artist}'", file=sys.stderr)
-            params = {"track_name": title, "artist_name": first_artist}
+            params = {"track_name": clean_title, "artist_name": first_artist}
             resp = requests.get(
                 f"{LRCLIB_BASE}/search",
                 params=params,
@@ -207,8 +279,8 @@ def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dic
 
     # STEP 4: Try title-only search as last resort
     try:
-        print(f"[Lyrics] Trying LRCLIB title-only search: '{title}'", file=sys.stderr)
-        params = {"track_name": title}  # No artist_name parameter
+        print(f"[Lyrics] Trying LRCLIB title-only search: '{clean_title}'", file=sys.stderr)
+        params = {"track_name": clean_title}  # No artist_name parameter
         resp = requests.get(
             f"{LRCLIB_BASE}/search",
             params=params,
@@ -313,7 +385,13 @@ def find_lyrics_profanity(
 
     new_detections = []
 
+    # Skip lyrics lines before the first transcribed word (instrumental intro)
+    first_word_start = transcribed_words[0]["start"] if transcribed_words else 0.0
+
     for i, line in enumerate(lines):
+        if line["time"] < first_word_start - 1.0:
+            continue
+
         # Determine line duration (time to next line, capped at 5s)
         next_time = lines[i + 1]["time"] if i + 1 < len(lines) else line["time"] + 5.0
         line_duration = min(next_time - line["time"], 5.0)

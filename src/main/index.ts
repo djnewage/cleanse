@@ -238,6 +238,8 @@ ipcMain.handle(
       vocalsPath?: string
       accompanimentPath?: string
       crossfadeMs: number
+      paddingBeforeMs?: number
+      paddingAfterMs?: number
     }
   ) => {
     try {
@@ -245,6 +247,12 @@ ipcMain.handle(
         path: args.filePath,
         words: args.censorWords,
         crossfade_ms: args.crossfadeMs
+      }
+      if (args.paddingBeforeMs !== undefined) {
+        body.padding_before_ms = args.paddingBeforeMs
+      }
+      if (args.paddingAfterMs !== undefined) {
+        body.padding_after_ms = args.paddingAfterMs
       }
       if (args.vocalsPath && args.accompanimentPath) {
         body.vocals_path = args.vocalsPath
@@ -287,7 +295,9 @@ ipcMain.handle(
     outputPath?: string,
     vocalsPath?: string,
     accompanimentPath?: string,
-    crossfadeMs?: number
+    crossfadeMs?: number,
+    paddingBeforeMs?: number,
+    paddingAfterMs?: number
   ) => {
     try {
       const body: Record<string, unknown> = { path: filePath, words, output_path: outputPath }
@@ -297,6 +307,12 @@ ipcMain.handle(
       }
       if (crossfadeMs !== undefined) {
         body.crossfade_ms = crossfadeMs
+      }
+      if (paddingBeforeMs !== undefined) {
+        body.padding_before_ms = paddingBeforeMs
+      }
+      if (paddingAfterMs !== undefined) {
+        body.padding_after_ms = paddingAfterMs
       }
 
       const resp = await fetchBackend('/censor', {

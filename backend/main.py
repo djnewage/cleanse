@@ -52,7 +52,10 @@ from audio_processor import censor_audio, censor_audio_vocals_only
 from vocal_separator import separate as separate_vocals
 from device_info import detect_device
 from lyrics_fetcher import extract_metadata, fetch_lyrics, find_lyrics_profanity
-from lyrics_corrector import correct_words_with_lyrics, fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics
+from lyrics_corrector import (
+    correct_words_with_lyrics, fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics,
+    extract_profanity_vocab, flag_with_profanity_vocab,
+)
 
 
 app = FastAPI(title="Cleanse Backend")
@@ -142,6 +145,8 @@ class CensorRequest(BaseModel):
     vocals_path: str | None = None
     accompaniment_path: str | None = None
     crossfade_ms: int = 30
+    padding_before_ms: int = 50
+    padding_after_ms: int = 250
 
 
 @app.get("/health")
@@ -263,16 +268,30 @@ async def transcribe(req: TranscribeRequest):
             final_words = primary_words
 
         # Correct misheard words using synced lyrics (fuzzy matching)
+        alignment_score = 0.0
         if req.synced_lyrics:
-            final_words = correct_words_with_lyrics(final_words, req.synced_lyrics)
+            final_words, alignment_score = correct_words_with_lyrics(final_words, req.synced_lyrics)
 
-        # Fill gaps where transcription is empty but synced lyrics have content
-        if req.synced_lyrics:
+        # Gate timing-dependent features on alignment quality.
+        # Low alignment (<25%) indicates lyrics don't match the audio
+        # (e.g., remix with reordered/chopped vocals) — skip gap-fill and
+        # lyrics-based profanity discovery that would inject garbage.
+        # Alignment gating only applies to synced lyrics (which have timestamps).
+        # Plain lyrics gap-fill uses its own alignment detection and is always attempted.
+        lyrics_aligned = alignment_score >= 0.25
+
+        if req.synced_lyrics and lyrics_aligned:
             final_words = fill_gaps_with_lyrics(final_words, req.synced_lyrics)
-        elif req.lyrics:
+        elif not req.synced_lyrics and req.lyrics:
             # Fallback: use plain lyrics (no timestamps) with sequence alignment
             final_words = fill_gaps_with_plain_lyrics(
                 final_words, req.lyrics, result["duration"]
+            )
+        elif req.synced_lyrics and not lyrics_aligned:
+            print(
+                f"[Pipeline] Poor lyrics alignment ({alignment_score:.0%}), "
+                f"skipping gap-fill and lyrics profanity discovery",
+                file=sys.stderr,
             )
 
         # Re-flag profanity on all words (corrected words may now be profane,
@@ -281,11 +300,21 @@ async def transcribe(req: TranscribeRequest):
             final_words = flag_profanity(final_words)
 
         # Cross-reference with synced lyrics to find missed profanities
-        if req.synced_lyrics:
+        if req.synced_lyrics and lyrics_aligned:
             lyrics_detections = find_lyrics_profanity(req.synced_lyrics, final_words)
             if lyrics_detections:
                 final_words = final_words + lyrics_detections
                 final_words.sort(key=lambda w: w["start"])
+
+        # Time-agnostic profanity vocab check — works even for remixes
+        # where lyrics timing doesn't match. Uses plain lyrics (or synced
+        # lyrics text) to extract profanity vocabulary and fuzzy-match
+        # against transcribed words.
+        lyrics_for_vocab = req.lyrics or req.synced_lyrics
+        if lyrics_for_vocab:
+            profanity_vocab = extract_profanity_vocab(lyrics_for_vocab)
+            if profanity_vocab:
+                final_words = flag_with_profanity_vocab(final_words, profanity_vocab)
 
         return {
             "words": final_words,
@@ -338,9 +367,16 @@ def preview(req: CensorRequest):
             result_path = censor_audio_vocals_only(
                 req.vocals_path, req.accompaniment_path, words_dicts, preview_path,
                 crossfade_ms=req.crossfade_ms,
+                padding_before_ms=req.padding_before_ms,
+                padding_after_ms=req.padding_after_ms,
             )
         else:
-            result_path = censor_audio(req.path, words_dicts, preview_path, crossfade_ms=req.crossfade_ms)
+            result_path = censor_audio(
+                req.path, words_dicts, preview_path,
+                crossfade_ms=req.crossfade_ms,
+                padding_before_ms=req.padding_before_ms,
+                padding_after_ms=req.padding_after_ms,
+            )
 
         return {"output_path": result_path}
     except Exception as e:
@@ -367,9 +403,16 @@ def censor(req: CensorRequest):
             result_path = censor_audio_vocals_only(
                 req.vocals_path, req.accompaniment_path, words_dicts, output_path,
                 crossfade_ms=req.crossfade_ms,
+                padding_before_ms=req.padding_before_ms,
+                padding_after_ms=req.padding_after_ms,
             )
         else:
-            result_path = censor_audio(req.path, words_dicts, output_path, crossfade_ms=req.crossfade_ms)
+            result_path = censor_audio(
+                req.path, words_dicts, output_path,
+                crossfade_ms=req.crossfade_ms,
+                padding_before_ms=req.padding_before_ms,
+                padding_after_ms=req.padding_after_ms,
+            )
 
         return {"output_path": result_path}
     except Exception as e:

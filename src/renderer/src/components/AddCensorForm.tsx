@@ -70,13 +70,13 @@ export default function AddCensorForm({
     >
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-zinc-300">Add Manual Censor</span>
-        <button onClick={onCancel} className="text-zinc-500 hover:text-white text-sm">
+        <button onClick={onCancel} className="text-zinc-400 hover:text-white text-sm">
           ✕
         </button>
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-500 mb-1">Word / phrase</label>
+        <label className="block text-xs text-zinc-400 mb-1">Word / phrase</label>
         <input
           type="text"
           value={wordText}
@@ -89,7 +89,7 @@ export default function AddCensorForm({
 
       <div className="flex gap-4">
         <div className="flex-1">
-          <label className="block text-xs text-zinc-500 mb-1">Start time</label>
+          <label className="block text-xs text-zinc-400 mb-1">Start time</label>
           <div className="flex items-center gap-1">
             <input
               type="number"
@@ -98,7 +98,7 @@ export default function AddCensorForm({
               onChange={(e) => setStartMin(e.target.value)}
               className="w-12 px-1.5 py-1.5 bg-zinc-900 border border-zinc-700 rounded text-sm text-white text-center focus:outline-none focus:border-blue-500"
             />
-            <span className="text-zinc-500 text-sm">:</span>
+            <span className="text-zinc-400 text-sm">:</span>
             <input
               type="number"
               min="0"
@@ -110,7 +110,7 @@ export default function AddCensorForm({
           </div>
         </div>
         <div className="flex-1">
-          <label className="block text-xs text-zinc-500 mb-1">End time</label>
+          <label className="block text-xs text-zinc-400 mb-1">End time</label>
           <div className="flex items-center gap-1">
             <input
               type="number"
@@ -119,7 +119,7 @@ export default function AddCensorForm({
               onChange={(e) => setEndMin(e.target.value)}
               className="w-12 px-1.5 py-1.5 bg-zinc-900 border border-zinc-700 rounded text-sm text-white text-center focus:outline-none focus:border-blue-500"
             />
-            <span className="text-zinc-500 text-sm">:</span>
+            <span className="text-zinc-400 text-sm">:</span>
             <input
               type="number"
               min="0"
@@ -135,7 +135,7 @@ export default function AddCensorForm({
       <div className="flex gap-2 justify-end">
         <button
           onClick={onCancel}
-          className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+          className="px-3 py-1.5 text-xs text-zinc-300 hover:text-zinc-200 transition-colors"
         >
           Cancel
         </button>
@@ -145,7 +145,7 @@ export default function AddCensorForm({
           className={`px-3 py-1.5 text-xs rounded font-medium transition-colors ${
             isValid
               ? 'bg-blue-600 text-white hover:bg-blue-500'
-              : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+              : 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
           }`}
         >
           Add

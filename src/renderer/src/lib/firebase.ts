@@ -52,4 +52,6 @@ export const createPortalSession = httpsCallable<
 
 export const submitFeedback = httpsCallable<{ message: string }, { success: boolean }>(functions, 'submitFeedback')
 
+export const recordMetric = httpsCallable<{ field: string; count: number }, { success: boolean }>(functions, 'recordMetric')
+
 export default app

@@ -1,9 +1,11 @@
 """Lyrics-based transcription correction using synced lyrics and fuzzy matching."""
 
 import re
+import sys
 from difflib import SequenceMatcher
 from typing import List, Dict, Optional, Tuple
 from lyrics_fetcher import parse_synced_lyrics
+from better_profanity import profanity as _profanity_checker
 from profanity_detector import _normalize_word
 
 # Configuration constants
@@ -18,7 +20,7 @@ def correct_words_with_lyrics(
     transcribed_words: List[Dict],
     synced_lyrics: str,
     auto_correct_threshold: float = HIGH_CONFIDENCE_THRESHOLD,
-) -> List[Dict]:
+) -> Tuple[List[Dict], float]:
     """
     Correct transcribed words using synced lyrics with fuzzy matching.
 
@@ -28,18 +30,22 @@ def correct_words_with_lyrics(
         auto_correct_threshold: Similarity threshold for automatic correction (0-1)
 
     Returns:
-        List of words with corrections applied, preserving original timing.
-        Corrected words have additional fields:
-        - original_word: The transcribed text before correction
-        - correction_confidence: How confident we are in the correction (0-1)
+        Tuple of:
+        - List of words with corrections applied, preserving original timing.
+          Corrected words have additional fields:
+          - original_word: The transcribed text before correction
+          - correction_confidence: How confident we are in the correction (0-1)
+        - Alignment score (0.0-1.0): fraction of transcribed words that found
+          a lyrics match within the time window. Low scores indicate the lyrics
+          don't match the audio (e.g., remix with reordered vocals).
     """
     if not synced_lyrics or not transcribed_words:
-        return transcribed_words
+        return transcribed_words, 0.0
 
     # Parse LRC lyrics
     lyrics_lines = parse_synced_lyrics(synced_lyrics)
     if not lyrics_lines:
-        return transcribed_words
+        return transcribed_words, 0.0
 
     # Build lyrics word lookup structure with timing
     lyrics_words = []
@@ -71,6 +77,7 @@ def correct_words_with_lyrics(
 
     # Process each transcribed word
     corrected_words = []
+    matched_count = 0
     for tw in transcribed_words:
         # Find best match in time window
         match_result = _find_best_match_in_window(
@@ -78,6 +85,7 @@ def correct_words_with_lyrics(
         )
 
         if match_result:
+            matched_count += 1
             lyrics_word, similarity = match_result
 
             # Decide if we should correct
@@ -101,7 +109,14 @@ def correct_words_with_lyrics(
             # No match found, keep original
             corrected_words.append(tw)
 
-    return corrected_words
+    alignment_score = matched_count / len(transcribed_words) if transcribed_words else 0.0
+    print(
+        f"[LyricsCorrector] Alignment score: {alignment_score:.0%} "
+        f"({matched_count}/{len(transcribed_words)} words matched)",
+        file=sys.stderr,
+    )
+
+    return corrected_words, alignment_score
 
 
 def _find_best_match_in_window(
@@ -169,6 +184,11 @@ def _compute_word_similarity(word1: str, word2: str) -> float:
     return best_score
 
 
+def _is_profanity(word: str) -> bool:
+    """Check if a word is profanity using all normalized variations."""
+    return any(_profanity_checker.contains_profanity(v) for v in _normalize_word(word))
+
+
 def _should_correct_word(
     transcribed_word: Dict,
     lyrics_word: str,
@@ -181,13 +201,19 @@ def _should_correct_word(
     Considers:
     - Similarity score vs threshold
     - Original transcription confidence
-    - Word length difference (reject if too different)
+    - Whether the lyrics word is profanity (use lower thresholds — missing
+      profanity is worse than a false positive the user can un-flag)
 
-    Decision Matrix:
+    Decision Matrix (normal words):
     - Trans conf < 0.5 + similarity >= 0.60 → correct
     - Trans conf 0.5-0.7 + similarity >= 0.85 → correct
-    - Trans conf >= 0.7 + similarity >= 0.85 → correct (only high confidence)
+    - Trans conf >= 0.7 + similarity >= 0.90 → correct
     - Otherwise → skip
+
+    Decision Matrix (profanity words — more aggressive):
+    - Trans conf < 0.5 + similarity >= 0.50 → correct
+    - Trans conf 0.5-0.7 + similarity >= 0.70 → correct
+    - Trans conf >= 0.7 + similarity >= 0.80 → correct
     """
     trans_conf = transcribed_word.get("confidence", 1.0)
 
@@ -195,17 +221,23 @@ def _should_correct_word(
     if transcribed_word["word"].lower() == lyrics_word.lower():
         return False
 
-    # Decision matrix
-    if trans_conf < 0.5:
-        # Low transcription confidence - correct if reasonable similarity
-        return similarity >= 0.60
-    elif trans_conf < LOW_TRANSCRIPTION_CONF:
-        # Medium transcription confidence - only correct if high similarity
-        return similarity >= threshold
+    # Use lower thresholds when the lyrics word is profanity
+    lyrics_is_profane = _is_profanity(lyrics_word)
+
+    if lyrics_is_profane:
+        if trans_conf < 0.5:
+            return similarity >= 0.50
+        elif trans_conf < LOW_TRANSCRIPTION_CONF:
+            return similarity >= 0.70
+        else:
+            return similarity >= 0.80
     else:
-        # High transcription confidence - only correct if very high similarity
-        # This prevents correcting accurate transcriptions
-        return similarity >= threshold and similarity >= 0.90
+        if trans_conf < 0.5:
+            return similarity >= 0.60
+        elif trans_conf < LOW_TRANSCRIPTION_CONF:
+            return similarity >= threshold
+        else:
+            return similarity >= threshold and similarity >= 0.90
 
 
 def fill_gaps_with_lyrics(
@@ -240,7 +272,13 @@ def fill_gaps_with_lyrics(
 
     new_words = []
 
+    # Skip lyrics lines before the first transcribed word (instrumental intro)
+    first_word_start = transcribed_words[0]["start"] if transcribed_words else 0.0
+
     for i, line in enumerate(lyrics_lines):
+        if line["time"] < first_word_start - 1.0:
+            continue
+
         # Calculate line duration (time to next line, capped at 5s)
         next_time = lyrics_lines[i + 1]["time"] if i + 1 < len(lyrics_lines) else line["time"] + 5.0
         line_duration = min(next_time - line["time"], 5.0)
@@ -302,6 +340,15 @@ def fill_gaps_with_lyrics(
             })
 
     if not new_words:
+        return transcribed_words
+
+    # Reject if gap-fill would add far more words than the transcription — lyrics are likely wrong
+    if len(new_words) > len(transcribed_words) * 2:
+        print(
+            f"[LyricsCorrector] Rejected synced gap-fill: {len(new_words)} new words >> "
+            f"{len(transcribed_words)} transcribed (lyrics likely wrong)",
+            file=sys.stderr,
+        )
         return transcribed_words
 
     print(f"[LyricsCorrector] Gap-filled {len(new_words)} words from synced lyrics")
@@ -416,8 +463,10 @@ def fill_gaps_with_plain_lyrics(
     matched_lyrics = {a[0] for a in alignment}
     new_words = []
 
-    # Scan lyrics from the beginning to catch the pre-gap
-    i = 0
+    # Start from the first aligned lyrics word — skip the pre-gap before vocals begin
+    # (instrumental intros should not be filled with lyrics words)
+    first_matched_idx = alignment[0][0] if alignment else 0
+    i = first_matched_idx
     while i < len(lyrics_tokens):
         if i in matched_lyrics:
             i += 1
@@ -469,6 +518,15 @@ def fill_gaps_with_plain_lyrics(
     if not new_words:
         return transcribed_words
 
+    # Reject if gap-fill would add far more words than the transcription — lyrics are likely wrong
+    if len(new_words) > len(transcribed_words) * 2:
+        print(
+            f"[LyricsCorrector] Rejected plain gap-fill: {len(new_words)} new words >> "
+            f"{len(transcribed_words)} transcribed (lyrics likely wrong)",
+            file=sys.stderr,
+        )
+        return transcribed_words
+
     print(
         f"[LyricsCorrector] Plain-lyrics gap-filled {len(new_words)} words "
         f"(aligned at lyrics position {alignment_start})"
@@ -476,6 +534,64 @@ def fill_gaps_with_plain_lyrics(
 
     result = list(transcribed_words) + new_words
     result.sort(key=lambda w: w["start"])
+    return result
+
+
+def extract_profanity_vocab(lyrics_text: str) -> set:
+    """
+    Extract unique profanity words from lyrics text (time-agnostic).
+
+    Useful for remixes or poor-alignment scenarios where timestamp-based
+    matching fails but the vocabulary is still informative.
+    """
+    vocab = set()
+    for word in re.findall(r"[\w']+", lyrics_text):
+        if _is_profanity(word):
+            vocab.add(word.lower())
+    return vocab
+
+
+def flag_with_profanity_vocab(
+    words: list,
+    profanity_vocab: set,
+    similarity_threshold: float = 0.75,
+) -> list:
+    """
+    Flag transcribed words that fuzzy-match known profanity from lyrics.
+
+    Time-agnostic — works for remixes where lyrics ordering doesn't match.
+    Only flags words not already marked as profanity.
+    """
+    if not profanity_vocab:
+        return words
+
+    flagged_count = 0
+    result = []
+    for w in words:
+        if w.get("is_profanity"):
+            result.append(w)
+            continue
+
+        # Check if any profanity vocab word is a close match
+        best_sim = 0.0
+        for pword in profanity_vocab:
+            sim = _compute_word_similarity(w["word"], pword)
+            best_sim = max(best_sim, sim)
+            if sim >= similarity_threshold:
+                break
+
+        if best_sim >= similarity_threshold:
+            flagged_count += 1
+            result.append({**w, "is_profanity": True, "detection_source": "lyrics"})
+        else:
+            result.append(w)
+
+    if flagged_count:
+        print(
+            f"[LyricsCorrector] Vocab-based profanity flagging: {flagged_count} additional words flagged",
+            file=sys.stderr,
+        )
+
     return result
 
 
@@ -492,7 +608,7 @@ if __name__ == "__main__":
 [00:15.00] I don't get into the chatter"""
 
     # Run correction
-    corrected = correct_words_with_lyrics(transcribed, synced, auto_correct_threshold=0.85)
+    corrected, score = correct_words_with_lyrics(transcribed, synced, auto_correct_threshold=0.85)
 
     print("\n=== Correction Results ===")
     for w in corrected:

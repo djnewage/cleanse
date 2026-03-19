@@ -1,3 +1,4 @@
+import React from 'react'
 import type { SongEntry, CensorType } from '../types'
 import QueueItem from './QueueItem'
 
@@ -8,6 +9,7 @@ interface QueueListProps {
   onToggleExpand: (id: string) => void
   onRemoveSong: (id: string) => void
   onRetrySong: (id: string) => void
+  renderDetailPanel?: (song: SongEntry) => React.ReactNode
 }
 
 export default function QueueList({
@@ -16,7 +18,8 @@ export default function QueueList({
   globalCensorType,
   onToggleExpand,
   onRemoveSong,
-  onRetrySong
+  onRetrySong,
+  renderDetailPanel
 }: QueueListProps): React.JSX.Element {
   if (songs.length === 0) {
     return <></>
@@ -33,7 +36,7 @@ export default function QueueList({
       {/* Header with stats */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Queue ({songs.length} files)</h2>
-        <div className="flex items-center gap-3 text-xs text-zinc-500">
+        <div className="flex items-center gap-3 text-xs text-zinc-400">
           {pendingCount > 0 && <span>{pendingCount} pending</span>}
           {processingCount > 0 && <span className="text-blue-400">{processingCount} processing</span>}
           {readyCount > 0 && <span className="text-green-400">{readyCount} ready</span>}
@@ -45,15 +48,17 @@ export default function QueueList({
       {/* Song items */}
       <div className="space-y-2">
         {songs.map((song) => (
-          <QueueItem
-            key={song.id}
-            song={song}
-            isExpanded={expandedSongId === song.id}
-            globalCensorType={globalCensorType}
-            onToggleExpand={() => onToggleExpand(song.id)}
-            onRemove={() => onRemoveSong(song.id)}
-            onRetry={() => onRetrySong(song.id)}
-          />
+          <React.Fragment key={song.id}>
+            <QueueItem
+              song={song}
+              isExpanded={expandedSongId === song.id}
+              globalCensorType={globalCensorType}
+              onToggleExpand={() => onToggleExpand(song.id)}
+              onRemove={() => onRemoveSong(song.id)}
+              onRetry={() => onRetrySong(song.id)}
+            />
+            {expandedSongId === song.id && renderDetailPanel?.(song)}
+          </React.Fragment>
         ))}
       </div>
     </div>

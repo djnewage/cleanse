@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 sys.modules.setdefault("tinytag", MagicMock())
 sys.modules.setdefault("requests", MagicMock())
 
-from lyrics_fetcher import _extract_first_artist, parse_synced_lyrics, find_lyrics_profanity  # noqa: E402
+from lyrics_fetcher import _extract_first_artist, _clean_search_title, parse_synced_lyrics, find_lyrics_profanity  # noqa: E402
 
 
 class TestExtractFirstArtist:
@@ -100,3 +100,32 @@ class TestFindLyricsProfanity:
         synced = "[00:10.00] hello beautiful world"
         result = find_lyrics_profanity(synced, [])
         assert result == []
+
+
+class TestCleanSearchTitle:
+    def test_simple_remix(self):
+        assert _clean_search_title("Song (remix)") == "Song"
+
+    def test_named_remix(self):
+        assert _clean_search_title("FWU (Red Sip Remix)") == "FWU"
+
+    def test_dj_edit(self):
+        assert _clean_search_title("Song (DJ Snake Edit)") == "Song"
+
+    def test_multi_word_remix(self):
+        assert _clean_search_title("FWU (Cheyenne Giles Remix)") == "FWU"
+
+    def test_simple_deluxe(self):
+        assert _clean_search_title("Album (Deluxe)") == "Album"
+
+    def test_simple_intro(self):
+        assert _clean_search_title("Song (Intro)") == "Song"
+
+    def test_no_suffix(self):
+        assert _clean_search_title("Normal Song") == "Normal Song"
+
+    def test_bracket_variant(self):
+        assert _clean_search_title("Song [Extended Mix]") == "Song"
+
+    def test_preserves_non_tag_parens(self):
+        assert _clean_search_title("Song (feat. Artist)") == "Song (feat. Artist)"

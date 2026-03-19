@@ -8,6 +8,8 @@ interface BatchControlsProps {
   onSetGlobalCensorType: (type: CensorType) => void
   crossfadeMs: number
   onSetCrossfadeMs: (ms: number) => void
+  paddingMs: number
+  onSetPaddingMs: (ms: number) => void
   onExportAll: () => void
   onClearAll: () => void
   isExporting: boolean
@@ -30,6 +32,8 @@ export default function BatchControls({
   onSetGlobalCensorType,
   crossfadeMs,
   onSetCrossfadeMs,
+  paddingMs,
+  onSetPaddingMs,
   onExportAll,
   onClearAll,
   isExporting,
@@ -41,101 +45,120 @@ export default function BatchControls({
 
   return (
     <div className="flex flex-col gap-3 bg-zinc-900/50 rounded-lg p-4 border border-zinc-800">
-      {/* Controls row */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          {/* Global censor type */}
-          <div className="flex items-center gap-2">
-            <span
-              className="text-xs text-zinc-500 cursor-help"
-              title="Default for all songs (can override per song during review)"
-            >
-              Default:
+      {/* Settings row */}
+      <div className="flex items-center gap-4">
+        {/* Global censor type */}
+        <div className="flex items-center gap-2">
+          <span
+            className="text-xs text-zinc-400 cursor-help"
+            title="Default for all songs (can override per song during review)"
+          >
+            Default:
+          </span>
+          <div className="flex rounded-md overflow-hidden border border-zinc-700">
+            {censorOptions.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => onSetGlobalCensorType(opt.value)}
+                disabled={disabled}
+                className={`
+                  px-2.5 py-1 text-xs font-medium transition-colors
+                  ${
+                    globalCensorType === opt.value
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-300'
+                  }
+                  ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
+                `}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Crossfade control */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-zinc-400">Crossfade:</span>
+          <input
+            type="range"
+            min={5}
+            max={50}
+            step={5}
+            value={crossfadeMs}
+            onChange={(e) => onSetCrossfadeMs(Number(e.target.value))}
+            disabled={disabled}
+            className="w-20 h-1 accent-blue-600 bg-zinc-700 rounded-full appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+          <span className="text-xs text-zinc-300 w-16">{crossfadeMs}ms{crossfadeMs <= 5 ? ' (Sharp)' : crossfadeMs >= 50 ? ' (Smooth)' : ''}</span>
+        </div>
+
+        {/* Censor Range control */}
+        <div className="flex items-center gap-2">
+          <span
+            className="text-xs text-zinc-400 cursor-help"
+            title="How far the censor extends around each word (higher = more aggressive)"
+          >
+            Censor Range:
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={200}
+            step={10}
+            value={paddingMs}
+            onChange={(e) => onSetPaddingMs(Number(e.target.value))}
+            disabled={disabled}
+            className="w-20 h-1 accent-blue-600 bg-zinc-700 rounded-full appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+          <span className="text-xs text-zinc-300 w-16">{paddingMs}ms{paddingMs === 0 ? ' (Tight)' : paddingMs >= 200 ? ' (Wide)' : ''}</span>
+        </div>
+      </div>
+
+      {/* Action buttons row */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onClearAll}
+          disabled={disabled || isExporting || songCount === 0}
+          className={`
+            px-3 py-2 rounded-lg text-sm font-medium transition-colors
+            ${
+              disabled || isExporting || songCount === 0
+                ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+                : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600 hover:text-white'
+            }
+          `}
+        >
+          Clear Queue
+        </button>
+
+        <button
+          onClick={onExportAll}
+          disabled={!canExport}
+          className={`
+            px-5 py-2 rounded-lg text-sm font-medium transition-all
+            ${
+              canExport
+                ? 'bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700'
+                : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+            }
+          `}
+        >
+          {isExporting ? (
+            <span className="flex items-center gap-2">
+              <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              Exporting...
             </span>
-            <div className="flex rounded-md overflow-hidden border border-zinc-700">
-              {censorOptions.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => onSetGlobalCensorType(opt.value)}
-                  disabled={disabled}
-                  className={`
-                    px-2.5 py-1 text-xs font-medium transition-colors
-                    ${
-                      globalCensorType === opt.value
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-300'
-                    }
-                    ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-                  `}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Crossfade control */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500">Crossfade:</span>
-            <input
-              type="range"
-              min={5}
-              max={50}
-              step={5}
-              value={crossfadeMs}
-              onChange={(e) => onSetCrossfadeMs(Number(e.target.value))}
-              disabled={disabled}
-              className="w-20 h-1 accent-blue-600 bg-zinc-700 rounded-full appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            />
-            <span className="text-xs text-zinc-400 w-8">{crossfadeMs}ms</span>
-          </div>
-        </div>
-
-        {/* Action buttons */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onClearAll}
-            disabled={disabled || isExporting || songCount === 0}
-            className={`
-              px-3 py-2 rounded-lg text-sm font-medium transition-colors
-              ${
-                disabled || isExporting || songCount === 0
-                  ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
-                  : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600 hover:text-white'
-              }
-            `}
-          >
-            Clear Queue
-          </button>
-
-          <button
-            onClick={onExportAll}
-            disabled={!canExport}
-            className={`
-              px-5 py-2 rounded-lg text-sm font-medium transition-all
-              ${
-                canExport
-                  ? 'bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700'
-                  : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
-              }
-            `}
-          >
-            {isExporting ? (
-              <span className="flex items-center gap-2">
-                <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Exporting...
-              </span>
-            ) : (
-              `Export All (${exportableCount})`
-            )}
-          </button>
-        </div>
+          ) : (
+            `Export All (${exportableCount})`
+          )}
+        </button>
       </div>
 
       {/* Export progress bar */}
       {isExporting && exportProgress && (
         <div className="space-y-1">
-          <div className="flex items-center justify-between text-xs text-zinc-400">
+          <div className="flex items-center justify-between text-xs text-zinc-300">
             <span>Exporting {exportProgress.completed} of {exportProgress.total}</span>
             <span>{Math.round((exportProgress.completed / exportProgress.total) * 100)}%</span>
           </div>
@@ -150,13 +173,13 @@ export default function BatchControls({
 
       {/* Info text */}
       {!isExporting && exportableCount === 0 && songCount > 0 && (
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-zinc-400">
           Waiting for songs to finish processing before export...
         </p>
       )}
 
       {exportableCount > 0 && !isExporting && (
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-zinc-400">
           {exportableCount} song{exportableCount !== 1 ? 's' : ''} ready to export.
           Unreviewed songs will use auto-detected profanity.
         </p>

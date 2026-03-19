@@ -73,7 +73,7 @@ export default function AudioPreview({
     <div className="flex flex-col gap-4">
       {secondaryPath && (
         <div>
-          <label className="block text-sm font-medium text-zinc-400 mb-1">Original</label>
+          <label className="block text-sm font-medium text-zinc-300 mb-1">Original</label>
           <audio
             ref={secondaryRefCallback}
             key={secondaryPath}
@@ -87,7 +87,7 @@ export default function AudioPreview({
       )}
       {primaryPath && (
         <div>
-          <label className={`block text-sm font-medium mb-1 ${censoredPath ? 'text-green-400' : 'text-zinc-400'}`}>
+          <label className={`block text-sm font-medium mb-1 ${censoredPath ? 'text-green-400' : 'text-zinc-300'}`}>
             {censoredPath ? 'Censored Version' : 'Original'}
           </label>
           <audio

@@ -49,7 +49,7 @@ export default function HistoryItem({ entry, onDelete }: HistoryItemProps): Reac
           <p className="font-medium text-sm truncate">
             {truncateFilename(entry.originalFileName)}
           </p>
-          <div className="flex items-center gap-3 text-xs text-zinc-500 mt-0.5">
+          <div className="flex items-center gap-3 text-xs text-zinc-400 mt-0.5">
             <span>{formatDate(entry.dateCreated)}</span>
             <span>{formatDuration(entry.duration)}</span>
             <span>{entry.profanityCount} words censored</span>

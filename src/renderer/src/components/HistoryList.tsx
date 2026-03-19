@@ -11,7 +11,7 @@ export default function HistoryList({ history, onDelete }: HistoryListProps): Re
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">
+      <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
         Recently Cleansed
       </h2>
       <div className="flex flex-col gap-2">

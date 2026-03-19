@@ -24,7 +24,7 @@ export default function UsageIndicator({ onManageSubscription }: UsageIndicatorP
           <span className="px-2 py-1 text-xs font-medium bg-emerald-900/50 text-emerald-300 rounded-full">
             Pro
           </span>
-          <span className="text-xs text-zinc-500">
+          <span className="text-xs text-zinc-400">
             {userData?.subscription.lifetime
               ? 'Lifetime'
               : userData?.subscription.currentPeriodEnd
@@ -34,7 +34,7 @@ export default function UsageIndicator({ onManageSubscription }: UsageIndicatorP
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-500">
+          <span className="text-xs text-zinc-400">
             {songsRemaining > 0 ? (
               <>
                 <span className="text-zinc-300 font-medium">{songsRemaining}</span> of {FREE_SONGS_LIMIT} free
@@ -58,14 +58,14 @@ export default function UsageIndicator({ onManageSubscription }: UsageIndicatorP
       {/* User menu */}
       <div className="flex items-center gap-2">
         {/* Email display */}
-        <span className="text-xs text-zinc-500 hidden sm:block">
+        <span className="text-xs text-zinc-400 hidden sm:block">
           {userData?.email}
         </span>
 
         {/* Manage/Upgrade button */}
         <button
           onClick={handleManageClick}
-          className="px-2 py-1 text-xs text-zinc-400 hover:text-white transition-colors"
+          className="px-2 py-1 text-xs text-zinc-300 hover:text-white transition-colors"
         >
           {isSubscribed ? 'Manage' : 'Upgrade'}
         </button>
@@ -73,7 +73,7 @@ export default function UsageIndicator({ onManageSubscription }: UsageIndicatorP
         {/* Sign out button */}
         <button
           onClick={signOut}
-          className="px-2 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="px-2 py-1 text-xs text-zinc-400 hover:text-zinc-300 transition-colors"
         >
           Sign out
         </button>

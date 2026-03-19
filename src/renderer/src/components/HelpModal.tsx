@@ -19,13 +19,13 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps): React.JS
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-zinc-500 hover:text-white text-lg"
+          className="absolute top-4 right-4 text-zinc-400 hover:text-white text-lg"
         >
           ✕
         </button>
 
         <h2 className="text-xl font-bold text-white mb-1">Quick Reference</h2>
-        <p className="text-zinc-500 text-sm mb-5">How to use Cleanse</p>
+        <p className="text-zinc-400 text-sm mb-5">How to use Cleanse</p>
 
         {/* Workflow */}
         <Section title="Workflow">
@@ -60,7 +60,8 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps): React.JS
         <Section title="Settings">
           <Row label="Dual-Pass" desc="Runs a second transcription pass on isolated vocals to catch ad-libs" />
           <Row label="Turbo" desc="Uses a faster (but slightly less accurate) transcription model" />
-          <Row label="Crossfade" desc="Smooths transitions at censor boundaries (in milliseconds)" />
+          <Row label="Crossfade" desc="Smooths the transition in/out of each censor so it sounds natural" />
+          <Row label="Censor Range" desc="Extends the censor before and after each word (higher = more aggressive, catches bleed)" />
         </Section>
 
         <button
@@ -77,7 +78,7 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps): React.JS
 function Section({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="mb-5">
-      <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">{title}</h3>
+      <h3 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">{title}</h3>
       <div className="space-y-1.5">{children}</div>
     </div>
   )
@@ -86,7 +87,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Step({ n, children }: { n: number; children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="flex items-start gap-2.5 text-sm">
-      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-zinc-800 text-zinc-400 text-xs flex items-center justify-center font-medium">
+      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-zinc-800 text-zinc-300 text-xs flex items-center justify-center font-medium">
         {n}
       </span>
       <span className="text-zinc-300">{children}</span>
@@ -98,7 +99,7 @@ function Row({ label, desc }: { label: React.ReactNode; desc: string }): React.J
   return (
     <div className="flex items-start gap-2 text-sm">
       <span className="text-zinc-200 font-medium min-w-[140px] flex-shrink-0">{label}</span>
-      <span className="text-zinc-500">{desc}</span>
+      <span className="text-zinc-400">{desc}</span>
     </div>
   )
 }
@@ -114,7 +115,7 @@ const BADGE_COLORS: Record<string, string> = {
 
 function Badge({ color, children }: { color: string; children: React.ReactNode }): React.JSX.Element {
   return (
-    <span className={`text-[10px] font-bold font-mono ${BADGE_COLORS[color] ?? 'text-zinc-400'}`}>
+    <span className={`text-[10px] font-bold font-mono ${BADGE_COLORS[color] ?? 'text-zinc-300'}`}>
       {children}
     </span>
   )

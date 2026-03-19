@@ -192,13 +192,15 @@ def transcribe_audio(
     print(f"[Transcribe] Decoding audio via ffmpeg: {file_path}", file=sys.stderr)
     audio_array = _decode_audio_ffmpeg(file_path, sampling_rate=16000)
 
-    # TODO: Make beam_size configurable (1/3/5)
-    beam_size = 1 if turbo else 3
+    beam_size = 1 if turbo else 5
     print(f"[Transcribe] beam_size={beam_size}, turbo={turbo}", file=sys.stderr)
 
     _report_progress("transcribing", round(progress_offset + progress_scale * 0.10, 1), "Transcribing audio...")
 
     if initial_prompt:
+        if len(initial_prompt) > 15000:
+            initial_prompt = initial_prompt[-15000:]
+            print(f"[Transcribe] Truncated initial_prompt to 15000 chars", file=sys.stderr)
         print(f"[Transcribe] Using initial_prompt ({len(initial_prompt)} chars)", file=sys.stderr)
 
     transcribe_kwargs = dict(
@@ -226,9 +228,13 @@ def transcribe_audio(
 
         if segment.words:
             for w in segment.words:
+                text = w.word.strip()
+                # Skip Whisper hallucinations (§, ♪, ♫, etc.) — keep only words with letters/digits
+                if not any(c.isalnum() for c in text):
+                    continue
                 words.append(
                     {
-                        "word": w.word.strip(),
+                        "word": text,
                         "start": round(w.start, 3),
                         "end": round(w.end, 3),
                         "confidence": round(w.probability, 3),

@@ -4,6 +4,8 @@ interface PlaybackTimeState {
   currentTime: number
   isPlaying: boolean
   audioRef: (node: HTMLAudioElement | null) => void
+  seekTo: (time: number) => void
+  togglePlayback: () => void
 }
 
 export function usePlaybackTime(): PlaybackTimeState {
@@ -109,6 +111,24 @@ export function usePlaybackTime(): PlaybackTimeState {
     [handlePlay, handlePause, handleEnded, handleSeeked]
   )
 
+  const seekTo = useCallback((time: number) => {
+    const el = audioElRef.current
+    if (!el) return
+    el.currentTime = time
+    lastReportedTimeRef.current = time
+    setCurrentTime(time)
+  }, [])
+
+  const togglePlayback = useCallback(() => {
+    const el = audioElRef.current
+    if (!el) return
+    if (el.paused) {
+      el.play()
+    } else {
+      el.pause()
+    }
+  }, [])
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -116,5 +136,5 @@ export function usePlaybackTime(): PlaybackTimeState {
     }
   }, [])
 
-  return { currentTime, isPlaying, audioRef }
+  return { currentTime, isPlaying, audioRef, seekTo, togglePlayback }
 }

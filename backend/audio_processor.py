@@ -4,9 +4,11 @@ import os
 from pydub import AudioSegment
 from pydub.generators import Sine
 
-# Padding in milliseconds to account for timestamp imprecision
+# Padding in milliseconds to account for timestamp imprecision and reverb tails.
+# The after-padding is larger to catch echoes/delay effects common in
+# hip-hop and EDM production that extend past the word's end timestamp.
 PADDING_BEFORE_MS = 50
-PADDING_AFTER_MS = 100
+PADDING_AFTER_MS = 250
 
 # Crossfade duration for smooth transitions at censor boundaries
 CROSSFADE_MS = 30
@@ -72,6 +74,8 @@ def censor_audio(
     words: list[dict],
     output_path: str,
     crossfade_ms: int = CROSSFADE_MS,
+    padding_before_ms: int = PADDING_BEFORE_MS,
+    padding_after_ms: int = PADDING_AFTER_MS,
 ) -> str:
     """
     Censor specified words in an audio file (full mix).
@@ -81,6 +85,8 @@ def censor_audio(
         words: List of {"word": str, "start": float, "end": float, "censor_type": str}
         output_path: Where to save the censored audio
         crossfade_ms: Duration of crossfade at edit boundaries
+        padding_before_ms: Extra ms before each word to censor
+        padding_after_ms: Extra ms after each word to censor
 
     Returns:
         The output file path
@@ -88,8 +94,8 @@ def censor_audio(
     audio = AudioSegment.from_file(input_path)
 
     for w in words:
-        start_ms = max(0, int(w["start"] * 1000) - PADDING_BEFORE_MS)
-        end_ms = min(len(audio), int(w["end"] * 1000) + PADDING_AFTER_MS)
+        start_ms = max(0, int(w["start"] * 1000) - padding_before_ms)
+        end_ms = min(len(audio), int(w["end"] * 1000) + padding_after_ms)
         if end_ms - start_ms <= 0:
             continue
 
@@ -106,6 +112,8 @@ def censor_audio_vocals_only(
     words: list[dict],
     output_path: str,
     crossfade_ms: int = CROSSFADE_MS,
+    padding_before_ms: int = PADDING_BEFORE_MS,
+    padding_after_ms: int = PADDING_AFTER_MS,
 ) -> str:
     """
     Censor only the vocals track, then remix with untouched accompaniment.
@@ -116,6 +124,8 @@ def censor_audio_vocals_only(
         words: List of {"word": str, "start": float, "end": float, "censor_type": str}
         output_path: Where to save the final mixed output
         crossfade_ms: Duration of crossfade at edit boundaries
+        padding_before_ms: Extra ms before each word to censor
+        padding_after_ms: Extra ms after each word to censor
 
     Returns:
         The output file path
@@ -124,8 +134,8 @@ def censor_audio_vocals_only(
     accompaniment = AudioSegment.from_file(accompaniment_path)
 
     for w in words:
-        start_ms = max(0, int(w["start"] * 1000) - PADDING_BEFORE_MS)
-        end_ms = min(len(vocals), int(w["end"] * 1000) + PADDING_AFTER_MS)
+        start_ms = max(0, int(w["start"] * 1000) - padding_before_ms)
+        end_ms = min(len(vocals), int(w["end"] * 1000) + padding_after_ms)
         if end_ms - start_ms <= 0:
             continue
 

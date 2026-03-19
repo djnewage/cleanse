@@ -16,6 +16,7 @@ interface UseQueueProcessorProps {
   turboEnabled: boolean
   dualPassEnabled: boolean
   dispatch: React.Dispatch<BatchAppAction>
+  onSongReady?: () => void
 }
 
 export function useQueueProcessor({
@@ -24,7 +25,8 @@ export function useQueueProcessor({
   processingQueue,
   turboEnabled,
   dualPassEnabled,
-  dispatch
+  dispatch,
+  onSongReady
 }: UseQueueProcessorProps) {
   const isProcessingRef = useRef(false)
   const startedIdsRef = useRef(new Set<string>())
@@ -121,6 +123,7 @@ export function useQueueProcessor({
 
         // Mark as ready
         dispatch({ type: 'SET_SONG_READY', id: songId })
+        onSongReady?.()
       } catch (err) {
         Sentry.captureException(err)
         const message = err instanceof Error ? err.message : String(err)

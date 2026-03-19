@@ -52,12 +52,28 @@ def _normalize_word(word: str) -> list[str]:
     return [v for v in variations if v]
 
 
+# Compound profanity: adjacent tokens that form profanity together.
+# Whisper often splits these into separate words (e.g., "mother" + "fucker").
+# Both halves are flagged so the full compound is censored in audio.
+COMPOUND_PROFANITY = {
+    ("mother", "fucker"), ("mother", "fuckers"), ("mother", "fuckin"),
+    ("mother", "fucking"), ("mother", "fucka"), ("mother", "fuckas"),
+    ("bull", "shit"), ("horse", "shit"), ("bat", "shit"), ("dip", "shit"),
+    ("god", "damn"), ("god", "dammit"), ("god", "damit"),
+    ("jack", "ass"), ("dumb", "ass"), ("bad", "ass"),
+    ("kick", "ass"), ("smart", "ass"), ("fat", "ass"),
+    ("cock", "sucker"), ("cock", "suckers"), ("cock", "sucking"),
+    ("dick", "head"), ("dick", "heads"),
+}
+
+
 def flag_profanity(words: list[dict]) -> list[dict]:
     """
     Take a list of transcribed words and add an `is_profanity` flag to each.
 
     Enhanced version that checks multiple normalized variations of each word
-    to catch contractions, punctuation, and common variations.
+    to catch contractions, punctuation, and common variations. Also detects
+    compound profanity split across adjacent tokens (e.g., "mother" + "fucker").
 
     Args:
         words: List of {"word": str, "start": float, "end": float, "confidence": float}
@@ -74,4 +90,13 @@ def flag_profanity(words: list[dict]) -> list[dict]:
         is_profane = any(profanity.contains_profanity(variant) for variant in variations)
 
         flagged.append({**w, "is_profanity": is_profane})
+
+    # Second pass: check adjacent word pairs for compound profanity
+    for i in range(len(flagged) - 1):
+        w1 = re.sub(r'[^\w]', '', flagged[i]["word"]).lower()
+        w2 = re.sub(r'[^\w]', '', flagged[i + 1]["word"]).lower()
+        if (w1, w2) in COMPOUND_PROFANITY:
+            flagged[i]["is_profanity"] = True
+            flagged[i + 1]["is_profanity"] = True
+
     return flagged
