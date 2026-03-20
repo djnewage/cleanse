@@ -101,6 +101,7 @@ export interface CensorWord {
   start: number
   end: number
   censor_type: string
+  detection_source?: string
 }
 
 export interface BackendStatus {

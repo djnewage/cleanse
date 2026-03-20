@@ -607,7 +607,8 @@ function MainApp(): React.JSX.Element {
               word: w.word,
               start: w.start,
               end: w.end,
-              censor_type: w.censor_type ?? song.defaultCensorType
+              censor_type: w.censor_type ?? song.defaultCensorType,
+              detection_source: w.detection_source
             }))
 
             const previewPath = await window.electronAPI.previewAudio({
@@ -616,7 +617,7 @@ function MainApp(): React.JSX.Element {
               vocalsPath: song.vocalsPath ?? undefined,
               accompanimentPath: song.accompanimentPath ?? undefined,
               crossfadeMs: state.crossfadeMs,
-              paddingBeforeMs: Math.round(state.paddingMs / 2),
+              paddingBeforeMs: Math.round(state.paddingMs * 1.5),
               paddingAfterMs: state.paddingMs
             })
 
@@ -668,7 +669,8 @@ function MainApp(): React.JSX.Element {
           word: w.word,
           start: w.start,
           end: w.end,
-          censor_type: w.censor_type ?? song.defaultCensorType
+          censor_type: w.censor_type ?? song.defaultCensorType,
+          detection_source: w.detection_source
         }))
 
         const previewPath = await window.electronAPI.previewAudio({
@@ -677,7 +679,7 @@ function MainApp(): React.JSX.Element {
           vocalsPath: song.vocalsPath ?? undefined,
           accompanimentPath: song.accompanimentPath ?? undefined,
           crossfadeMs: state.crossfadeMs,
-          paddingBeforeMs: Math.round(state.paddingMs / 2),
+          paddingBeforeMs: Math.round(state.paddingMs * 1.5),
           paddingAfterMs: state.paddingMs
         })
 
@@ -837,7 +839,7 @@ function MainApp(): React.JSX.Element {
           song.vocalsPath ?? undefined,
           song.accompanimentPath ?? undefined,
           state.crossfadeMs,
-          Math.round(state.paddingMs / 2),
+          state.paddingMs,
           state.paddingMs
         )
 

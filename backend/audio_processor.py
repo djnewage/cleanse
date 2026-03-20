@@ -1,17 +1,19 @@
 """Audio processing module for censoring words using pydub."""
 
 import os
+import sys
 from pydub import AudioSegment
 from pydub.generators import Sine
 
 # Padding in milliseconds to account for timestamp imprecision and reverb tails.
 # The after-padding is larger to catch echoes/delay effects common in
 # hip-hop and EDM production that extend past the word's end timestamp.
-PADDING_BEFORE_MS = 50
+PADDING_BEFORE_MS = 200
 PADDING_AFTER_MS = 250
 
 # Crossfade duration for smooth transitions at censor boundaries
 CROSSFADE_MS = 30
+
 
 
 def _make_replacement(audio: AudioSegment, start_ms: int, end_ms: int, censor_type: str) -> AudioSegment:
@@ -93,9 +95,21 @@ def censor_audio(
     """
     audio = AudioSegment.from_file(input_path)
 
+    # Sort by timestamp for deterministic processing order
+    words = sorted(words, key=lambda w: w["start"])
+
     for w in words:
-        start_ms = max(0, int(w["start"] * 1000) - padding_before_ms)
-        end_ms = min(len(audio), int(w["end"] * 1000) + padding_after_ms)
+        # Use wider padding for words with estimated timestamps (lyrics-sourced)
+        source = w.get("detection_source", "")
+        if source in ("lyrics", "lyrics_gap"):
+            actual_before = padding_before_ms * 3
+            actual_after = padding_after_ms * 2
+        else:
+            actual_before = padding_before_ms
+            actual_after = padding_after_ms
+
+        start_ms = max(0, int(w["start"] * 1000) - actual_before)
+        end_ms = min(len(audio), int(w["end"] * 1000) + actual_after)
         if end_ms - start_ms <= 0:
             continue
 
@@ -133,16 +147,39 @@ def censor_audio_vocals_only(
     vocals = AudioSegment.from_file(vocals_path)
     accompaniment = AudioSegment.from_file(accompaniment_path)
 
+    # Sort by timestamp for deterministic processing order
+    words = sorted(words, key=lambda w: w["start"])
+
     for w in words:
-        start_ms = max(0, int(w["start"] * 1000) - padding_before_ms)
-        end_ms = min(len(vocals), int(w["end"] * 1000) + padding_after_ms)
+        # Use wider padding for words with estimated timestamps (lyrics-sourced)
+        source = w.get("detection_source", "")
+        if source in ("lyrics", "lyrics_gap"):
+            actual_before = padding_before_ms * 3
+            actual_after = padding_after_ms * 2
+        else:
+            actual_before = padding_before_ms
+            actual_after = padding_after_ms
+
+        start_ms = max(0, int(w["start"] * 1000) - actual_before)
+        end_ms = min(len(vocals), int(w["end"] * 1000) + actual_after)
         if end_ms - start_ms <= 0:
             continue
 
         censor_type = w.get("censor_type", "mute")
+
+        print(
+            f"[AudioProcessor] Word '{w.get('word', '?')}' "
+            f"time={w.get('start', 0):.2f}-{w.get('end', 0):.2f}s "
+            f"padded={start_ms}-{end_ms}ms "
+            f"censor={censor_type} "
+            f"source={w.get('detection_source', 'unknown')}",
+            file=sys.stderr,
+        )
+
+        # Censor vocals
         replacement = _make_replacement(vocals, start_ms, end_ms, censor_type)
         vocals = _splice_with_crossfade(vocals, start_ms, end_ms, replacement, crossfade_ms)
 
-    # Mix censored vocals back with the untouched accompaniment
+    # Mix censored vocals back with untouched accompaniment
     mixed = accompaniment.overlay(vocals)
     return _export(mixed, output_path)

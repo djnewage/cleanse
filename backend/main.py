@@ -131,6 +131,7 @@ class CensorWord(BaseModel):
     start: float
     end: float
     censor_type: str = "mute"  # "mute", "beep", "reverse", or "tape_stop"
+    detection_source: str | None = None
 
 
 class SeparateRequest(BaseModel):

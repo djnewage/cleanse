@@ -26,7 +26,8 @@ export function useAudioProcessing(dispatch: React.Dispatch<AppAction>, defaultC
           word: w.word,
           start: w.start,
           end: w.end,
-          censor_type: w.censor_type ?? defaultCensorType
+          censor_type: w.censor_type ?? defaultCensorType,
+          detection_source: w.detection_source
         }))
 
         const result = await window.electronAPI.censorAudio(

@@ -13,6 +13,7 @@ export interface CensorWord {
   start: number
   end: number
   censor_type: CensorType
+  detection_source?: string
 }
 
 export type CensorType = 'mute' | 'beep' | 'reverse' | 'tape_stop'
