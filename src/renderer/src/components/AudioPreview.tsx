@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react'
 import { logPreviewPlayed } from '../lib/analytics'
+import WaveformPlayer from './WaveformPlayer'
 
 interface AudioPreviewProps {
   originalPath: string | null
@@ -20,8 +21,10 @@ export default function AudioPreview({
   const loggedRef = useRef(false)
   const primaryNodeRef = useRef<HTMLAudioElement | null>(null)
   const secondaryNodeRef = useRef<HTMLAudioElement | null>(null)
+  const primaryPauseRef = useRef<(() => void) | null>(null)
+  const secondaryPauseRef = useRef<(() => void) | null>(null)
 
-  // Attach audioRef to whichever element starts playing, pause the other
+  // Attach audioRef to whichever element starts playing
   const activateElement = useCallback(
     (node: HTMLAudioElement | null) => {
       audioRef?.(node)
@@ -47,9 +50,7 @@ export default function AudioPreview({
 
   const handlePrimaryPlay = useCallback(() => {
     // Pause the other player and switch karaoke tracking to this one
-    if (secondaryNodeRef.current && !secondaryNodeRef.current.paused) {
-      secondaryNodeRef.current.pause()
-    }
+    secondaryPauseRef.current?.()
     activateElement(primaryNodeRef.current)
     if (!loggedRef.current) {
       logPreviewPlayed()
@@ -59,9 +60,7 @@ export default function AudioPreview({
 
   const handleSecondaryPlay = useCallback(() => {
     // Pause the other player and switch karaoke tracking to this one
-    if (primaryNodeRef.current && !primaryNodeRef.current.paused) {
-      primaryNodeRef.current.pause()
-    }
+    primaryPauseRef.current?.()
     activateElement(secondaryNodeRef.current)
     if (!loggedRef.current) {
       logPreviewPlayed()
@@ -72,34 +71,25 @@ export default function AudioPreview({
   return (
     <div className="flex flex-col gap-4">
       {secondaryPath && (
-        <div>
-          <label className="block text-sm font-medium text-zinc-300 mb-1">Original</label>
-          <audio
-            ref={secondaryRefCallback}
-            key={secondaryPath}
-            controls
-            preload="auto"
-            className="w-full"
-            src={`media://${secondaryPath}`}
-            onPlay={handleSecondaryPlay}
-          />
-        </div>
+        <WaveformPlayer
+          key={secondaryPath}
+          src={`media://${secondaryPath}`}
+          label="Original"
+          onPlay={handleSecondaryPlay}
+          audioRef={secondaryRefCallback}
+          externalPauseRef={secondaryPauseRef}
+        />
       )}
       {primaryPath && (
-        <div>
-          <label className={`block text-sm font-medium mb-1 ${censoredPath ? 'text-green-400' : 'text-zinc-300'}`}>
-            {censoredPath ? 'Censored Version' : 'Original'}
-          </label>
-          <audio
-            ref={primaryRefCallback}
-            key={primaryPath}
-            controls
-            preload="auto"
-            className="w-full"
-            src={`media://${primaryPath}`}
-            onPlay={handlePrimaryPlay}
-          />
-        </div>
+        <WaveformPlayer
+          key={primaryPath}
+          src={`media://${primaryPath}`}
+          label={censoredPath ? 'Censored Version' : 'Original'}
+          labelColor={censoredPath ? 'text-green-400' : 'text-zinc-300'}
+          onPlay={handlePrimaryPlay}
+          audioRef={primaryRefCallback}
+          externalPauseRef={primaryPauseRef}
+        />
       )}
       {censoredPath && onClearFile && (
         <button

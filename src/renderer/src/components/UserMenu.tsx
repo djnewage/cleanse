@@ -1,13 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { FREE_SONGS_LIMIT } from '../types'
 
 interface UserMenuProps {
   onManageSubscription?: () => void
 }
 
 export default function UserMenu({ onManageSubscription }: UserMenuProps): React.JSX.Element {
-  const { userData, isSubscribed, songsRemaining, signOut, openCustomerPortal } = useAuth()
+  const { userData, isSubscribed, songsRemaining, freeSongsLimit, signOut, openCustomerPortal } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -88,7 +87,7 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
                   <span className="text-xs text-zinc-300">
                     {songsRemaining > 0 ? (
                       <>
-                        <span className="text-zinc-300 font-medium">{songsRemaining}</span> of {FREE_SONGS_LIMIT} free songs
+                        <span className="text-zinc-300 font-medium">{songsRemaining}</span> of {freeSongsLimit} free songs
                       </>
                     ) : (
                       <span className="text-amber-400">Limit reached</span>
@@ -100,7 +99,7 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
                     className={`h-full rounded-full ${
                       songsRemaining === 0 ? 'bg-amber-500' : 'bg-blue-500'
                     }`}
-                    style={{ width: `${((FREE_SONGS_LIMIT - songsRemaining) / FREE_SONGS_LIMIT) * 100}%` }}
+                    style={{ width: `${((freeSongsLimit - songsRemaining) / freeSongsLimit) * 100}%` }}
                   />
                 </div>
               </div>

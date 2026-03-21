@@ -12,6 +12,7 @@ import { doc, onSnapshot } from 'firebase/firestore'
 import { auth, db, incrementUsage, canProcessSong, createCheckoutSession, createPortalSession, recordMetric } from '../lib/firebase'
 import { logLogin, logSignUp, logSignOut, logCheckoutInitiated } from '../lib/analytics'
 import type { UserData, UsageInfo } from '../types'
+import { FREE_SONGS_LIMIT } from '../types'
 
 interface AuthContextType {
   // Auth state
@@ -39,6 +40,7 @@ interface AuthContextType {
   isAuthenticated: boolean
   isSubscribed: boolean
   songsRemaining: number
+  freeSongsLimit: number
 }
 
 const AuthContext = createContext<AuthContextType | null>(null)
@@ -86,6 +88,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
   const [userData, setUserData] = useState<UserData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [freeSongsLimit, setFreeSongsLimit] = useState(FREE_SONGS_LIMIT)
 
   // Listen to auth state changes
   useEffect(() => {
@@ -97,6 +100,26 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       }
     })
 
+    return unsubscribe
+  }, [])
+
+  // Listen to app config for remote-controlled settings
+  useEffect(() => {
+    const configRef = doc(db, 'config', 'app')
+    const unsubscribe = onSnapshot(
+      configRef,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data()
+          if (typeof data.freeSongsLimit === 'number') {
+            setFreeSongsLimit(data.freeSongsLimit)
+          }
+        }
+      },
+      (err) => {
+        console.error('Error fetching app config:', err)
+      }
+    )
     return unsubscribe
   }, [])
 
@@ -209,17 +232,17 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       // Fallback to local data
       if (userData) {
         const isSubscribed = userData.subscription.lifetime || userData.subscription.status === 'active'
-        const canProcess = isSubscribed || userData.songsProcessed < 5
+        const canProcess = isSubscribed || userData.songsProcessed < freeSongsLimit
         return {
           canProcess,
           songsProcessed: userData.songsProcessed,
-          songsRemaining: isSubscribed ? -1 : Math.max(0, 5 - userData.songsProcessed),
+          songsRemaining: isSubscribed ? -1 : Math.max(0, freeSongsLimit - userData.songsProcessed),
           isSubscribed
         }
       }
       return { canProcess: false, songsProcessed: 0, songsRemaining: 0, isSubscribed: false }
     }
-  }, [user, userData])
+  }, [user, userData, freeSongsLimit])
 
   // Record usage after successful export
   const recordUsage = useCallback(async () => {
@@ -293,7 +316,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
   // Computed values
   const isAuthenticated = !!user
   const isSubscribed = userData?.subscription.lifetime || userData?.subscription.status === 'active'
-  const songsRemaining = isSubscribed ? -1 : Math.max(0, 5 - (userData?.songsProcessed || 0))
+  const songsRemaining = isSubscribed ? -1 : Math.max(0, freeSongsLimit - (userData?.songsProcessed || 0))
 
   const value: AuthContextType = {
     user,
@@ -313,7 +336,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     openCustomerPortal,
     isAuthenticated,
     isSubscribed,
-    songsRemaining
+    songsRemaining,
+    freeSongsLimit
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

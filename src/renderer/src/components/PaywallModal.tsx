@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { FREE_SONGS_LIMIT } from '../types'
 
 interface PaywallModalProps {
   isOpen: boolean
@@ -8,7 +7,7 @@ interface PaywallModalProps {
 }
 
 export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): React.JSX.Element | null {
-  const { openCheckout, userData, isLoading } = useAuth()
+  const { openCheckout, userData, freeSongsLimit, isLoading } = useAuth()
   const [checkoutLoading, setCheckoutLoading] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
 
@@ -60,7 +59,7 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
 
         {/* Description */}
         <p className="text-zinc-300 text-center mb-6">
-          You've used all {FREE_SONGS_LIMIT} of your free songs.
+          You've used all {freeSongsLimit} of your free songs.
           Subscribe to continue cleansing unlimited songs!
         </p>
 
@@ -68,12 +67,12 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
         <div className="bg-zinc-800/50 rounded-lg p-4 mb-6">
           <div className="flex justify-between items-center text-sm">
             <span className="text-zinc-300">Songs processed</span>
-            <span className="text-white font-medium">{songsProcessed} / {FREE_SONGS_LIMIT}</span>
+            <span className="text-white font-medium">{songsProcessed} / {freeSongsLimit}</span>
           </div>
           <div className="mt-2 h-2 bg-zinc-700 rounded-full overflow-hidden">
             <div
               className="h-full bg-blue-500 rounded-full"
-              style={{ width: `${Math.min(100, (songsProcessed / FREE_SONGS_LIMIT) * 100)}%` }}
+              style={{ width: `${Math.min(100, (songsProcessed / freeSongsLimit) * 100)}%` }}
             />
           </div>
         </div>

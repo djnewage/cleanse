@@ -31,7 +31,8 @@
     "@sentry/react": "^10.38.0",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.7.3",
-    "firebase": "^10.14.0"
+    "firebase": "^10.14.0",
+    "wavesurfer.js": "^7.12.4"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",

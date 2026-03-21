@@ -38,8 +38,18 @@ interface UserDoc {
   };
 }
 
-// Free tier limit
-const FREE_SONGS_LIMIT = 5;
+// Free tier limit (fallback if Firestore config/app doc is missing)
+const DEFAULT_FREE_SONGS_LIMIT = 2;
+
+async function getFreeSongsLimit(): Promise<number> {
+  try {
+    const configSnap = await db.doc('config/app').get();
+    const limit = configSnap.data()?.freeSongsLimit;
+    return typeof limit === 'number' ? limit : DEFAULT_FREE_SONGS_LIMIT;
+  } catch {
+    return DEFAULT_FREE_SONGS_LIMIT;
+  }
+}
 
 /**
  * Auth trigger: Create user document when a new user signs up
@@ -84,12 +94,13 @@ export const incrementUsage = functions.https.onCall(async (data, context) => {
     }
 
     const userData = userDoc.data() as UserDoc;
+    const freeSongsLimit = await getFreeSongsLimit();
 
     // Check if user can process (has subscription or under free limit)
     const canProcess =
       userData.subscription.lifetime ||
       userData.subscription.status === 'active' ||
-      userData.songsProcessed < FREE_SONGS_LIMIT;
+      userData.songsProcessed < freeSongsLimit;
 
     if (!canProcess) {
       throw new functions.https.HttpsError(
@@ -153,18 +164,19 @@ export const canProcessSong = functions.https.onCall(async (data, context) => {
   }
 
   const userData = userDoc.data() as UserDoc;
+  const freeSongsLimit = await getFreeSongsLimit();
 
   const canProcess =
     userData.subscription.lifetime ||
     userData.subscription.status === 'active' ||
-    userData.songsProcessed < FREE_SONGS_LIMIT;
+    userData.songsProcessed < freeSongsLimit;
 
   return {
     canProcess,
     songsProcessed: userData.songsProcessed,
     songsRemaining: (userData.subscription.lifetime || userData.subscription.status === 'active')
       ? -1 // unlimited
-      : Math.max(0, FREE_SONGS_LIMIT - userData.songsProcessed),
+      : Math.max(0, freeSongsLimit - userData.songsProcessed),
     isSubscribed: userData.subscription.lifetime || userData.subscription.status === 'active'
   };
 });

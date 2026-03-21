@@ -221,4 +221,4 @@ export interface UsageInfo {
   isSubscribed: boolean
 }
 
-export const FREE_SONGS_LIMIT = 5
+export const FREE_SONGS_LIMIT = 2
