@@ -203,6 +203,9 @@ def merge_word_lists(
                         or pri_word.get("is_profanity")):
                     merged[i]["is_profanity"] = True
                     merged[i]["detection_source"] = "vocals"
+                    # Use vocals-pass timestamps since censoring targets the vocals file
+                    merged[i]["start"] = sec_word["start"]
+                    merged[i]["end"] = sec_word["end"]
                     is_duplicate = True
                     break
             # Check near-miss with same word text
@@ -213,6 +216,9 @@ def merge_word_lists(
             if gap < overlap_threshold and sec_word["word"].lower() == pri_word["word"].lower():
                 merged[i]["is_profanity"] = True
                 merged[i]["detection_source"] = "vocals"
+                # Use vocals-pass timestamps since censoring targets the vocals file
+                merged[i]["start"] = sec_word["start"]
+                merged[i]["end"] = sec_word["end"]
                 is_duplicate = True
                 break
 

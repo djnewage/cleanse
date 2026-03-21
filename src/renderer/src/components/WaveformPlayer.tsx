@@ -7,14 +7,36 @@ interface WaveformPlayerProps {
   labelColor?: string
   onPlay?: () => void
   audioRef?: (node: HTMLAudioElement | null) => void
-  /** Called when this player should pause (e.g. the other player started) */
   externalPauseRef?: React.MutableRefObject<(() => void) | null>
 }
 
 function formatTime(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return '0:00'
   const m = Math.floor(seconds / 60)
   const s = Math.floor(seconds % 60)
   return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+/** Extract the file path from a media:// URL */
+function mediaUrlToPath(url: string): string {
+  return decodeURIComponent(url.replace(/^media:\/\//, ''))
+}
+
+/** Read audio file via IPC and decode to peaks for waveform rendering */
+async function loadPeaks(src: string): Promise<{ peaks: Float32Array; duration: number } | null> {
+  try {
+    const filePath = mediaUrlToPath(src)
+    const buffer = await window.electronAPI.readAudioFile(filePath)
+    const audioContext = new AudioContext()
+    const decoded = await audioContext.decodeAudioData(buffer)
+    const peaks = decoded.getChannelData(0)
+    const duration = decoded.duration
+    audioContext.close()
+    return { peaks, duration }
+  } catch (err) {
+    console.warn('[WaveformPlayer] Could not load peaks:', err)
+    return null
+  }
 }
 
 export default function WaveformPlayer({
@@ -27,7 +49,6 @@ export default function WaveformPlayer({
 }: WaveformPlayerProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const wavesurferRef = useRef<WaveSurfer | null>(null)
-  const audioElRef = useRef<HTMLAudioElement | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -49,47 +70,64 @@ export default function WaveformPlayer({
   useEffect(() => {
     if (!containerRef.current) return
 
-    // Create hidden audio element
-    const audio = new Audio()
-    audio.src = src
-    audio.preload = 'auto'
-    audioElRef.current = audio
+    let cancelled = false
+    let ws: WaveSurfer | null = null
 
-    // Forward ref to parent
-    audioRef?.(audio)
+    const init = async () => {
+      if (!containerRef.current) return
 
-    const ws = WaveSurfer.create({
-      container: containerRef.current,
-      media: audio,
-      waveColor: '#52525b',
-      progressColor: '#3b82f6',
-      cursorColor: '#3b82f6',
-      cursorWidth: 1,
-      height: 48,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 2,
-      normalize: true,
-      hideScrollbar: true,
-      fillParent: true,
-      minPxPerSec: 0,
-    })
+      // Load peaks first so we can pass them at creation time
+      // This avoids loadBlob() which would disconnect the audio element
+      const peakData = await loadPeaks(src)
+      if (cancelled || !containerRef.current) return
 
-    wavesurferRef.current = ws
+      // Create audio element for playback — media:// works natively with <audio>
+      const audio = document.createElement('audio')
+      audio.src = src
+      audio.preload = 'auto'
 
-    ws.on('play', () => {
-      setIsPlaying(true)
-      onPlay?.()
-    })
-    ws.on('pause', () => setIsPlaying(false))
-    ws.on('timeupdate', (time) => setCurrentTime(time))
-    ws.on('ready', () => setDuration(ws.getDuration()))
+      // Create wavesurfer with pre-computed peaks + our audio element
+      ws = WaveSurfer.create({
+        container: containerRef.current,
+        media: audio,
+        peaks: peakData ? [Array.from(peakData.peaks)] : undefined,
+        duration: peakData?.duration,
+        waveColor: '#52525b',
+        progressColor: '#3b82f6',
+        cursorColor: '#3b82f6',
+        cursorWidth: 2,
+        dragToSeek: true,
+        height: 48,
+        barWidth: 2,
+        barGap: 1,
+        barRadius: 2,
+        normalize: true,
+        hideScrollbar: true,
+        fillParent: true,
+      })
+
+      wavesurferRef.current = ws
+
+      // Forward ref to parent for karaoke word tracking
+      audioRef?.(audio)
+
+      ws.on('play', () => {
+        setIsPlaying(true)
+        onPlay?.()
+      })
+      ws.on('pause', () => setIsPlaying(false))
+      ws.on('timeupdate', (time) => setCurrentTime(time))
+      ws.on('ready', () => setDuration(ws!.getDuration()))
+      ws.on('error', (err) => console.error('[WaveformPlayer] Error:', err))
+    }
+
+    init()
 
     return () => {
+      cancelled = true
       audioRef?.(null)
-      ws.destroy()
+      if (ws) ws.destroy()
       wavesurferRef.current = null
-      audioElRef.current = null
     }
   }, [src]) // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -79,6 +79,7 @@ export interface ElectronAPI {
   deleteHistoryEntry: (id: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
   getMachineId: () => Promise<string>
+  readAudioFile: (path: string) => Promise<ArrayBuffer>
 }
 
 export interface TranscriptionResult {
@@ -244,7 +245,9 @@ const electronAPI: ElectronAPI = {
 
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
 
-  getMachineId: () => ipcRenderer.invoke('get-machine-id')
+  getMachineId: () => ipcRenderer.invoke('get-machine-id'),
+
+  readAudioFile: (path: string) => ipcRenderer.invoke('read-audio-file', path)
 }
 
 if (process.contextIsolated) {

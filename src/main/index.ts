@@ -9,7 +9,7 @@ Sentry.init({
 import { app, shell, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
 import { join, extname } from 'path'
 import { createReadStream } from 'fs'
-import { stat } from 'fs/promises'
+import { stat, readFile } from 'fs/promises'
 import { Readable } from 'stream'
 import { existsSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -79,6 +79,11 @@ function createWindow(): void {
 }
 
 // --- IPC Handlers ---
+
+ipcMain.handle('read-audio-file', async (_event, filePath: string) => {
+  const buffer = await readFile(filePath)
+  return buffer.buffer
+})
 
 ipcMain.handle('select-audio-file', async () => {
   if (!mainWindow) return null
@@ -507,7 +512,8 @@ app.whenReady().then(async () => {
             'Content-Range': `bytes ${start}-${end}/${fileSize}`,
             'Accept-Ranges': 'bytes',
             'Content-Length': String(chunkSize),
-            'Content-Type': mimeType
+            'Content-Type': mimeType,
+            'Access-Control-Allow-Origin': '*'
           }
         })
       }
@@ -521,7 +527,8 @@ app.whenReady().then(async () => {
         headers: {
           'Accept-Ranges': 'bytes',
           'Content-Length': String(fileSize),
-          'Content-Type': mimeType
+          'Content-Type': mimeType,
+          'Access-Control-Allow-Origin': '*'
         }
       })
     } catch (err) {

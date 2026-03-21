@@ -16,6 +16,7 @@ CROSSFADE_MS = 30
 
 
 
+
 def _make_replacement(audio: AudioSegment, start_ms: int, end_ms: int, censor_type: str) -> AudioSegment:
     """Build the replacement segment for a censored word."""
     duration_ms = end_ms - start_ms
@@ -180,6 +181,6 @@ def censor_audio_vocals_only(
         replacement = _make_replacement(vocals, start_ms, end_ms, censor_type)
         vocals = _splice_with_crossfade(vocals, start_ms, end_ms, replacement, crossfade_ms)
 
-    # Mix censored vocals back with untouched accompaniment
+    # Mix censored vocals back with accompaniment
     mixed = accompaniment.overlay(vocals)
     return _export(mixed, output_path)
