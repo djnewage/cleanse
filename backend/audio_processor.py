@@ -2,6 +2,8 @@
 
 import os
 import sys
+import numpy as np
+from scipy.signal import butter, sosfilt
 from pydub import AudioSegment
 from pydub.generators import Sine
 
@@ -14,7 +16,35 @@ PADDING_AFTER_MS = 250
 # Crossfade duration for smooth transitions at censor boundaries
 CROSSFADE_MS = 30
 
+# dBFS threshold below which vocals are considered "missing" at a position,
+# indicating demucs likely placed the vocal in the accompaniment track
+VOCAL_SILENCE_THRESHOLD = -40
 
+# Band-reject filter bounds for suppressing leaked vocals in accompaniment.
+# Preserves sub-bass/kick (below 250Hz) and hi-hats/cymbals (above 4kHz).
+BANDREJECT_LOW = 250
+BANDREJECT_HIGH = 4000
+
+
+
+
+def _apply_bandreject(segment: AudioSegment, low: int = BANDREJECT_LOW, high: int = BANDREJECT_HIGH) -> AudioSegment:
+    """Apply band-reject filter to suppress vocal frequencies while preserving bass and highs."""
+    samples = np.array(segment.get_array_of_samples(), dtype=np.float64)
+    sample_rate = segment.frame_rate
+    channels = segment.channels
+
+    sos = butter(N=6, Wn=[low, high], btype='bandstop', fs=sample_rate, output='sos')
+
+    if channels > 1:
+        samples = samples.reshape(-1, channels)
+        for ch in range(channels):
+            samples[:, ch] = sosfilt(sos, samples[:, ch])
+        filtered = samples.flatten()
+    else:
+        filtered = sosfilt(sos, samples)
+
+    return segment._spawn(np.int16(np.clip(filtered, -32768, 32767)).tobytes())
 
 
 def _make_replacement(audio: AudioSegment, start_ms: int, end_ms: int, censor_type: str) -> AudioSegment:
@@ -168,18 +198,33 @@ def censor_audio_vocals_only(
 
         censor_type = w.get("censor_type", "mute")
 
+        # Check vocal level to detect demucs leakage
+        vocal_level = vocals[start_ms:end_ms].dBFS
+        is_leaked = vocal_level < VOCAL_SILENCE_THRESHOLD
+
         print(
             f"[AudioProcessor] Word '{w.get('word', '?')}' "
             f"time={w.get('start', 0):.2f}-{w.get('end', 0):.2f}s "
             f"padded={start_ms}-{end_ms}ms "
             f"censor={censor_type} "
-            f"source={w.get('detection_source', 'unknown')}",
+            f"vocal_dBFS={vocal_level:.1f} "
+            f"source={w.get('detection_source', 'unknown')}"
+            f"{'  → BANDREJECT' if is_leaked else ''}",
             file=sys.stderr,
         )
 
-        # Censor vocals
+        # Censor vocals (always)
         replacement = _make_replacement(vocals, start_ms, end_ms, censor_type)
         vocals = _splice_with_crossfade(vocals, start_ms, end_ms, replacement, crossfade_ms)
+
+        # If vocals are silent, the word leaked into the accompaniment.
+        # Apply band-reject filter to suppress vocal frequencies (250-4000Hz)
+        # while preserving kick/bass/hi-hats.
+        if is_leaked:
+            filtered = _apply_bandreject(accompaniment[start_ms:end_ms])
+            accompaniment = _splice_with_crossfade(
+                accompaniment, start_ms, end_ms, filtered, crossfade_ms
+            )
 
     # Mix censored vocals back with accompaniment
     mixed = accompaniment.overlay(vocals)

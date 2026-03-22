@@ -49,6 +49,7 @@ export default function WaveformPlayer({
 }: WaveformPlayerProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const wavesurferRef = useRef<WaveSurfer | null>(null)
+  const audioElRef = useRef<HTMLAudioElement | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -85,6 +86,7 @@ export default function WaveformPlayer({
       const audio = document.createElement('audio')
       audio.src = src
       audio.preload = 'auto'
+      audioElRef.current = audio
 
       // Create wavesurfer with pre-computed peaks + our audio element
       ws = WaveSurfer.create({
@@ -96,7 +98,8 @@ export default function WaveformPlayer({
         progressColor: '#3b82f6',
         cursorColor: '#3b82f6',
         cursorWidth: 2,
-        dragToSeek: true,
+        dragToSeek: { debounceTime: 0 },
+        interact: true,
         height: 48,
         barWidth: 2,
         barGap: 1,
@@ -126,6 +129,12 @@ export default function WaveformPlayer({
     return () => {
       cancelled = true
       audioRef?.(null)
+      // Explicitly stop and release the audio element to prevent ghost playback
+      if (audioElRef.current) {
+        audioElRef.current.pause()
+        audioElRef.current.src = ''
+        audioElRef.current = null
+      }
       if (ws) ws.destroy()
       wavesurferRef.current = null
     }
