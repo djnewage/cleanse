@@ -35,6 +35,7 @@ hidden_imports += collect_submodules('torchaudio')
 hidden_imports += collect_submodules('torchcodec')
 hidden_imports += collect_submodules('pydub')
 hidden_imports += collect_submodules('numpy')
+hidden_imports += collect_submodules('scipy')
 hidden_imports += [
     'fastapi',
     'fastapi.middleware',
