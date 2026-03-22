@@ -27,8 +27,8 @@ export default function ExportControls({
   return (
     <div className="flex items-center gap-4">
       <div className="flex items-center gap-2">
-        <span className="text-xs text-zinc-400">Default censor:</span>
-        <div className="flex rounded-md overflow-hidden border border-zinc-700">
+        <span className="text-xs text-text-tertiary">Default censor:</span>
+        <div className="flex rounded-md overflow-hidden border border-border-strong">
           {censorOptions.map((opt) => (
             <button
               key={opt.value}
@@ -38,7 +38,7 @@ export default function ExportControls({
                 ${
                   defaultCensorType === opt.value
                     ? 'bg-blue-600 text-white'
-                    : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-300'
+                    : 'bg-elevated text-text-secondary hover:bg-muted hover:text-text-secondary'
                 }
               `}
             >
@@ -55,7 +55,7 @@ export default function ExportControls({
           px-5 py-2.5 rounded-lg font-medium text-sm transition-all
           ${
             disabled || !hasProfanity || isCensoring
-              ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+              ? 'bg-elevated text-text-disabled cursor-not-allowed'
               : 'bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700'
           }
         `}
@@ -71,7 +71,7 @@ export default function ExportControls({
       </button>
 
       {!hasProfanity && !disabled && (
-        <span className="text-sm text-zinc-400">No words flagged for censoring</span>
+        <span className="text-sm text-text-tertiary">No words flagged for censoring</span>
       )}
     </div>
   )

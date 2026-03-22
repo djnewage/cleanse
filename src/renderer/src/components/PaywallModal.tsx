@@ -33,16 +33,16 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-overlay backdrop-blur-sm"
         onClick={onClose}
       />
 
       {/* Modal */}
-      <div className="relative bg-zinc-900 rounded-xl border border-zinc-800 p-6 max-w-md w-full mx-4 shadow-2xl">
+      <div className="relative bg-surface rounded-xl border border-border p-6 max-w-md w-full mx-4 shadow-2xl">
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-zinc-400 hover:text-white text-lg"
+          className="absolute top-4 right-4 text-text-tertiary hover:text-text-primary text-lg"
         >
           ✕
         </button>
@@ -53,23 +53,23 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
         </div>
 
         {/* Title */}
-        <h2 className="text-xl font-bold text-white text-center mb-2">
+        <h2 className="text-xl font-bold text-text-primary text-center mb-2">
           Free Tier Limit Reached
         </h2>
 
         {/* Description */}
-        <p className="text-zinc-300 text-center mb-6">
+        <p className="text-text-secondary text-center mb-6">
           You've used all {freeSongsLimit} of your free songs.
           Subscribe to continue cleansing unlimited songs!
         </p>
 
         {/* Usage stats */}
-        <div className="bg-zinc-800/50 rounded-lg p-4 mb-6">
+        <div className="bg-elevated/50 rounded-lg p-4 mb-6">
           <div className="flex justify-between items-center text-sm">
-            <span className="text-zinc-300">Songs processed</span>
-            <span className="text-white font-medium">{songsProcessed} / {freeSongsLimit}</span>
+            <span className="text-text-secondary">Songs processed</span>
+            <span className="text-text-primary font-medium">{songsProcessed} / {freeSongsLimit}</span>
           </div>
-          <div className="mt-2 h-2 bg-zinc-700 rounded-full overflow-hidden">
+          <div className="mt-2 h-2 bg-muted rounded-full overflow-hidden">
             <div
               className="h-full bg-blue-500 rounded-full"
               style={{ width: `${Math.min(100, (songsProcessed / freeSongsLimit) * 100)}%` }}
@@ -79,8 +79,8 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
 
         {/* Features list */}
         <div className="mb-6">
-          <p className="text-sm font-medium text-white mb-3">What you get with Pro:</p>
-          <ul className="space-y-2 text-sm text-zinc-300">
+          <p className="text-sm font-medium text-text-primary mb-3">What you get with Pro:</p>
+          <ul className="space-y-2 text-sm text-text-secondary">
             <li className="flex items-center gap-2">
               <span className="text-green-400">✓</span>
               Unlimited song processing
@@ -119,7 +119,7 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
             w-full py-3 rounded-lg font-medium text-sm transition-colors
             ${
               checkoutLoading || isLoading
-                ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
+                ? 'bg-muted text-text-tertiary cursor-not-allowed'
                 : 'bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700'
             }
           `}
@@ -137,7 +137,7 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
         {/* Cancel link */}
         <button
           onClick={onClose}
-          className="w-full mt-3 py-2 text-sm text-zinc-400 hover:text-zinc-300 transition-colors"
+          className="w-full mt-3 py-2 text-sm text-text-tertiary hover:text-text-secondary transition-colors"
         >
           Maybe later
         </button>

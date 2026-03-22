@@ -25,6 +25,8 @@ import UpdateModal from './components/UpdateModal'
 import TurboToggle from './components/TurboToggle'
 import DualPassToggle from './components/DualPassToggle'
 import HelpModal from './components/HelpModal'
+import ThemeToggle from './components/ThemeToggle'
+import { ThemeProvider } from './contexts/ThemeContext'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -352,9 +354,13 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
       return {
         ...state,
         globalDefaultCensorType: action.censorType,
-        songs: state.songs.map((s) =>
-          s.status === 'pending' ? { ...s, defaultCensorType: action.censorType } : s
-        )
+        songs: state.songs.map((s) => {
+          if (s.status === 'exporting' || s.status === 'completed') return s
+          if (s.status === 'ready') {
+            return { ...s, defaultCensorType: action.censorType, censoredFilePath: null, previewFilePath: null }
+          }
+          return { ...s, defaultCensorType: action.censorType }
+        })
       }
 
     case 'MARK_SONG_REVIEWED':
@@ -900,10 +906,10 @@ function MainApp(): React.JSX.Element {
   // If still loading auth, show loading screen
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <div className="min-h-screen bg-app flex items-center justify-center">
         <div className="text-center">
-          <div className="inline-block w-8 h-8 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin mb-3" />
-          <p className="text-zinc-300">Loading...</p>
+          <div className="inline-block w-8 h-8 border-2 border-border-strong border-t-blue-400 rounded-full animate-spin mb-3" />
+          <p className="text-text-secondary">Loading...</p>
         </div>
       </div>
     )
@@ -919,19 +925,19 @@ function MainApp(): React.JSX.Element {
   const completedCount = state.songs.filter((s) => s.status === 'completed').length
   const isProcessing = state.currentlyProcessingId !== null
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+    <div className="min-h-screen bg-app text-text-primary">
       {/* Header */}
-      <header className="drag-region border-b border-zinc-800 px-6 py-4">
+      <header className="drag-region border-b border-border px-6 py-4">
         <div className="flex items-center justify-between no-drag">
           <div>
-            <h1 className="text-xl font-bold">Cleanse <span className="text-xs font-normal text-zinc-500">v{pkg.version}</span></h1>
-            <p className="text-sm text-zinc-300">Batch censor profanity in audio files</p>
+            <h1 className="text-xl font-bold">Cleanse <span className="text-xs font-normal text-text-disabled">v{pkg.version}</span></h1>
+            <p className="text-sm text-text-secondary">Batch censor profanity in audio files</p>
           </div>
           <div className="flex items-center gap-3">
             {/* Help button */}
             <button
               onClick={() => setShowHelp(true)}
-              className="w-5 h-5 rounded-full border border-zinc-600 text-zinc-300 hover:text-zinc-300 hover:border-zinc-500 text-xs font-medium transition-colors flex items-center justify-center"
+              className="w-5 h-5 rounded-full border border-border-strong text-text-secondary hover:text-text-primary hover:border-border-strong text-xs font-medium transition-colors flex items-center justify-center"
               title="Quick reference"
             >
               ?
@@ -940,13 +946,13 @@ function MainApp(): React.JSX.Element {
             {/* Feedback button */}
             <button
               onClick={() => setShowFeedback(true)}
-              className="text-xs text-zinc-300 hover:text-zinc-300 transition-colors"
+              className="text-xs text-text-secondary hover:text-text-primary transition-colors"
             >
               Feedback
             </button>
 
             {/* Divider */}
-            <span className="text-zinc-700">|</span>
+            <span className="text-text-disabled">|</span>
 
             {/* Dual-pass toggle (ad-lib detection) */}
             <DualPassToggle
@@ -964,7 +970,10 @@ function MainApp(): React.JSX.Element {
             />
 
             {/* Divider */}
-            <span className="text-zinc-700">|</span>
+            <span className="text-text-disabled">|</span>
+
+            {/* Theme toggle */}
+            <ThemeToggle />
 
             {/* User menu */}
             <UserMenu onManageSubscription={handleShowPaywall} />
@@ -976,7 +985,7 @@ function MainApp(): React.JSX.Element {
                   state.backendReady ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'
                 }`}
               />
-              <span className="text-xs text-zinc-300">
+              <span className="text-xs text-text-secondary">
                 {state.backendReady ? 'Ready' : 'Starting...'}
               </span>
             </div>
@@ -1067,11 +1076,13 @@ function MainApp(): React.JSX.Element {
   )
 }
 
-// Wrap the app with AuthProvider
+// Wrap the app with providers
 export default function App(): React.JSX.Element {
   return (
-    <AuthProvider>
-      <MainApp />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <MainApp />
+      </AuthProvider>
+    </ThemeProvider>
   )
 }

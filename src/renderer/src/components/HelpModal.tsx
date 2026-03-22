@@ -10,22 +10,22 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps): React.JS
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-overlay backdrop-blur-sm"
         onClick={onClose}
       />
 
       {/* Modal */}
-      <div className="relative bg-zinc-900 rounded-xl border border-zinc-800 p-6 max-w-lg w-full mx-4 shadow-2xl max-h-[85vh] overflow-y-auto">
+      <div className="relative bg-surface rounded-xl border border-border p-6 max-w-lg w-full mx-4 shadow-2xl max-h-[85vh] overflow-y-auto">
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-zinc-400 hover:text-white text-lg"
+          className="absolute top-4 right-4 text-text-tertiary hover:text-text-primary text-lg"
         >
           ✕
         </button>
 
-        <h2 className="text-xl font-bold text-white mb-1">Quick Reference</h2>
-        <p className="text-zinc-400 text-sm mb-5">How to use Cleanse</p>
+        <h2 className="text-xl font-bold text-text-primary mb-1">Quick Reference</h2>
+        <p className="text-text-tertiary text-sm mb-5">How to use Cleanse</p>
 
         {/* Workflow */}
         <Section title="Workflow">
@@ -66,7 +66,7 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps): React.JS
 
         <button
           onClick={onClose}
-          className="w-full mt-4 py-2.5 rounded-lg font-medium text-sm bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+          className="w-full mt-4 py-2.5 rounded-lg font-medium text-sm bg-elevated text-text-secondary hover:bg-muted transition-colors"
         >
           Got it
         </button>
@@ -78,7 +78,7 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps): React.JS
 function Section({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="mb-5">
-      <h3 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">{title}</h3>
+      <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">{title}</h3>
       <div className="space-y-1.5">{children}</div>
     </div>
   )
@@ -87,10 +87,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Step({ n, children }: { n: number; children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="flex items-start gap-2.5 text-sm">
-      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-zinc-800 text-zinc-300 text-xs flex items-center justify-center font-medium">
+      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-elevated text-text-secondary text-xs flex items-center justify-center font-medium">
         {n}
       </span>
-      <span className="text-zinc-300">{children}</span>
+      <span className="text-text-secondary">{children}</span>
     </div>
   )
 }
@@ -98,8 +98,8 @@ function Step({ n, children }: { n: number; children: React.ReactNode }): React.
 function Row({ label, desc }: { label: React.ReactNode; desc: string }): React.JSX.Element {
   return (
     <div className="flex items-start gap-2 text-sm">
-      <span className="text-zinc-200 font-medium min-w-[140px] flex-shrink-0">{label}</span>
-      <span className="text-zinc-400">{desc}</span>
+      <span className="text-text-primary font-medium min-w-[140px] flex-shrink-0">{label}</span>
+      <span className="text-text-tertiary">{desc}</span>
     </div>
   )
 }
@@ -115,7 +115,7 @@ const BADGE_COLORS: Record<string, string> = {
 
 function Badge({ color, children }: { color: string; children: React.ReactNode }): React.JSX.Element {
   return (
-    <span className={`text-[10px] font-bold font-mono ${BADGE_COLORS[color] ?? 'text-zinc-300'}`}>
+    <span className={`text-[10px] font-bold font-mono ${BADGE_COLORS[color] ?? 'text-text-secondary'}`}>
       {children}
     </span>
   )

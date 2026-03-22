@@ -11,7 +11,7 @@ interface QueueItemProps {
 
 function getStatusBadge(status: SongStatus, errorMessage: string | null) {
   const badges: Record<SongStatus, { label: string; className: string }> = {
-    pending: { label: 'Pending', className: 'bg-zinc-700 text-zinc-300' },
+    pending: { label: 'Pending', className: 'bg-muted text-text-secondary' },
     fetching_lyrics: { label: 'Fetching Lyrics', className: 'bg-cyan-600 text-cyan-100' },
     separating: { label: 'Separating', className: 'bg-purple-600 text-purple-100' },
     transcribing: { label: 'Transcribing', className: 'bg-blue-600 text-blue-100' },
@@ -56,7 +56,7 @@ export default function QueueItem({
     <div
       className={`
         border rounded-lg transition-all
-        ${isExpanded ? 'border-blue-500 bg-zinc-900' : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-700'}
+        ${isExpanded ? 'border-blue-500 bg-surface' : 'border-border bg-surface/50 hover:border-border-strong'}
         ${song.status === 'error' ? 'border-red-800' : ''}
       `}
     >
@@ -66,7 +66,7 @@ export default function QueueItem({
         onClick={canExpand ? onToggleExpand : undefined}
       >
         {/* Expand/collapse indicator */}
-        <span className={`text-zinc-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
+        <span className={`text-text-tertiary transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
           {canExpand ? '▶' : '○'}
         </span>
 
@@ -77,7 +77,7 @@ export default function QueueItem({
               ? `${song.metadata.artist} - ${song.metadata.title}`
               : song.fileName}
           </p>
-          <div className="flex items-center gap-3 text-xs text-zinc-400">
+          <div className="flex items-center gap-3 text-xs text-text-tertiary">
             {song.metadata?.artist && song.metadata?.title && (
               <span className="truncate max-w-[200px]" title={song.fileName}>{song.fileName}</span>
             )}
@@ -118,7 +118,7 @@ export default function QueueItem({
                 e.stopPropagation()
                 onRetry()
               }}
-              className="px-2 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded transition-colors"
+              className="px-2 py-1 text-xs bg-muted hover:bg-muted rounded transition-colors"
             >
               Retry
             </button>
@@ -129,7 +129,7 @@ export default function QueueItem({
                 e.stopPropagation()
                 onRemove()
               }}
-              className="p-1 text-zinc-400 hover:text-red-400 transition-colors"
+              className="p-1 text-text-tertiary hover:text-red-400 transition-colors"
               title="Remove from queue"
             >
               ✕
@@ -141,11 +141,11 @@ export default function QueueItem({
       {/* Progress bar for processing states */}
       {song.status === 'separating' && song.separationProgress && (
         <div className="px-4 pb-3">
-          <div className="flex items-center justify-between mb-1 text-xs text-zinc-400">
+          <div className="flex items-center justify-between mb-1 text-xs text-text-tertiary">
             <span>{song.separationProgress.message}</span>
             <span>{Math.round(song.separationProgress.progress)}%</span>
           </div>
-          <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+          <div className="w-full h-1.5 bg-elevated rounded-full overflow-hidden">
             <div
               className="h-full bg-purple-500 rounded-full transition-all duration-300"
               style={{ width: `${song.separationProgress.progress}%` }}
@@ -159,11 +159,11 @@ export default function QueueItem({
         <div className="px-4 pb-3">
           {song.transcriptionProgress ? (
             <>
-              <div className="flex items-center justify-between mb-1 text-xs text-zinc-400">
+              <div className="flex items-center justify-between mb-1 text-xs text-text-tertiary">
                 <span>{song.transcriptionProgress.message}</span>
                 <span>{Math.round(song.transcriptionProgress.progress)}%</span>
               </div>
-              <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+              <div className="w-full h-1.5 bg-elevated rounded-full overflow-hidden">
                 <div
                   className="h-full bg-blue-500 rounded-full transition-all duration-300"
                   style={{ width: `${song.transcriptionProgress.progress}%` }}
@@ -171,8 +171,8 @@ export default function QueueItem({
               </div>
             </>
           ) : (
-            <div className="flex items-center gap-2 text-xs text-zinc-400">
-              <div className="w-3 h-3 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin" />
+            <div className="flex items-center gap-2 text-xs text-text-tertiary">
+              <div className="w-3 h-3 border-2 border-border-strong border-t-blue-400 rounded-full animate-spin" />
               <span>{song.status === 'transcribing_vocals' ? 'Scanning isolated vocals...' : 'Transcribing audio...'}</span>
             </div>
           )}
@@ -182,8 +182,8 @@ export default function QueueItem({
       {/* Fetching lyrics indicator */}
       {song.status === 'fetching_lyrics' && (
         <div className="px-4 pb-3">
-          <div className="flex items-center gap-2 text-xs text-zinc-400">
-            <div className="w-3 h-3 border-2 border-zinc-600 border-t-cyan-400 rounded-full animate-spin" />
+          <div className="flex items-center gap-2 text-xs text-text-tertiary">
+            <div className="w-3 h-3 border-2 border-border-strong border-t-cyan-400 rounded-full animate-spin" />
             <span>Fetching lyrics...</span>
           </div>
         </div>

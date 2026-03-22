@@ -50,7 +50,7 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
       {/* User icon button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-7 h-7 rounded-full bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-xs font-medium transition-colors flex items-center justify-center"
+        className="w-7 h-7 rounded-full bg-muted hover:bg-muted text-text-secondary text-xs font-medium transition-colors flex items-center justify-center"
         title={userData?.email || 'Account'}
       >
         {userData?.email?.charAt(0).toUpperCase() || '?'}
@@ -58,21 +58,21 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-64 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 py-2">
+        <div className="absolute right-0 top-full mt-2 w-64 bg-elevated border border-border-strong rounded-lg shadow-xl z-50 py-2">
           {/* Email */}
-          <div className="px-4 py-2 border-b border-zinc-700">
-            <p className="text-xs text-zinc-300 truncate">{userData?.email}</p>
+          <div className="px-4 py-2 border-b border-border-strong">
+            <p className="text-xs text-text-secondary truncate">{userData?.email}</p>
           </div>
 
           {/* Subscription info */}
-          <div className="px-4 py-3 border-b border-zinc-700">
+          <div className="px-4 py-3 border-b border-border-strong">
             {isSubscribed ? (
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 text-xs font-medium bg-emerald-900/50 text-emerald-300 rounded-full">
                     Pro
                   </span>
-                  <span className="text-xs text-zinc-300">
+                  <span className="text-xs text-text-secondary">
                     {userData?.subscription.lifetime
                       ? 'Lifetime'
                       : userData?.subscription.currentPeriodEnd
@@ -84,17 +84,17 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
             ) : (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-300">
+                  <span className="text-xs text-text-secondary">
                     {songsRemaining > 0 ? (
                       <>
-                        <span className="text-zinc-300 font-medium">{songsRemaining}</span> of {freeSongsLimit} free songs
+                        <span className="text-text-secondary font-medium">{songsRemaining}</span> of {freeSongsLimit} free songs
                       </>
                     ) : (
                       <span className="text-amber-400">Limit reached</span>
                     )}
                   </span>
                 </div>
-                <div className="w-full h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full ${
                       songsRemaining === 0 ? 'bg-amber-500' : 'bg-blue-500'
@@ -110,13 +110,13 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
           <div className="py-1">
             <button
               onClick={handleManageClick}
-              className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-700 transition-colors"
+              className="w-full text-left px-4 py-2 text-sm text-text-secondary hover:bg-muted transition-colors"
             >
               {isSubscribed ? 'Manage subscription' : 'Upgrade to Pro'}
             </button>
             <button
               onClick={handleSignOut}
-              className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-700 hover:text-zinc-300 transition-colors"
+              className="w-full text-left px-4 py-2 text-sm text-text-secondary hover:bg-muted hover:text-text-secondary transition-colors"
             >
               Sign out
             </button>

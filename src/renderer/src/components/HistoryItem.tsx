@@ -39,17 +39,17 @@ export default function HistoryItem({ entry, onDelete }: HistoryItemProps): Reac
   const [expanded, setExpanded] = useState(false)
 
   return (
-    <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg overflow-hidden">
+    <div className="bg-surface/50 border border-border rounded-lg overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full text-left px-4 py-3 hover:bg-zinc-800/50 transition-colors flex items-center gap-3"
+        className="w-full text-left px-4 py-3 hover:bg-elevated/50 transition-colors flex items-center gap-3"
       >
         <span className="text-lg">{expanded ? '▾' : '▸'}</span>
         <div className="flex-1 min-w-0">
           <p className="font-medium text-sm truncate">
             {truncateFilename(entry.originalFileName)}
           </p>
-          <div className="flex items-center gap-3 text-xs text-zinc-400 mt-0.5">
+          <div className="flex items-center gap-3 text-xs text-text-tertiary mt-0.5">
             <span>{formatDate(entry.dateCreated)}</span>
             <span>{formatDuration(entry.duration)}</span>
             <span>{entry.profanityCount} words censored</span>
@@ -60,14 +60,14 @@ export default function HistoryItem({ entry, onDelete }: HistoryItemProps): Reac
             e.stopPropagation()
             onDelete(entry.id)
           }}
-          className="text-zinc-600 hover:text-red-400 transition-colors p-1 text-sm"
+          className="text-text-disabled hover:text-red-400 transition-colors p-1 text-sm"
           title="Remove from history"
         >
           &times;
         </span>
       </button>
       {expanded && (
-        <div className="px-4 pb-3 border-t border-zinc-800/50">
+        <div className="px-4 pb-3 border-t border-border/50">
           <audio
             controls
             preload="auto"

@@ -11,12 +11,12 @@ export default function DualPassToggle({
 }: DualPassToggleProps): React.JSX.Element {
   return (
     <div className="flex items-center gap-2" title="Scans vocal track separately to catch background vocals and ad-libs">
-      <span className="text-xs text-zinc-300">Ad-lib Scan</span>
+      <span className="text-xs text-text-secondary">Ad-lib Scan</span>
       <button
         onClick={() => onToggle(!enabled)}
         disabled={isProcessing}
         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-          enabled ? 'bg-blue-600' : 'bg-zinc-700'
+          enabled ? 'bg-blue-600' : 'bg-muted'
         } ${isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
       >
         <span

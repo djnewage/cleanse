@@ -36,7 +36,7 @@ export default function QueueList({
       {/* Header with stats */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Queue ({songs.length} files)</h2>
-        <div className="flex items-center gap-3 text-xs text-zinc-400">
+        <div className="flex items-center gap-3 text-xs text-text-tertiary">
           {pendingCount > 0 && <span>{pendingCount} pending</span>}
           {processingCount > 0 && <span className="text-blue-400">{processingCount} processing</span>}
           {readyCount > 0 && <span className="text-green-400">{readyCount} ready</span>}

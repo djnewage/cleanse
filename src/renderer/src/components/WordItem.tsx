@@ -76,20 +76,20 @@ function WordItemInner({
       : 'bg-sky-500/60 text-white shadow-[0_0_8px_rgba(56,189,248,0.35)] scale-105 karaoke-active'
   } else if (playbackStatus === 'played') {
     if (word.is_profanity && isAdlib) {
-      statusClasses = 'bg-amber-900/40 text-amber-400/70 ring-1 ring-amber-500/30'
+      statusClasses = 'bg-adlib-bg-played text-adlib-text-played ring-1 ring-adlib-ring-played'
     } else {
       statusClasses = word.is_profanity
-        ? 'bg-red-900/40 text-red-400/70 ring-1 ring-red-500/30'
+        ? 'bg-profanity-bg-played text-profanity-text-played ring-1 ring-profanity-ring-played'
         : 'bg-sky-900/30 text-sky-300/50'
     }
   } else {
     // upcoming or undefined (no playback)
     if (word.is_profanity && isAdlib) {
-      statusClasses = 'bg-amber-900/60 text-amber-300 hover:bg-amber-800/60 ring-1 ring-amber-500/50'
+      statusClasses = 'bg-adlib-bg text-adlib-text hover:bg-adlib-hover ring-1 ring-adlib-ring'
     } else {
       statusClasses = word.is_profanity
-        ? 'bg-red-900/60 text-red-300 hover:bg-red-800/60 ring-1 ring-red-500/50'
-        : 'bg-zinc-800/40 text-zinc-300 hover:bg-zinc-700/50'
+        ? 'bg-profanity-bg text-profanity-text hover:bg-profanity-hover ring-1 ring-profanity-ring'
+        : 'bg-elevated/40 text-text-secondary hover:bg-muted/50'
     }
   }
 
@@ -102,7 +102,7 @@ function WordItemInner({
       className={`
         group relative inline-flex items-baseline gap-0.5 px-1.5 py-0.5 m-0.5 rounded text-sm font-mono
         transition-all duration-200 ease-out outline-none
-        focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 focus-visible:ring-offset-zinc-900
+        focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 focus-visible:ring-offset-surface
         ${statusClasses}
       `}
     >
@@ -110,7 +110,7 @@ function WordItemInner({
       {word.is_profanity && (
         <span
           className={`text-[9px] leading-none font-sans font-bold ${
-            hasOverride ? 'text-blue-400' : 'text-zinc-400'
+            hasOverride ? 'text-blue-400' : 'text-text-tertiary'
           }`}
         >
           {CENSOR_LABEL[effectiveType]}
@@ -125,7 +125,7 @@ function WordItemInner({
         <span
           onClick={handleRemove}
           onContextMenu={(e) => e.stopPropagation()}
-          className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-3.5 h-3.5 rounded-full bg-zinc-700 hover:bg-red-600 text-zinc-300 hover:text-white text-[9px] leading-none cursor-pointer transition-colors"
+          className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-3.5 h-3.5 rounded-full bg-muted hover:bg-red-600 text-text-secondary hover:text-white text-[9px] leading-none cursor-pointer transition-colors"
           title="Remove manual censor"
         >
           &times;

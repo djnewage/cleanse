@@ -85,7 +85,7 @@ export default function AudioPreview({
           key={primaryPath}
           src={`media://${primaryPath}`}
           label={censoredPath ? 'Censored Version' : 'Original'}
-          labelColor={censoredPath ? 'text-green-400' : 'text-zinc-300'}
+          labelColor={censoredPath ? 'text-green-400' : 'text-text-secondary'}
           onPlay={handlePrimaryPlay}
           audioRef={primaryRefCallback}
           externalPauseRef={primaryPauseRef}

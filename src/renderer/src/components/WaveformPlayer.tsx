@@ -42,7 +42,7 @@ async function loadPeaks(src: string): Promise<{ peaks: Float32Array; duration: 
 export default function WaveformPlayer({
   src,
   label,
-  labelColor = 'text-zinc-300',
+  labelColor = 'text-text-secondary',
   onPlay,
   audioRef,
   externalPauseRef
@@ -147,12 +147,12 @@ export default function WaveformPlayer({
   return (
     <div>
       <label className={`block text-sm font-medium mb-2 ${labelColor}`}>{label}</label>
-      <div className="bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/50">
+      <div className="bg-elevated/50 rounded-lg p-3 border border-border-strong/50">
         <div ref={containerRef} className="w-full cursor-pointer" />
         <div className="flex items-center gap-3 mt-2">
           <button
             onClick={togglePlayPause}
-            className="flex items-center justify-center w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 transition-colors text-white"
+            className="flex items-center justify-center w-8 h-8 rounded-full bg-muted hover:bg-muted transition-colors text-text-primary"
           >
             {isPlaying ? (
               <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
@@ -165,7 +165,7 @@ export default function WaveformPlayer({
               </svg>
             )}
           </button>
-          <span className="text-xs text-zinc-400 font-mono tabular-nums">
+          <span className="text-xs text-text-tertiary font-mono tabular-nums">
             {formatTime(currentTime)} / {formatTime(duration)}
           </span>
         </div>

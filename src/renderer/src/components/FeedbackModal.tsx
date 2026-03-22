@@ -45,16 +45,16 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-overlay backdrop-blur-sm"
         onClick={handleClose}
       />
 
       {/* Modal */}
-      <div className="relative bg-zinc-900 rounded-xl border border-zinc-800 p-6 max-w-md w-full mx-4 shadow-2xl">
+      <div className="relative bg-surface rounded-xl border border-border p-6 max-w-md w-full mx-4 shadow-2xl">
         {/* Close button */}
         <button
           onClick={handleClose}
-          className="absolute top-4 right-4 text-zinc-400 hover:text-white text-lg"
+          className="absolute top-4 right-4 text-text-tertiary hover:text-text-primary text-lg"
         >
           ✕
         </button>
@@ -64,10 +64,10 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
             <div className="text-center mb-4">
               <span className="text-5xl">✓</span>
             </div>
-            <h2 className="text-xl font-bold text-white text-center mb-2">
+            <h2 className="text-xl font-bold text-text-primary text-center mb-2">
               Thanks for your feedback!
             </h2>
-            <p className="text-zinc-300 text-center mb-6">
+            <p className="text-text-secondary text-center mb-6">
               We appreciate you taking the time to share your thoughts.
             </p>
             <button
@@ -79,10 +79,10 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
           </>
         ) : (
           <>
-            <h2 className="text-xl font-bold text-white text-center mb-2">
+            <h2 className="text-xl font-bold text-text-primary text-center mb-2">
               Send Feedback
             </h2>
-            <p className="text-zinc-300 text-center mb-6">
+            <p className="text-text-secondary text-center mb-6">
               Let us know how we can improve Cleanse.
             </p>
 
@@ -91,7 +91,7 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
               onChange={(e) => setMessage(e.target.value)}
               placeholder="What's on your mind?"
               rows={4}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg p-3 text-sm text-white placeholder-zinc-500 resize-none focus:outline-none focus:border-blue-500 mb-4"
+              className="w-full bg-elevated border border-border-strong rounded-lg p-3 text-sm text-text-primary placeholder-text-disabled resize-none focus:outline-none focus:border-blue-500 mb-4"
             />
 
             {error && (
@@ -107,7 +107,7 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
                 w-full py-3 rounded-lg font-medium text-sm transition-colors
                 ${
                   loading || !message.trim()
-                    ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
+                    ? 'bg-muted text-text-tertiary cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700'
                 }
               `}
@@ -124,7 +124,7 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
 
             <button
               onClick={handleClose}
-              className="w-full mt-3 py-2 text-sm text-zinc-400 hover:text-zinc-300 transition-colors"
+              className="w-full mt-3 py-2 text-sm text-text-tertiary hover:text-text-secondary transition-colors"
             >
               Cancel
             </button>

@@ -44,18 +44,18 @@ export default function BatchControls({
   const canExport = exportableCount > 0 && !isExporting && !disabled
 
   return (
-    <div className="flex flex-col gap-3 bg-zinc-900/50 rounded-lg p-4 border border-zinc-800">
+    <div className="flex flex-col gap-3 bg-surface/50 rounded-lg p-4 border border-border">
       {/* Settings row */}
       <div className="flex items-center gap-4">
         {/* Global censor type */}
         <div className="flex items-center gap-2">
           <span
-            className="text-xs text-zinc-400 cursor-help"
+            className="text-xs text-text-tertiary cursor-help"
             title="Default for all songs (can override per song during review)"
           >
             Default:
           </span>
-          <div className="flex rounded-md overflow-hidden border border-zinc-700">
+          <div className="flex rounded-md overflow-hidden border border-border-strong">
             {censorOptions.map((opt) => (
               <button
                 key={opt.value}
@@ -66,7 +66,7 @@ export default function BatchControls({
                   ${
                     globalCensorType === opt.value
                       ? 'bg-blue-600 text-white'
-                      : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-300'
+                      : 'bg-elevated text-text-secondary hover:bg-muted hover:text-text-secondary'
                   }
                   ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
                 `}
@@ -79,7 +79,7 @@ export default function BatchControls({
 
         {/* Crossfade control */}
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-400">Crossfade:</span>
+          <span className="text-xs text-text-tertiary">Crossfade:</span>
           <input
             type="range"
             min={5}
@@ -88,15 +88,15 @@ export default function BatchControls({
             value={crossfadeMs}
             onChange={(e) => onSetCrossfadeMs(Number(e.target.value))}
             disabled={disabled}
-            className="w-20 h-1 accent-blue-600 bg-zinc-700 rounded-full appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-20 h-1 accent-blue-600 bg-muted rounded-full appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           />
-          <span className="text-xs text-zinc-300 w-16">{crossfadeMs}ms{crossfadeMs <= 5 ? ' (Sharp)' : crossfadeMs >= 50 ? ' (Smooth)' : ''}</span>
+          <span className="text-xs text-text-secondary w-16">{crossfadeMs}ms{crossfadeMs <= 5 ? ' (Sharp)' : crossfadeMs >= 50 ? ' (Smooth)' : ''}</span>
         </div>
 
         {/* Censor Range control */}
         <div className="flex items-center gap-2">
           <span
-            className="text-xs text-zinc-400 cursor-help"
+            className="text-xs text-text-tertiary cursor-help"
             title="How far the censor extends around each word (higher = more aggressive)"
           >
             Censor Range:
@@ -109,9 +109,9 @@ export default function BatchControls({
             value={paddingMs}
             onChange={(e) => onSetPaddingMs(Number(e.target.value))}
             disabled={disabled}
-            className="w-20 h-1 accent-blue-600 bg-zinc-700 rounded-full appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-20 h-1 accent-blue-600 bg-muted rounded-full appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           />
-          <span className="text-xs text-zinc-300 w-16">{paddingMs}ms{paddingMs === 0 ? ' (Tight)' : paddingMs >= 200 ? ' (Wide)' : ''}</span>
+          <span className="text-xs text-text-secondary w-16">{paddingMs}ms{paddingMs === 0 ? ' (Tight)' : paddingMs >= 200 ? ' (Wide)' : ''}</span>
         </div>
       </div>
 
@@ -124,8 +124,8 @@ export default function BatchControls({
             px-3 py-2 rounded-lg text-sm font-medium transition-colors
             ${
               disabled || isExporting || songCount === 0
-                ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
-                : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600 hover:text-white'
+                ? 'bg-elevated text-text-disabled cursor-not-allowed'
+                : 'bg-muted text-text-secondary hover:bg-muted hover:text-text-primary'
             }
           `}
         >
@@ -140,7 +140,7 @@ export default function BatchControls({
             ${
               canExport
                 ? 'bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700'
-                : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+                : 'bg-elevated text-text-disabled cursor-not-allowed'
             }
           `}
         >
@@ -158,11 +158,11 @@ export default function BatchControls({
       {/* Export progress bar */}
       {isExporting && exportProgress && (
         <div className="space-y-1">
-          <div className="flex items-center justify-between text-xs text-zinc-300">
+          <div className="flex items-center justify-between text-xs text-text-secondary">
             <span>Exporting {exportProgress.completed} of {exportProgress.total}</span>
             <span>{Math.round((exportProgress.completed / exportProgress.total) * 100)}%</span>
           </div>
-          <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+          <div className="w-full h-2 bg-elevated rounded-full overflow-hidden">
             <div
               className="h-full bg-blue-500 rounded-full transition-all duration-300"
               style={{ width: `${(exportProgress.completed / exportProgress.total) * 100}%` }}
@@ -173,13 +173,13 @@ export default function BatchControls({
 
       {/* Info text */}
       {!isExporting && exportableCount === 0 && songCount > 0 && (
-        <p className="text-xs text-zinc-400">
+        <p className="text-xs text-text-tertiary">
           Waiting for songs to finish processing before export...
         </p>
       )}
 
       {exportableCount > 0 && !isExporting && (
-        <p className="text-xs text-zinc-400">
+        <p className="text-xs text-text-tertiary">
           {exportableCount} song{exportableCount !== 1 ? 's' : ''} ready to export.
           Unreviewed songs will use auto-detected profanity.
         </p>

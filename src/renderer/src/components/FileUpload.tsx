@@ -68,9 +68,9 @@ export default function FileUpload({ onFilesSelected, disabled }: FileUploadProp
       onDrop={handleDrop}
       className={`
         border-2 border-dashed rounded-xl p-10 text-center transition-all
-        ${disabled ? 'border-zinc-700 bg-zinc-900/50 text-zinc-600 cursor-not-allowed' : 'cursor-pointer'}
+        ${disabled ? 'border-border-strong bg-surface/50 text-text-disabled cursor-not-allowed' : 'cursor-pointer'}
         ${isDragging ? 'border-blue-400 bg-blue-950/30 text-blue-300' : ''}
-        ${!disabled && !isDragging ? 'border-zinc-600 bg-zinc-900/30 text-zinc-300 hover:border-zinc-400 hover:text-zinc-300' : ''}
+        ${!disabled && !isDragging ? 'border-border-strong bg-surface/30 text-text-secondary hover:border-border-strong hover:text-text-secondary' : ''}
       `}
     >
       <div className="text-4xl mb-3">🎵</div>

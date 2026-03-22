@@ -119,7 +119,7 @@ export default function SongDetailPanel({
   const showAudioPreview = song.status === 'ready' || song.censoredFilePath !== null
 
   return (
-    <div className="mt-2 border-t border-zinc-800 pt-4 pb-2 px-4 space-y-4">
+    <div className="mt-2 border-t border-border pt-4 pb-2 px-4 space-y-4">
       {/* Header with close button */}
       <div className="flex items-center justify-between">
         <h3 className="font-medium">Edit: {song.fileName}</h3>
@@ -134,7 +134,7 @@ export default function SongDetailPanel({
           )}
           <button
             onClick={onClose}
-            className="text-zinc-300 hover:text-white text-lg"
+            className="text-text-secondary hover:text-text-primary text-lg"
           >
             ✕
           </button>
@@ -150,43 +150,43 @@ export default function SongDetailPanel({
 
       {/* Fetched Lyrics Section */}
       {song.lyrics && (song.lyrics.plain || song.lyrics.synced) && (
-        <div className="mb-6 rounded-lg border border-gray-700 bg-gray-800/50 p-4">
+        <div className="mb-6 rounded-lg border border-border-strong bg-elevated/50 p-4">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-300">
+            <h3 className="text-sm font-semibold text-text-secondary">
               Fetched Lyrics
               {song.lyrics.source && (
                 <span className={`ml-2 rounded px-2 py-0.5 text-xs ${
                   song.lyrics.source === 'genius'
-                    ? 'bg-yellow-900/30 text-yellow-400'
-                    : 'bg-blue-900/30 text-blue-400'
+                    ? 'bg-badge-warning-bg text-badge-warning-text'
+                    : 'bg-badge-info-bg text-badge-info-text'
                 }`}>
                   {song.lyrics.source === 'genius' ? 'Genius' : 'LRCLIB'}
                 </span>
               )}
               {song.lyrics.synced && (
-                <span className="ml-2 rounded bg-green-900/30 px-2 py-0.5 text-xs text-green-400">
+                <span className="ml-2 rounded bg-badge-success-bg px-2 py-0.5 text-xs text-badge-success-text">
                   Synced
                 </span>
               )}
             </h3>
             <button
               onClick={() => setLyricsExpanded(!lyricsExpanded)}
-              className="text-xs text-gray-400 hover:text-gray-300"
+              className="text-xs text-text-tertiary hover:text-text-secondary"
             >
               {lyricsExpanded ? 'Collapse' : 'Expand'}
             </button>
           </div>
 
           {lyricsExpanded && song.lyrics.plain && (
-            <div className="max-h-96 overflow-y-auto rounded bg-gray-900/50 p-3">
-              <div className="text-xs leading-relaxed text-gray-300 font-mono whitespace-pre-wrap">
+            <div className="max-h-96 overflow-y-auto rounded bg-surface/50 p-3">
+              <div className="text-xs leading-relaxed text-text-secondary font-mono whitespace-pre-wrap">
                 {renderLyricsWithHighlights(song.lyrics.plain)}
               </div>
             </div>
           )}
 
           {!lyricsExpanded && (
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-text-disabled">
               {song.lyrics.plain
                 ? `${song.lyrics.plain.split('\n').length} lines • Click Expand to view`
                 : 'Synced lyrics available (timing data only)'}
@@ -216,12 +216,12 @@ export default function SongDetailPanel({
       {/* Song-level censor type selector */}
       <div className="flex items-center gap-4">
         <span
-          className="text-xs text-zinc-400 cursor-help"
+          className="text-xs text-text-tertiary cursor-help"
           title="Custom censor type for this song (overrides default)"
         >
           Censor type:
         </span>
-        <div className="flex rounded-md overflow-hidden border border-zinc-700">
+        <div className="flex rounded-md overflow-hidden border border-border-strong">
           {(['mute', 'beep', 'reverse', 'tape_stop'] as CensorType[]).map((type) => (
             <button
               key={type}
@@ -231,7 +231,7 @@ export default function SongDetailPanel({
                 ${
                   song.defaultCensorType === type
                     ? 'bg-blue-600 text-white'
-                    : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-300'
+                    : 'bg-elevated text-text-secondary hover:bg-muted hover:text-text-secondary'
                 }
               `}
             >
@@ -242,7 +242,7 @@ export default function SongDetailPanel({
         {song.words.some((w) => w.censor_type !== undefined) && (
           <button
             onClick={() => onResetAllWordCensorTypes(song.id)}
-            className="px-2 py-1 text-xs font-medium text-blue-400 hover:text-blue-300 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-md transition-colors"
+            className="px-2 py-1 text-xs font-medium text-blue-400 hover:text-blue-300 bg-elevated hover:bg-muted border border-border-strong rounded-md transition-colors"
             title="Reset all per-word censor type overrides back to the song default"
           >
             Reset overrides ({song.words.filter((w) => w.censor_type !== undefined).length})
@@ -251,7 +251,7 @@ export default function SongDetailPanel({
       </div>
 
       {/* Summary */}
-      <div className="text-xs text-zinc-400 flex items-center gap-4">
+      <div className="text-xs text-text-tertiary flex items-center gap-4">
         <span>{song.words.length} words total</span>
         <span>{profanityCount} marked for censoring</span>
         {song.userReviewed && <span className="text-green-400">User reviewed</span>}
@@ -263,8 +263,8 @@ export default function SongDetailPanel({
         <div className="pt-2">
           {/* Show preview generation status */}
           {song.isGeneratingPreview && (
-            <div className="flex items-center gap-2 text-xs text-zinc-400 mb-3 px-3 py-2 bg-zinc-900 border border-zinc-800 rounded">
-              <div className="w-3 h-3 border-2 border-zinc-600 border-t-blue-400 rounded-full animate-spin" />
+            <div className="flex items-center gap-2 text-xs text-text-tertiary mb-3 px-3 py-2 bg-surface border border-border rounded">
+              <div className="w-3 h-3 border-2 border-border-strong border-t-blue-400 rounded-full animate-spin" />
               <span>Updating preview...</span>
             </div>
           )}

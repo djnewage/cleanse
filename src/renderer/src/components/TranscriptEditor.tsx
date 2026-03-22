@@ -133,7 +133,7 @@ export default function TranscriptEditor({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between text-sm text-zinc-300">
+      <div className="flex items-center justify-between text-sm text-text-secondary">
         <div className="flex gap-4">
           <span>Duration: {formatDuration(duration)}</span>
           <span>Language: {language.toUpperCase()}</span>
@@ -142,15 +142,15 @@ export default function TranscriptEditor({
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowAddForm(true)}
-            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300 hover:bg-blue-800/50 transition-colors"
+            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-action-blue-bg text-action-blue-text hover:bg-action-blue-hover transition-colors"
           >
             + Add Censor
           </button>
           <span
             className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
               profanityCount > 0
-                ? 'bg-red-900/50 text-red-300'
-                : 'bg-green-900/50 text-green-300'
+                ? 'bg-action-red-bg text-action-red-text'
+                : 'bg-action-green-bg text-action-green-text'
             }`}
           >
             {profanityCount > 0 ? `${profanityCount} flagged` : 'No profanity detected'}
@@ -158,14 +158,14 @@ export default function TranscriptEditor({
         </div>
       </div>
 
-      <p className="text-xs text-zinc-400">
+      <p className="text-xs text-text-tertiary">
         Click a word to toggle its profanity flag. Right-click a flagged word to cycle censor type.
         Use &quot;Add Censor&quot; to manually mark missed words. Click &times; on manually added words to remove them.
         Use &larr; &rarr; arrow keys to jump between flagged words.
         Adjusting Crossfade or Censor Range above will automatically update the preview.
       </p>
 
-      <p className="text-xs text-amber-300/80 bg-amber-900/20 border border-amber-800/40 rounded px-3 py-2 mt-1">
+      <p className="text-xs text-warning-text bg-warning-bg border border-warning-border rounded px-3 py-2 mt-1">
         <strong>Note:</strong> AI transcription may not be 100% accurate and can miss profanities.
         Please review the transcript carefully and use &quot;Add Censor&quot; to manually flag any missed words.
       </p>
@@ -182,7 +182,7 @@ export default function TranscriptEditor({
       <div
         tabIndex={0}
         onKeyDown={handleKeyDown}
-        className="bg-zinc-900/50 rounded-lg p-4 max-h-80 overflow-y-auto border border-zinc-800 focus:outline-none focus-within:border-blue-500 transition-colors"
+        className="bg-surface/50 rounded-lg p-4 max-h-80 overflow-y-auto border border-border focus:outline-none focus-within:border-blue-500 transition-colors"
       >
         <div className="flex flex-wrap">
           {words.map((word, idx) => (

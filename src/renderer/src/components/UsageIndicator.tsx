@@ -23,7 +23,7 @@ export default function UsageIndicator({ onManageSubscription }: UsageIndicatorP
           <span className="px-2 py-1 text-xs font-medium bg-emerald-900/50 text-emerald-300 rounded-full">
             Pro
           </span>
-          <span className="text-xs text-zinc-400">
+          <span className="text-xs text-text-tertiary">
             {userData?.subscription.lifetime
               ? 'Lifetime'
               : userData?.subscription.currentPeriodEnd
@@ -33,17 +33,17 @@ export default function UsageIndicator({ onManageSubscription }: UsageIndicatorP
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-400">
+          <span className="text-xs text-text-tertiary">
             {songsRemaining > 0 ? (
               <>
-                <span className="text-zinc-300 font-medium">{songsRemaining}</span> of {freeSongsLimit} free
+                <span className="text-text-secondary font-medium">{songsRemaining}</span> of {freeSongsLimit} free
               </>
             ) : (
               <span className="text-amber-400">Limit reached</span>
             )}
           </span>
           {/* Mini progress bar */}
-          <div className="w-12 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+          <div className="w-12 h-1.5 bg-muted rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full ${
                 songsRemaining === 0 ? 'bg-amber-500' : 'bg-blue-500'
@@ -57,14 +57,14 @@ export default function UsageIndicator({ onManageSubscription }: UsageIndicatorP
       {/* User menu */}
       <div className="flex items-center gap-2">
         {/* Email display */}
-        <span className="text-xs text-zinc-400 hidden sm:block">
+        <span className="text-xs text-text-tertiary hidden sm:block">
           {userData?.email}
         </span>
 
         {/* Manage/Upgrade button */}
         <button
           onClick={handleManageClick}
-          className="px-2 py-1 text-xs text-zinc-300 hover:text-white transition-colors"
+          className="px-2 py-1 text-xs text-text-secondary hover:text-text-primary transition-colors"
         >
           {isSubscribed ? 'Manage' : 'Upgrade'}
         </button>
@@ -72,7 +72,7 @@ export default function UsageIndicator({ onManageSubscription }: UsageIndicatorP
         {/* Sign out button */}
         <button
           onClick={signOut}
-          className="px-2 py-1 text-xs text-zinc-400 hover:text-zinc-300 transition-colors"
+          className="px-2 py-1 text-xs text-text-tertiary hover:text-text-secondary transition-colors"
         >
           Sign out
         </button>

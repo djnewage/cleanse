@@ -65,68 +65,68 @@ export default function AddCensorForm({
 
   return (
     <div
-      className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-3 space-y-3"
+      className="bg-elevated/50 border border-border-strong rounded-lg p-3 space-y-3"
       onKeyDown={handleKeyDown}
     >
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-zinc-300">Add Manual Censor</span>
-        <button onClick={onCancel} className="text-zinc-400 hover:text-white text-sm">
+        <span className="text-sm font-medium text-text-secondary">Add Manual Censor</span>
+        <button onClick={onCancel} className="text-text-tertiary hover:text-text-primary text-sm">
           ✕
         </button>
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">Word / phrase</label>
+        <label className="block text-xs text-text-tertiary mb-1">Word / phrase</label>
         <input
           type="text"
           value={wordText}
           onChange={(e) => setWordText(e.target.value)}
           placeholder="e.g. damn"
           autoFocus
-          className="w-full px-2 py-1.5 bg-zinc-900 border border-zinc-700 rounded text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500"
+          className="w-full px-2 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary placeholder-text-disabled focus:outline-none focus:border-blue-500"
         />
       </div>
 
       <div className="flex gap-4">
         <div className="flex-1">
-          <label className="block text-xs text-zinc-400 mb-1">Start time</label>
+          <label className="block text-xs text-text-tertiary mb-1">Start time</label>
           <div className="flex items-center gap-1">
             <input
               type="number"
               min="0"
               value={startMin}
               onChange={(e) => setStartMin(e.target.value)}
-              className="w-12 px-1.5 py-1.5 bg-zinc-900 border border-zinc-700 rounded text-sm text-white text-center focus:outline-none focus:border-blue-500"
+              className="w-12 px-1.5 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary text-center focus:outline-none focus:border-blue-500"
             />
-            <span className="text-zinc-400 text-sm">:</span>
+            <span className="text-text-tertiary text-sm">:</span>
             <input
               type="number"
               min="0"
               max="59"
               value={startSec}
               onChange={(e) => setStartSec(e.target.value)}
-              className="w-12 px-1.5 py-1.5 bg-zinc-900 border border-zinc-700 rounded text-sm text-white text-center focus:outline-none focus:border-blue-500"
+              className="w-12 px-1.5 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary text-center focus:outline-none focus:border-blue-500"
             />
           </div>
         </div>
         <div className="flex-1">
-          <label className="block text-xs text-zinc-400 mb-1">End time</label>
+          <label className="block text-xs text-text-tertiary mb-1">End time</label>
           <div className="flex items-center gap-1">
             <input
               type="number"
               min="0"
               value={endMin}
               onChange={(e) => setEndMin(e.target.value)}
-              className="w-12 px-1.5 py-1.5 bg-zinc-900 border border-zinc-700 rounded text-sm text-white text-center focus:outline-none focus:border-blue-500"
+              className="w-12 px-1.5 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary text-center focus:outline-none focus:border-blue-500"
             />
-            <span className="text-zinc-400 text-sm">:</span>
+            <span className="text-text-tertiary text-sm">:</span>
             <input
               type="number"
               min="0"
               max="59"
               value={endSec}
               onChange={(e) => setEndSec(e.target.value)}
-              className="w-12 px-1.5 py-1.5 bg-zinc-900 border border-zinc-700 rounded text-sm text-white text-center focus:outline-none focus:border-blue-500"
+              className="w-12 px-1.5 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary text-center focus:outline-none focus:border-blue-500"
             />
           </div>
         </div>
@@ -135,7 +135,7 @@ export default function AddCensorForm({
       <div className="flex gap-2 justify-end">
         <button
           onClick={onCancel}
-          className="px-3 py-1.5 text-xs text-zinc-300 hover:text-zinc-200 transition-colors"
+          className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
         >
           Cancel
         </button>
@@ -145,7 +145,7 @@ export default function AddCensorForm({
           className={`px-3 py-1.5 text-xs rounded font-medium transition-colors ${
             isValid
               ? 'bg-blue-600 text-white hover:bg-blue-500'
-              : 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
+              : 'bg-muted text-text-tertiary cursor-not-allowed'
           }`}
         >
           Add

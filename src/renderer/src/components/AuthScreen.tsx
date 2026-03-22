@@ -55,17 +55,17 @@ export default function AuthScreen(): React.JSX.Element {
   const displayError = localError || error
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center px-4">
+    <div className="min-h-screen bg-app flex flex-col items-center justify-center px-4">
       <div className="w-full max-w-sm">
         {/* Logo/Title */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">Cleanse</h1>
-          <p className="text-zinc-300 text-sm">Censor profanity in audio files</p>
+          <h1 className="text-3xl font-bold text-text-primary mb-2">Cleanse</h1>
+          <p className="text-text-secondary text-sm">Censor profanity in audio files</p>
         </div>
 
         {/* Auth form */}
-        <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">
+        <div className="bg-surface rounded-xl border border-border p-6">
+          <h2 className="text-lg font-semibold text-text-primary mb-4">
             {mode === 'signin' && 'Sign In'}
             {mode === 'signup' && 'Create Account'}
             {mode === 'reset' && 'Reset Password'}
@@ -90,7 +90,7 @@ export default function AuthScreen(): React.JSX.Element {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email field */}
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-zinc-300 mb-1">
+              <label htmlFor="email" className="block text-sm font-medium text-text-secondary mb-1">
                 Email
               </label>
               <input
@@ -99,7 +99,7 @@ export default function AuthScreen(): React.JSX.Element {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-elevated border border-border-strong rounded-lg text-text-primary placeholder-text-disabled focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 placeholder="you@example.com"
               />
             </div>
@@ -107,7 +107,7 @@ export default function AuthScreen(): React.JSX.Element {
             {/* Password field */}
             {mode !== 'reset' && (
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-zinc-300 mb-1">
+                <label htmlFor="password" className="block text-sm font-medium text-text-secondary mb-1">
                   Password
                 </label>
                 <input
@@ -117,7 +117,7 @@ export default function AuthScreen(): React.JSX.Element {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   minLength={6}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  className="w-full px-3 py-2 bg-elevated border border-border-strong rounded-lg text-text-primary placeholder-text-disabled focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                   placeholder="••••••••"
                 />
               </div>
@@ -126,7 +126,7 @@ export default function AuthScreen(): React.JSX.Element {
             {/* Confirm password field (signup only) */}
             {mode === 'signup' && (
               <div>
-                <label htmlFor="confirmPassword" className="block text-sm font-medium text-zinc-300 mb-1">
+                <label htmlFor="confirmPassword" className="block text-sm font-medium text-text-secondary mb-1">
                   Confirm Password
                 </label>
                 <input
@@ -136,7 +136,7 @@ export default function AuthScreen(): React.JSX.Element {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
                   minLength={6}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  className="w-full px-3 py-2 bg-elevated border border-border-strong rounded-lg text-text-primary placeholder-text-disabled focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                   placeholder="••••••••"
                 />
               </div>
@@ -150,7 +150,7 @@ export default function AuthScreen(): React.JSX.Element {
                 w-full py-2.5 rounded-lg font-medium text-sm transition-colors
                 ${
                   isLoading
-                    ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
+                    ? 'bg-muted text-text-tertiary cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-500 active:bg-blue-700'
                 }
               `}
@@ -173,10 +173,10 @@ export default function AuthScreen(): React.JSX.Element {
           </form>
 
           {/* Mode switchers */}
-          <div className="mt-4 pt-4 border-t border-zinc-800 text-center text-sm">
+          <div className="mt-4 pt-4 border-t border-border text-center text-sm">
             {mode === 'signin' && (
               <>
-                <p className="text-zinc-300">
+                <p className="text-text-secondary">
                   Don't have an account?{' '}
                   <button
                     onClick={() => switchMode('signup')}
@@ -185,10 +185,10 @@ export default function AuthScreen(): React.JSX.Element {
                     Sign up
                   </button>
                 </p>
-                <p className="text-zinc-400 mt-2">
+                <p className="text-text-tertiary mt-2">
                   <button
                     onClick={() => switchMode('reset')}
-                    className="text-zinc-300 hover:text-zinc-300"
+                    className="text-text-secondary hover:text-text-secondary"
                   >
                     Forgot password?
                   </button>
@@ -197,7 +197,7 @@ export default function AuthScreen(): React.JSX.Element {
             )}
 
             {mode === 'signup' && (
-              <p className="text-zinc-300">
+              <p className="text-text-secondary">
                 Already have an account?{' '}
                 <button
                   onClick={() => switchMode('signin')}
@@ -209,7 +209,7 @@ export default function AuthScreen(): React.JSX.Element {
             )}
 
             {mode === 'reset' && (
-              <p className="text-zinc-300">
+              <p className="text-text-secondary">
                 Remember your password?{' '}
                 <button
                   onClick={() => switchMode('signin')}
@@ -223,7 +223,7 @@ export default function AuthScreen(): React.JSX.Element {
         </div>
 
         {/* Free tier info */}
-        <p className="text-center text-xs text-zinc-400 mt-6">
+        <p className="text-center text-xs text-text-tertiary mt-6">
           Start with 5 free songs. Subscribe for unlimited access.
         </p>
       </div>
