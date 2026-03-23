@@ -808,11 +808,27 @@ function MainApp(): React.JSX.Element {
       return
     }
 
-    // Ask for output directory
-    const outputDir = await window.electronAPI.selectOutputDirectory()
-    if (!outputDir) {
-      exportingRef.current = false
-      return
+    // For a single song, show Save dialog so user can edit the filename.
+    // For multiple songs, show folder picker.
+    let outputDir: string | null = null
+    let singleOutputPath: string | null = null
+
+    if (exportableSongs.length === 1) {
+      const song = exportableSongs[0]
+      const baseName = song.fileName
+      const ext = baseName.split('.').pop() || 'mp3'
+      const cleanName = baseName.replace(`.${ext}`, `_clean.${ext}`)
+      singleOutputPath = await window.electronAPI.selectOutputPath(cleanName)
+      if (!singleOutputPath) {
+        exportingRef.current = false
+        return
+      }
+    } else {
+      outputDir = await window.electronAPI.selectOutputDirectory()
+      if (!outputDir) {
+        exportingRef.current = false
+        return
+      }
     }
 
     dispatch({ type: 'START_EXPORT_ALL', total: exportableSongs.length })
@@ -836,7 +852,7 @@ function MainApp(): React.JSX.Element {
         const baseName = song.fileName
         const ext = baseName.split('.').pop() || 'mp3'
         const cleanName = baseName.replace(`.${ext}`, `_clean.${ext}`)
-        const outputPath = `${outputDir}/${cleanName}`
+        const outputPath = singleOutputPath ?? `${outputDir}/${cleanName}`
 
         const result = await window.electronAPI.censorAudio(
           song.filePath,
