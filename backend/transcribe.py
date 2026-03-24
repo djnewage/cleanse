@@ -192,7 +192,7 @@ def transcribe_audio(
     print(f"[Transcribe] Decoding audio via ffmpeg: {file_path}", file=sys.stderr)
     audio_array = _decode_audio_ffmpeg(file_path, sampling_rate=16000)
 
-    beam_size = 1 if turbo else 5
+    beam_size = 5
     print(f"[Transcribe] beam_size={beam_size}, turbo={turbo}", file=sys.stderr)
 
     _report_progress("transcribing", round(progress_offset + progress_scale * 0.10, 1), "Transcribing audio...")
@@ -210,6 +210,7 @@ def transcribe_audio(
         initial_prompt=initial_prompt,
         no_speech_threshold=0.8,
         compression_ratio_threshold=2.8,
+        condition_on_previous_text=False,
     )
     if sensitive_mode:
         transcribe_kwargs["no_speech_threshold"] = 0.9
