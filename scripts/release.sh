@@ -27,14 +27,26 @@ if gh release view "$TAG" &>/dev/null; then
   exit 1
 fi
 
+# Clean previous dist
+rm -f dist/*.dmg
+
+# Build ARM64 (Apple Silicon)
+echo "=== Building ARM64 (Apple Silicon) ==="
+npm run build:mac
+
+# Build x64 (Intel)
+echo ""
+echo "=== Building x64 (Intel) ==="
+npm run build:mac:x64
+
 # Find built artifacts
 DMG_FILES=$(ls dist/*-${VERSION}-*.dmg 2>/dev/null || true)
 if [ -z "$DMG_FILES" ]; then
   echo "Error: No .dmg files found in dist/"
-  echo "Run 'npm run build:mac' first."
   exit 1
 fi
 
+echo ""
 echo "Artifacts to upload:"
 for f in $DMG_FILES; do
   echo "  $f ($(du -h "$f" | cut -f1))"
