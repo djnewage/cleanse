@@ -45,14 +45,14 @@ class TestGetModel:
         with patch("device_info.get_device_string", return_value="mps"):
             transcribe.get_model(turbo=True)
 
-        _whisper_model_mock.assert_called_once_with("large-v3", device="cpu", compute_type="int8")
+        _whisper_model_mock.assert_called_once_with("medium", device="cpu", compute_type="int8")
 
     def test_turbo_with_cuda_uses_cuda(self):
         """CUDA should be used directly with float16 in turbo mode."""
         with patch("device_info.get_device_string", return_value="cuda"):
             transcribe.get_model(turbo=True)
 
-        _whisper_model_mock.assert_called_once_with("large-v3", device="cuda", compute_type="float16")
+        _whisper_model_mock.assert_called_once_with("medium", device="cuda", compute_type="float16")
 
     def test_non_turbo_with_cuda(self):
         """Non-turbo CUDA should use int8_float16 mixed precision."""
@@ -61,7 +61,7 @@ class TestGetModel:
         }):
             transcribe.get_model(turbo=False)
 
-        _whisper_model_mock.assert_called_once_with("large-v3", device="cuda", compute_type="int8_float16")
+        _whisper_model_mock.assert_called_once_with("medium", device="cuda", compute_type="int8_float16")
 
     def test_non_turbo_with_mps_uses_cpu(self):
         """Non-turbo on MPS should fall back to CPU (CTranslate2 doesn't support MPS)."""
@@ -70,4 +70,4 @@ class TestGetModel:
         }):
             transcribe.get_model(turbo=False)
 
-        _whisper_model_mock.assert_called_once_with("large-v3", device="cpu", compute_type="int8")
+        _whisper_model_mock.assert_called_once_with("medium", device="cpu", compute_type="int8")

@@ -5,7 +5,7 @@ export interface TranscribedWord {
   confidence: number
   is_profanity: boolean
   censor_type?: CensorType
-  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics' | 'lyrics_gap' | 'lyrics_corrected' | 'manual'
+  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics' | 'lyrics_gap' | 'lyrics_corrected' | 'manual' | 'custom'
 }
 
 export interface CensorWord {
@@ -96,6 +96,7 @@ export interface BatchAppState {
   deviceInfo: DeviceInfo | null
   crossfadeMs: number
   paddingMs: number
+  customProfanityWords: string[]
 }
 
 export type BatchAppAction =
@@ -144,6 +145,9 @@ export type BatchAppAction =
   | { type: 'PREVIEW_GENERATED'; id: string; previewPath: string }
   | { type: 'PREVIEW_GENERATION_FAILED'; id: string; error: string }
   | { type: 'CLEAR_PREVIEW'; id: string }
+  | { type: 'ADD_CUSTOM_WORD'; word: string }
+  | { type: 'REMOVE_CUSTOM_WORD'; word: string }
+  | { type: 'SET_CUSTOM_WORDS'; words: string[] }
 
 // Legacy single-file types (for backwards compatibility)
 export type AppStatus = 'idle' | 'loading-backend' | 'ready' | 'transcribing' | 'separating' | 'censoring' | 'error'

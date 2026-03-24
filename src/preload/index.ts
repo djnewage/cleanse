@@ -64,6 +64,8 @@ export interface ElectronAPI {
   ) => Promise<{ output_path: string }>
   getBackendStatus: () => Promise<{ ready: boolean }>
   getDeviceInfo: () => Promise<DeviceInfo>
+  warmupModel: () => Promise<{ status: string }>
+  onModelDownloadProgress: (callback: (progress: SeparationProgress) => void) => () => void
   onBackendStatus: (callback: (status: BackendStatus) => void) => () => void
   onDeviceInfo: (callback: (info: DeviceInfo) => void) => () => void
   onTranscriptionProgress: (callback: (progress: SeparationProgress) => void) => () => void
@@ -94,7 +96,7 @@ export interface TranscribedWord {
   end: number
   confidence: number
   is_profanity: boolean
-  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics' | 'lyrics_gap' | 'lyrics_corrected' | 'manual'
+  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics' | 'lyrics_gap' | 'lyrics_corrected' | 'manual' | 'custom'
 }
 
 export interface CensorWord {
@@ -159,6 +161,18 @@ const electronAPI: ElectronAPI = {
   getBackendStatus: () => ipcRenderer.invoke('get-backend-status'),
 
   getDeviceInfo: () => ipcRenderer.invoke('get-device-info'),
+
+  warmupModel: () => ipcRenderer.invoke('warmup-model'),
+
+  onModelDownloadProgress: (callback: (progress: SeparationProgress) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: SeparationProgress): void => {
+      callback(progress)
+    }
+    ipcRenderer.on('model-download-progress', handler)
+    return () => {
+      ipcRenderer.removeListener('model-download-progress', handler)
+    }
+  },
 
   onDeviceInfo: (callback: (info: DeviceInfo) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, info: DeviceInfo): void => {

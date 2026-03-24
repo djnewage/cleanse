@@ -114,6 +114,63 @@ def _decode_audio_ffmpeg(file_path: str, sampling_rate: int = 16000) -> np.ndarr
 # Global model instance - loaded once at first use
 _model = None
 _model_turbo: bool = False
+MODEL_ID = "medium"
+
+
+def _report_download_progress(step: str, progress: float, message: str):
+    """Report model download progress via JSON stdout."""
+    print(json.dumps({
+        "type": "model-download-progress",
+        "step": step,
+        "progress": progress,
+        "message": message,
+    }))
+    sys.stdout.flush()
+
+
+def download_model_with_progress():
+    """Download the Whisper model with progress reporting. No-op if already cached."""
+    import huggingface_hub
+
+    repo_id = f"Systran/faster-whisper-{MODEL_ID}"
+
+    # Check if model is already cached
+    try:
+        huggingface_hub.snapshot_download(repo_id, local_files_only=True)
+        _report_download_progress("complete", 100, "Model ready")
+        print(f"[Transcribe] Model already cached: {repo_id}", file=sys.stderr)
+        return
+    except Exception:
+        pass  # Not cached, need to download
+
+    print(f"[Transcribe] Downloading model: {repo_id}", file=sys.stderr)
+    _report_download_progress("downloading", 0, "Downloading AI model...")
+
+    # Use a custom tqdm class to report progress
+    from tqdm import tqdm as _tqdm
+
+    class ProgressTqdm(_tqdm):
+        def update(self, n=1):
+            super().update(n)
+            if self.total and self.total > 0:
+                pct = min(round(self.n / self.total * 100, 1), 99)
+                size_mb = round(self.total / 1024 / 1024)
+                _report_download_progress(
+                    "downloading", pct,
+                    f"Downloading AI model ({size_mb} MB)..."
+                )
+
+    huggingface_hub.snapshot_download(repo_id, tqdm_class=ProgressTqdm)
+    _report_download_progress("complete", 100, "Model downloaded")
+    print(f"[Transcribe] Model downloaded: {repo_id}", file=sys.stderr)
+
+
+def warmup_model():
+    """Download model (if needed) and load it into memory."""
+    download_model_with_progress()
+    _report_download_progress("loading", 100, "Loading model into memory...")
+    get_model(turbo=False)
+    _report_download_progress("complete", 100, "Model ready")
 
 
 def get_model(turbo: bool = False):
@@ -148,10 +205,10 @@ def get_model(turbo: bool = False):
 
     # TODO: Make model size configurable via UI settings
     print(
-        f"[Transcribe] Loading faster-whisper 'large-v3' model (device={device}, compute={compute_type}, turbo={turbo})...",
+        f"[Transcribe] Loading faster-whisper 'medium' model (device={device}, compute={compute_type}, turbo={turbo})...",
         file=sys.stderr,
     )
-    _model = WhisperModel("large-v3", device=device, compute_type=compute_type)
+    _model = WhisperModel("medium", device=device, compute_type=compute_type)
     _model_turbo = turbo
     print("[Transcribe] Model loaded.", file=sys.stderr)
     return _model
@@ -184,13 +241,20 @@ def transcribe_audio(
             "language": str
         }
     """
+    import time as _time
+
+    _report_progress("loading", round(progress_offset + progress_scale * 0.02, 1), "Loading model...")
+    t0 = _time.monotonic()
     model = get_model(turbo=turbo)
+    print(f"[Transcribe] Model ready in {_time.monotonic() - t0:.1f}s", file=sys.stderr)
 
     # Pre-decode audio via ffmpeg subprocess instead of letting faster-whisper
     # use PyAV (which crashes on macOS < 14 due to libavdevice compatibility).
     _report_progress("decoding", round(progress_offset + progress_scale * 0.05, 1), "Decoding audio...")
     print(f"[Transcribe] Decoding audio via ffmpeg: {file_path}", file=sys.stderr)
+    t1 = _time.monotonic()
     audio_array = _decode_audio_ffmpeg(file_path, sampling_rate=16000)
+    print(f"[Transcribe] Audio decoded in {_time.monotonic() - t1:.1f}s ({len(audio_array)/16000:.1f}s of audio)", file=sys.stderr)
 
     beam_size = 5
     print(f"[Transcribe] beam_size={beam_size}, turbo={turbo}", file=sys.stderr)
@@ -208,6 +272,7 @@ def transcribe_audio(
         word_timestamps=True,
         language=language,
         initial_prompt=initial_prompt,
+        temperature=0,
         no_speech_threshold=0.8,
         compression_ratio_threshold=2.8,
         condition_on_previous_text=False,
@@ -217,6 +282,7 @@ def transcribe_audio(
         transcribe_kwargs["condition_on_previous_text"] = False
         print("[Transcribe] Sensitive mode: no_speech_threshold=0.9, condition_on_previous_text=False", file=sys.stderr)
 
+    t2 = _time.monotonic()
     segments, info = model.transcribe(audio_array, **transcribe_kwargs)
 
     words = []
@@ -245,6 +311,7 @@ def transcribe_audio(
                 )
                 last_end = max(last_end, w.end)
 
+    print(f"[Transcribe] Transcription done in {_time.monotonic() - t2:.1f}s — {len(words)} words", file=sys.stderr)
     _report_progress("complete", round(progress_offset + progress_scale, 1), "Transcription complete!")
 
     return {

@@ -26,10 +26,47 @@ import TurboToggle from './components/TurboToggle'
 import DualPassToggle from './components/DualPassToggle'
 import HelpModal from './components/HelpModal'
 import ThemeToggle from './components/ThemeToggle'
+import CustomWordList from './components/CustomWordList'
 import { ThemeProvider } from './contexts/ThemeContext'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+}
+
+function normalizeWord(word: string): string {
+  return word.toLowerCase().replace(/[^\w']/g, '')
+}
+
+function fuzzyMatch(word: string, target: string): boolean {
+  const w = normalizeWord(word)
+  const t = normalizeWord(target)
+  if (!w || !t) return false
+  // Exact or startsWith match (damn -> damned, dammit)
+  if (w === t || w.startsWith(t) || t.startsWith(w)) return true
+  // Levenshtein-like: allow 1 char difference for words >= 4 chars
+  if (w.length >= 4 && t.length >= 4 && Math.abs(w.length - t.length) <= 2) {
+    let matches = 0
+    const shorter = w.length <= t.length ? w : t
+    const longer = w.length > t.length ? w : t
+    for (let i = 0; i < shorter.length; i++) {
+      if (longer.includes(shorter[i])) matches++
+    }
+    return matches / longer.length >= 0.8
+  }
+  return false
+}
+
+function applyCustomProfanity(words: TranscribedWord[], customWords: string[]): TranscribedWord[] {
+  if (customWords.length === 0) return words
+  return words.map((w) => {
+    if (w.is_profanity) return w
+    for (const custom of customWords) {
+      if (fuzzyMatch(w.word, custom)) {
+        return { ...w, is_profanity: true, detection_source: 'custom' as const }
+      }
+    }
+    return w
+  })
 }
 
 const initialState: BatchAppState = {
@@ -46,7 +83,8 @@ const initialState: BatchAppState = {
   dualPassEnabled: true,
   deviceInfo: null,
   crossfadeMs: 30,
-  paddingMs: 100
+  paddingMs: 100,
+  customProfanityWords: []
 }
 
 function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
@@ -160,7 +198,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         ...state,
         songs: state.songs.map((s) =>
           s.id === action.id
-            ? { ...s, words: action.words, duration: action.duration, language: action.language, transcriptionProgress: null }
+            ? { ...s, words: applyCustomProfanity(action.words, state.customProfanityWords), duration: action.duration, language: action.language, transcriptionProgress: null }
             : s
         )
       }
@@ -447,6 +485,41 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
     case 'SET_PADDING_MS':
       return { ...state, paddingMs: action.ms }
 
+    case 'ADD_CUSTOM_WORD': {
+      const word = action.word.toLowerCase().trim()
+      if (state.customProfanityWords.includes(word)) return state
+      const newCustomWords = [...state.customProfanityWords, word]
+      return {
+        ...state,
+        customProfanityWords: newCustomWords,
+        songs: state.songs.map((s) => ({
+          ...s,
+          words: applyCustomProfanity(s.words, newCustomWords),
+          previewFilePath: null
+        }))
+      }
+    }
+
+    case 'REMOVE_CUSTOM_WORD': {
+      const newCustomWords = state.customProfanityWords.filter((w) => w !== action.word)
+      return {
+        ...state,
+        customProfanityWords: newCustomWords,
+        songs: state.songs.map((s) => ({
+          ...s,
+          words: s.words.map((w) =>
+            w.detection_source === 'custom' && fuzzyMatch(w.word, action.word)
+              ? { ...w, is_profanity: false, detection_source: undefined }
+              : w
+          ),
+          previewFilePath: null
+        }))
+      }
+    }
+
+    case 'SET_CUSTOM_WORDS':
+      return { ...state, customProfanityWords: action.words }
+
     default:
       return state
   }
@@ -459,6 +532,7 @@ function MainApp(): React.JSX.Element {
   const [showPaywall, setShowPaywall] = useState(false)
   const [showFeedback, setShowFeedback] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [showCustomWords, setShowCustomWords] = useState(false)
   const [updateState, setUpdateState] = useState<{
     show: boolean
     version: string
@@ -468,6 +542,11 @@ function MainApp(): React.JSX.Element {
   }>({ show: false, version: '', releaseNotes: '', downloadProgress: null, downloaded: false })
 
   const { isAuthenticated, isLoading: authLoading, checkCanProcess, recordUsage, recordSongsImported, recordSongsReady } = useAuth()
+
+  // Model warmup state
+  const [modelStatus, setModelStatus] = useState<'waiting' | 'downloading' | 'loading' | 'ready'>('waiting')
+  const [modelDownloadProgress, setModelDownloadProgress] = useState(0)
+  const [modelDownloadMessage, setModelDownloadMessage] = useState('')
 
   // Memoized signature of expanded song's censored words
   const expandedSongWordsSignature = useMemo(() => {
@@ -493,6 +572,22 @@ function MainApp(): React.JSX.Element {
     onSongReady: recordSongsReady
   })
 
+  // Load custom profanity words from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('cleanse-custom-words')
+      if (saved) {
+        const words = JSON.parse(saved) as string[]
+        if (Array.isArray(words)) dispatch({ type: 'SET_CUSTOM_WORDS', words })
+      }
+    } catch { /* ignore parse errors */ }
+  }, [])
+
+  // Save custom profanity words to localStorage
+  useEffect(() => {
+    localStorage.setItem('cleanse-custom-words', JSON.stringify(state.customProfanityWords))
+  }, [state.customProfanityWords])
+
   // Listen for backend status updates
   useEffect(() => {
     const unsubscribe = window.electronAPI.onBackendStatus((status) => {
@@ -505,6 +600,36 @@ function MainApp(): React.JSX.Element {
 
     return unsubscribe
   }, [])
+
+  // Warmup model after backend is ready (downloads on first launch, instant thereafter)
+  useEffect(() => {
+    if (!state.backendReady) return
+    if (modelStatus !== 'waiting') return
+
+    setModelStatus('downloading')
+    setModelDownloadMessage('Checking AI model...')
+
+    const unsubProgress = window.electronAPI.onModelDownloadProgress((progress) => {
+      setModelDownloadProgress(progress.progress)
+      setModelDownloadMessage(progress.message)
+      if (progress.step === 'downloading') {
+        setModelStatus('downloading')
+      } else if (progress.step === 'loading') {
+        setModelStatus('loading')
+      } else if (progress.step === 'complete') {
+        setModelStatus('ready')
+      }
+    })
+
+    window.electronAPI.warmupModel()
+      .then(() => setModelStatus('ready'))
+      .catch((err) => {
+        console.error('Model warmup failed:', err)
+        setModelStatus('ready') // Allow usage even if warmup fails
+      })
+
+    return unsubProgress
+  }, [state.backendReady, modelStatus])
 
   // Listen for device info (main process sends this after backend is ready)
   useEffect(() => {
@@ -989,6 +1114,15 @@ function MainApp(): React.JSX.Element {
             {/* Divider */}
             <span className="text-text-disabled">|</span>
 
+            {/* Custom words */}
+            <button
+              onClick={() => setShowCustomWords(true)}
+              className="text-xs text-text-tertiary hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-muted"
+              title="Custom profanity word list"
+            >
+              Custom Words{state.customProfanityWords.length > 0 ? ` (${state.customProfanityWords.length})` : ''}
+            </button>
+
             {/* Theme toggle */}
             <ThemeToggle />
 
@@ -999,11 +1133,21 @@ function MainApp(): React.JSX.Element {
             <div className="flex items-center gap-2">
               <span
                 className={`inline-block w-2 h-2 rounded-full ${
-                  state.backendReady ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'
+                  state.backendReady && modelStatus === 'ready'
+                    ? 'bg-green-500'
+                    : 'bg-yellow-500 animate-pulse'
                 }`}
               />
               <span className="text-xs text-text-secondary">
-                {state.backendReady ? 'Ready' : 'Starting...'}
+                {!state.backendReady
+                  ? 'Starting...'
+                  : modelStatus === 'ready'
+                    ? 'Ready'
+                    : modelStatus === 'loading'
+                      ? 'Loading model...'
+                      : modelStatus === 'downloading'
+                        ? 'Downloading model...'
+                        : 'Preparing...'}
               </span>
             </div>
           </div>
@@ -1012,8 +1156,30 @@ function MainApp(): React.JSX.Element {
 
       {/* Main content */}
       <main className="max-w-4xl mx-auto px-6 py-8 flex flex-col gap-6">
+        {/* Model download progress */}
+        {state.backendReady && modelStatus !== 'ready' && (
+          <div className="bg-surface/50 border border-border-strong rounded-xl p-6 text-center">
+            <p className="text-sm font-medium text-text-secondary mb-2">
+              {modelDownloadMessage || 'Preparing AI model...'}
+            </p>
+            {modelStatus === 'downloading' && modelDownloadProgress > 0 && (
+              <div className="w-full bg-muted rounded-full h-2 mb-2">
+                <div
+                  className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${modelDownloadProgress}%` }}
+                />
+              </div>
+            )}
+            <p className="text-xs text-text-tertiary">
+              {modelStatus === 'downloading'
+                ? 'This only happens once — the model is cached for future use'
+                : 'Almost ready...'}
+            </p>
+          </div>
+        )}
+
         {/* File upload */}
-        <FileUpload onFilesSelected={handleFilesSelected} disabled={!state.backendReady} />
+        <FileUpload onFilesSelected={handleFilesSelected} disabled={!state.backendReady || modelStatus !== 'ready'} />
 
         {/* Queue list */}
         {state.songs.length > 0 && (
@@ -1068,6 +1234,16 @@ function MainApp(): React.JSX.Element {
 
       {/* Help modal */}
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
+
+      {/* Custom word list modal */}
+      {showCustomWords && (
+        <CustomWordList
+          words={state.customProfanityWords}
+          onAddWord={(word) => dispatch({ type: 'ADD_CUSTOM_WORD', word })}
+          onRemoveWord={(word) => dispatch({ type: 'REMOVE_CUSTOM_WORD', word })}
+          onClose={() => setShowCustomWords(false)}
+        />
+      )}
 
       {/* Feedback modal */}
       <FeedbackModal isOpen={showFeedback} onClose={() => setShowFeedback(false)} />

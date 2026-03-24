@@ -69,21 +69,30 @@ def _clean_genius_lyrics(raw: str) -> str:
 
 
 def _clean_search_title(title: str) -> str:
-    """Strip version/edit suffixes that confuse lyrics APIs.
+    """Strip version/edit suffixes and production credits that confuse lyrics APIs.
 
     Handles both simple tags like (remix) and named variants like
     (Red Sip Remix), (DJ Snake Edit), (Cheyenne Giles Remix).
+    Also strips [Shot By ...], [Prod By ...], [Official Video], etc.
     """
+    # Strip all bracketed tags [anything] — these are almost never part of the song title
+    cleaned = re.sub(r'\s*\[[^\]]*\]', '', title)
+
+    # Strip version/edit suffixes in parentheses
     cleaned = re.sub(
-        r'\s*[\(\[]'
-        r'(?:[^)\]]*?\s)?'  # optional prefix words (e.g., "Red Sip ", "DJ Snake ")
+        r'\s*\('
+        r'(?:[^)]*?\s)?'  # optional prefix words (e.g., "Red Sip ", "DJ Snake ")
         r'(?:intro|outro|edit|remix|deluxe|clean|dirty|explicit|radio|'
         r'extended|original|remaster|remastered|acoustic|live|demo|instrumental|version|'
-        r'skit|interlude|bonus|album|single)'
-        r'(?:\s*(?:edit|mix|version|cut))?'
-        r'\s*[\)\]]',
-        '', title, flags=re.IGNORECASE
-    ).strip()
+        r'skit|interlude|bonus|album|single|prod|shot)'
+        r'(?:\s*(?:edit|mix|version|cut|by)[^)]*)?'
+        r'\s*\)',
+        '', cleaned, flags=re.IGNORECASE
+    )
+
+    # Clean trailing dashes, spaces, and dots
+    cleaned = cleaned.strip(' -.')
+
     return cleaned or title
 
 
@@ -187,17 +196,19 @@ def _extract_first_artist(artist: str) -> str:
     cleaned = re.sub(r'\s*\([^)]*feat[\.\\s][^)]*\)', '', artist, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s*\([^)]*ft[\.\\s][^)]*\)', '', cleaned, flags=re.IGNORECASE)
 
-    # Split on common delimiters and take first part
+    # Split on common delimiters and take first part (case-insensitive)
+    lower = cleaned.lower()
     for delimiter in [',', ' & ', ' and ', ' ft.', ' ft ', ' feat.', ' feat ', ' featuring ']:
-        if delimiter in cleaned:
-            first = cleaned.split(delimiter)[0].strip()
+        if delimiter in lower:
+            idx = lower.index(delimiter)
+            first = cleaned[:idx].strip()
             # Remove trailing parentheses if present
             first = first.rstrip('(').strip()
             return first
 
     first = cleaned
 
-    return first.strip()
+    return first.strip(' -.').strip()
 
 
 def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dict | None:

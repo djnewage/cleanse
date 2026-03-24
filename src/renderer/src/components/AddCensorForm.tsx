@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { TranscribedWord } from '../types'
 
 interface AddCensorFormProps {
@@ -8,6 +8,31 @@ interface AddCensorFormProps {
   onCancel: () => void
 }
 
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  const whole = Math.floor(s)
+  const tenths = Math.floor((s - whole) * 10)
+  return `${m}:${String(whole).padStart(2, '0')}.${tenths}`
+}
+
+function parseTimeStr(str: string): number | null {
+  const trimmed = str.trim()
+  // Accepts: "1:23.4", "1:23", "83.4", "83"
+  const colonMatch = trimmed.match(/^(\d+):(\d{1,2})(?:\.(\d))?$/)
+  if (colonMatch) {
+    const m = parseInt(colonMatch[1], 10)
+    const s = parseInt(colonMatch[2], 10)
+    const tenths = colonMatch[3] ? parseInt(colonMatch[3], 10) : 0
+    if (s >= 60) return null
+    return m * 60 + s + tenths / 10
+  }
+  // Plain number with optional decimal
+  const num = parseFloat(trimmed)
+  if (!isNaN(num) && num >= 0) return Math.round(num * 10) / 10
+  return null
+}
+
 export default function AddCensorForm({
   currentTime,
   duration,
@@ -15,36 +40,25 @@ export default function AddCensorForm({
   onCancel
 }: AddCensorFormProps): React.JSX.Element {
   const [wordText, setWordText] = useState('')
-  const [startMin, setStartMin] = useState('')
-  const [startSec, setStartSec] = useState('')
-  const [endMin, setEndMin] = useState('')
-  const [endSec, setEndSec] = useState('')
+  const [startStr, setStartStr] = useState('')
+  const [endStr, setEndStr] = useState('')
 
   useEffect(() => {
     const startTotal = Math.max(0, currentTime)
     const endTotal = Math.min(startTotal + 0.5, duration)
-    setStartMin(String(Math.floor(startTotal / 60)))
-    setStartSec(String(Math.floor(startTotal % 60)).padStart(2, '0'))
-    setEndMin(String(Math.floor(endTotal / 60)))
-    setEndSec(String(Math.ceil(endTotal % 60)).padStart(2, '0'))
+    setStartStr(formatTime(startTotal))
+    setEndStr(formatTime(endTotal))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const parseTime = (min: string, sec: string): number | null => {
-    const m = parseInt(min, 10)
-    const s = parseInt(sec, 10)
-    if (isNaN(m) || isNaN(s) || m < 0 || s < 0 || s >= 60) return null
-    return m * 60 + s
-  }
-
-  const startTime = parseTime(startMin, startSec)
-  const endTime = parseTime(endMin, endSec)
+  const startTime = parseTimeStr(startStr)
+  const endTime = parseTimeStr(endStr)
   const isValid =
     wordText.trim().length > 0 &&
     startTime !== null &&
     endTime !== null &&
     endTime > startTime &&
     startTime >= 0 &&
-    endTime <= duration
+    endTime <= duration + 0.5
 
   const handleConfirm = (): void => {
     if (!isValid || startTime === null || endTime === null) return
@@ -62,6 +76,14 @@ export default function AddCensorForm({
     if (e.key === 'Enter' && isValid) handleConfirm()
     if (e.key === 'Escape') onCancel()
   }
+
+  const useCurrentForStart = useCallback(() => {
+    setStartStr(formatTime(currentTime))
+  }, [currentTime])
+
+  const useCurrentForEnd = useCallback(() => {
+    setEndStr(formatTime(currentTime))
+  }, [currentTime])
 
   return (
     <div
@@ -92,45 +114,47 @@ export default function AddCensorForm({
           <label className="block text-xs text-text-tertiary mb-1">Start time</label>
           <div className="flex items-center gap-1">
             <input
-              type="number"
-              min="0"
-              value={startMin}
-              onChange={(e) => setStartMin(e.target.value)}
-              className="w-12 px-1.5 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary text-center focus:outline-none focus:border-blue-500"
+              type="text"
+              value={startStr}
+              onChange={(e) => setStartStr(e.target.value)}
+              placeholder="0:00.0"
+              className="flex-1 px-2 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary font-mono text-center focus:outline-none focus:border-blue-500"
             />
-            <span className="text-text-tertiary text-sm">:</span>
-            <input
-              type="number"
-              min="0"
-              max="59"
-              value={startSec}
-              onChange={(e) => setStartSec(e.target.value)}
-              className="w-12 px-1.5 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary text-center focus:outline-none focus:border-blue-500"
-            />
+            <button
+              type="button"
+              onClick={useCurrentForStart}
+              title="Use current playback position"
+              className="px-1.5 py-1.5 bg-surface border border-border-strong rounded text-text-tertiary hover:text-blue-400 hover:border-blue-500 transition-colors text-sm"
+            >
+              &#9201;
+            </button>
           </div>
         </div>
         <div className="flex-1">
           <label className="block text-xs text-text-tertiary mb-1">End time</label>
           <div className="flex items-center gap-1">
             <input
-              type="number"
-              min="0"
-              value={endMin}
-              onChange={(e) => setEndMin(e.target.value)}
-              className="w-12 px-1.5 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary text-center focus:outline-none focus:border-blue-500"
+              type="text"
+              value={endStr}
+              onChange={(e) => setEndStr(e.target.value)}
+              placeholder="0:00.0"
+              className="flex-1 px-2 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary font-mono text-center focus:outline-none focus:border-blue-500"
             />
-            <span className="text-text-tertiary text-sm">:</span>
-            <input
-              type="number"
-              min="0"
-              max="59"
-              value={endSec}
-              onChange={(e) => setEndSec(e.target.value)}
-              className="w-12 px-1.5 py-1.5 bg-surface border border-border-strong rounded text-sm text-text-primary text-center focus:outline-none focus:border-blue-500"
-            />
+            <button
+              type="button"
+              onClick={useCurrentForEnd}
+              title="Use current playback position"
+              className="px-1.5 py-1.5 bg-surface border border-border-strong rounded text-text-tertiary hover:text-blue-400 hover:border-blue-500 transition-colors text-sm"
+            >
+              &#9201;
+            </button>
           </div>
         </div>
       </div>
+
+      <p className="text-[10px] text-text-disabled">
+        Pause playback at the word, then click the clock buttons to set times
+      </p>
 
       <div className="flex gap-2 justify-end">
         <button

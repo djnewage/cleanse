@@ -18,6 +18,7 @@ export type ProgressCallback = (data: {
 
 let progressCallback: ProgressCallback | null = null
 let transcriptionProgressCallback: ProgressCallback | null = null
+let modelDownloadProgressCallback: ProgressCallback | null = null
 
 export function setProgressCallback(cb: ProgressCallback | null): void {
   progressCallback = cb
@@ -25,6 +26,10 @@ export function setProgressCallback(cb: ProgressCallback | null): void {
 
 export function setTranscriptionProgressCallback(cb: ProgressCallback | null): void {
   transcriptionProgressCallback = cb
+}
+
+export function setModelDownloadProgressCallback(cb: ProgressCallback | null): void {
+  modelDownloadProgressCallback = cb
 }
 
 function initLogFile(): void {
@@ -134,6 +139,14 @@ export async function startPythonBackend(): Promise<number> {
         }
         if (parsed.type === 'transcription-progress' && transcriptionProgressCallback) {
           transcriptionProgressCallback({
+            step: parsed.step,
+            progress: parsed.progress,
+            message: parsed.message
+          })
+          continue
+        }
+        if (parsed.type === 'model-download-progress' && modelDownloadProgressCallback) {
+          modelDownloadProgressCallback({
             step: parsed.step,
             progress: parsed.progress,
             message: parsed.message

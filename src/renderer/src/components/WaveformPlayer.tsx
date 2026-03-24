@@ -11,10 +11,11 @@ interface WaveformPlayerProps {
 }
 
 function formatTime(seconds: number): string {
-  if (!isFinite(seconds) || seconds < 0) return '0:00'
+  if (!isFinite(seconds) || seconds < 0) return '0:00.0'
   const m = Math.floor(seconds / 60)
   const s = Math.floor(seconds % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
+  const tenths = Math.floor((seconds % 1) * 10)
+  return `${m}:${s.toString().padStart(2, '0')}.${tenths}`
 }
 
 /** Extract the file path from a media:// URL */

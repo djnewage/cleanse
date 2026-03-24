@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from transcribe import transcribe_audio
+from transcribe import transcribe_audio, warmup_model
 from profanity_detector import flag_profanity
 from audio_processor import censor_audio, censor_audio_vocals_only
 from vocal_separator import separate as separate_vocals
@@ -156,6 +156,15 @@ async def health():
     return {"status": "ok"}
 
 
+@app.post("/warmup")
+async def warmup():
+    """Pre-download and load the transcription model with progress reporting."""
+    return StreamingResponse(
+        _streaming_heartbeat_wrapper(warmup_model),
+        media_type="application/x-ndjson",
+    )
+
+
 @app.get("/device-info")
 async def device_info():
     return detect_device()
@@ -252,6 +261,27 @@ async def transcribe(req: TranscribeRequest):
 
     dual_pass = req.dual_pass and req.vocals_path and os.path.isfile(req.vocals_path)
 
+    def _strip_intro_hallucinations(words: list[dict], min_confidence: float = 0.5) -> list[dict]:
+        """Remove low-confidence words from the start that are likely
+        Whisper hallucinations during an instrumental intro."""
+        first_confident_idx = 0
+        for i, w in enumerate(words):
+            if w.get("confidence", 0) >= min_confidence:
+                first_confident_idx = i
+                break
+        else:
+            return words  # No confident words at all, keep everything
+
+        if first_confident_idx >= 3:
+            stripped = words[first_confident_idx:]
+            print(
+                f"[Pipeline] Stripped {first_confident_idx} intro hallucinations "
+                f"(first confident word at {stripped[0].get('start', 0):.1f}s: '{stripped[0].get('word', '')}')",
+                file=sys.stderr,
+            )
+            return stripped
+        return words
+
     def _do_transcribe():
         # Pass 1: Transcribe the full mix
         if dual_pass:
@@ -263,6 +293,7 @@ async def transcribe(req: TranscribeRequest):
             result = transcribe_audio(req.path, turbo=req.turbo, initial_prompt=req.lyrics)
 
         primary_words = flag_profanity(result["words"])
+        primary_words = _strip_intro_hallucinations(primary_words)
         detected_language = result["language"]
 
         # Pass 2: Transcribe isolated vocals (if available)

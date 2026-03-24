@@ -26,6 +26,7 @@ import {
   fetchBackendStreaming,
   setProgressCallback,
   setTranscriptionProgressCallback,
+  setModelDownloadProgressCallback,
   getDeviceInfo
 } from './python-bridge'
 import { getHistory, addHistoryEntry, deleteHistoryEntry } from './history-store'
@@ -132,6 +133,29 @@ ipcMain.handle('select-output-path', async (_event, defaultName: string) => {
 
 ipcMain.handle('get-backend-status', () => {
   return { ready: isBackendReady() }
+})
+
+ipcMain.handle('warmup-model', async () => {
+  try {
+    console.log('[IPC] warmup-model called')
+    setModelDownloadProgressCallback((data) => {
+      mainWindow?.webContents.send('model-download-progress', data)
+    })
+
+    const result = await fetchBackendStreaming<{ status: string }>('/warmup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    })
+
+    return result
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[IPC] warmup-model error:', msg)
+    throw new Error(`Model warmup failed: ${msg}`)
+  } finally {
+    setModelDownloadProgressCallback(null)
+  }
 })
 
 ipcMain.handle('get-audio-metadata', async (_event, filePath: string) => {
