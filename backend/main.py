@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import threading
+from urllib.parse import unquote
 
 # Required for PyInstaller: without this, multiprocessing child processes
 # re-execute main.py and crash on argparse (they receive internal args like
@@ -168,6 +169,7 @@ class FetchLyricsRequest(BaseModel):
 
 @app.post("/metadata")
 def metadata(req: MetadataRequest):
+    req.path = unquote(req.path)
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
     return extract_metadata(req.path)
@@ -185,12 +187,18 @@ def merge_word_lists(
     primary_words: list[dict],
     secondary_words: list[dict],
     overlap_threshold: float = 0.3,
+    import_all: bool = False,
 ) -> list[dict]:
-    """Merge two transcription word lists, importing new profanity detections from secondary."""
+    """Merge two transcription word lists, importing detections from secondary.
+
+    When import_all is False (default), only profanity from the secondary pass
+    is imported. When True, all non-overlapping words are imported — used when
+    the primary pass produced very few words (sparse transcription).
+    """
     merged = [w.copy() for w in primary_words]
 
     for sec_word in secondary_words:
-        if not sec_word.get("is_profanity"):
+        if not import_all and not sec_word.get("is_profanity"):
             continue  # Only import profanity detections from vocals pass
 
         is_duplicate = False
@@ -198,14 +206,18 @@ def merge_word_lists(
             # Check temporal overlap
             overlap = min(sec_word["end"], pri_word["end"]) - max(sec_word["start"], pri_word["start"])
             if overlap > 0:
-                # Only absorb as duplicate if the words match or primary is already profanity
-                if (sec_word["word"].lower().strip() == pri_word["word"].lower().strip()
-                        or pri_word.get("is_profanity")):
-                    merged[i]["is_profanity"] = True
-                    merged[i]["detection_source"] = "vocals"
-                    # Use vocals-pass timestamps since censoring targets the vocals file
-                    merged[i]["start"] = sec_word["start"]
-                    merged[i]["end"] = sec_word["end"]
+                if sec_word.get("is_profanity"):
+                    # Only absorb as duplicate if the words match or primary is already profanity
+                    if (sec_word["word"].lower().strip() == pri_word["word"].lower().strip()
+                            or pri_word.get("is_profanity")):
+                        merged[i]["is_profanity"] = True
+                        merged[i]["detection_source"] = "vocals"
+                        merged[i]["start"] = sec_word["start"]
+                        merged[i]["end"] = sec_word["end"]
+                        is_duplicate = True
+                        break
+                else:
+                    # Non-profane word overlaps with existing — skip it
                     is_duplicate = True
                     break
             # Check near-miss with same word text
@@ -214,16 +226,17 @@ def merge_word_lists(
                 abs(pri_word["start"] - sec_word["end"]),
             )
             if gap < overlap_threshold and sec_word["word"].lower() == pri_word["word"].lower():
-                merged[i]["is_profanity"] = True
-                merged[i]["detection_source"] = "vocals"
-                # Use vocals-pass timestamps since censoring targets the vocals file
-                merged[i]["start"] = sec_word["start"]
-                merged[i]["end"] = sec_word["end"]
+                if sec_word.get("is_profanity"):
+                    merged[i]["is_profanity"] = True
+                    merged[i]["detection_source"] = "vocals"
+                    merged[i]["start"] = sec_word["start"]
+                    merged[i]["end"] = sec_word["end"]
                 is_duplicate = True
                 break
 
         if not is_duplicate:
-            merged.append({**sec_word, "detection_source": "adlib"})
+            source = "adlib" if sec_word.get("is_profanity") else "vocals_fill"
+            merged.append({**sec_word, "detection_source": source})
 
     merged.sort(key=lambda w: w["start"])
     return merged
@@ -231,6 +244,9 @@ def merge_word_lists(
 
 @app.post("/transcribe")
 async def transcribe(req: TranscribeRequest):
+    req.path = unquote(req.path)
+    if req.vocals_path:
+        req.vocals_path = unquote(req.vocals_path)
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
@@ -263,14 +279,20 @@ async def transcribe(req: TranscribeRequest):
             secondary_words = flag_profanity(vocals_result["words"])
             raw_count = len(secondary_words)
             raw_profanity = sum(1 for w in secondary_words if w.get("is_profanity"))
-            secondary_words = [w for w in secondary_words if w.get("confidence", 1.0) >= 0.3]
+            secondary_words = [w for w in secondary_words if w.get("confidence", 1.0) >= 0.15]
+            # If the primary pass produced very few words relative to audio
+            # duration, import ALL vocals-pass words (not just profanity) to
+            # fill in the missing lyrics.
+            word_density = len(primary_words) / max(result["duration"], 1.0)
+            sparse = word_density < 0.5
             print(
                 f"[Dual-Pass] Vocals pass: {len(vocals_result['words'])} words, "
                 f"{raw_profanity} profanity, "
-                f"{len(secondary_words)} after confidence filter (removed {raw_count - len(secondary_words)})",
+                f"{len(secondary_words)} after confidence filter (removed {raw_count - len(secondary_words)})"
+                f"{' — PRIMARY SPARSE, importing all vocals words' if sparse else ''}",
                 file=sys.stderr,
             )
-            final_words = merge_word_lists(primary_words, secondary_words)
+            final_words = merge_word_lists(primary_words, secondary_words, import_all=sparse)
         else:
             final_words = primary_words
 
@@ -337,6 +359,7 @@ async def transcribe(req: TranscribeRequest):
 
 @app.post("/separate")
 async def separate(req: SeparateRequest):
+    req.path = unquote(req.path)
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
@@ -350,6 +373,11 @@ async def separate(req: SeparateRequest):
 @app.post("/preview")
 def preview(req: CensorRequest):
     """Generate temporary censored preview for reviewing before export."""
+    req.path = unquote(req.path)
+    if req.vocals_path:
+        req.vocals_path = unquote(req.vocals_path)
+    if req.accompaniment_path:
+        req.accompaniment_path = unquote(req.accompaniment_path)
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 
@@ -392,6 +420,11 @@ def preview(req: CensorRequest):
 
 @app.post("/censor")
 def censor(req: CensorRequest):
+    req.path = unquote(req.path)
+    if req.vocals_path:
+        req.vocals_path = unquote(req.vocals_path)
+    if req.accompaniment_path:
+        req.accompaniment_path = unquote(req.accompaniment_path)
     if not os.path.isfile(req.path):
         raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
 

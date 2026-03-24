@@ -148,10 +148,10 @@ def get_model(turbo: bool = False):
 
     # TODO: Make model size configurable via UI settings
     print(
-        f"[Transcribe] Loading faster-whisper 'medium' model (device={device}, compute={compute_type}, turbo={turbo})...",
+        f"[Transcribe] Loading faster-whisper 'large-v3' model (device={device}, compute={compute_type}, turbo={turbo})...",
         file=sys.stderr,
     )
-    _model = WhisperModel("medium", device=device, compute_type=compute_type)
+    _model = WhisperModel("large-v3", device=device, compute_type=compute_type)
     _model_turbo = turbo
     print("[Transcribe] Model loaded.", file=sys.stderr)
     return _model
@@ -208,6 +208,8 @@ def transcribe_audio(
         word_timestamps=True,
         language=language,
         initial_prompt=initial_prompt,
+        no_speech_threshold=0.8,
+        compression_ratio_threshold=2.8,
     )
     if sensitive_mode:
         transcribe_kwargs["no_speech_threshold"] = 0.9

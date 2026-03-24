@@ -846,7 +846,8 @@ function MainApp(): React.JSX.Element {
           word: w.word,
           start: w.start,
           end: w.end,
-          censor_type: w.censor_type ?? song.defaultCensorType
+          censor_type: w.censor_type ?? song.defaultCensorType,
+          detection_source: w.detection_source
         }))
 
         const baseName = song.fileName
