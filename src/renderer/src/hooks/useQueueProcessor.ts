@@ -30,6 +30,7 @@ export function useQueueProcessor({
 }: UseQueueProcessorProps) {
   const isProcessingRef = useRef(false)
   const startedIdsRef = useRef(new Set<string>())
+  const cancelledIdsRef = useRef(new Set<string>())
 
   // Subscribe to separation progress for the currently processing song
   useEffect(() => {
@@ -53,6 +54,22 @@ export function useQueueProcessor({
     return unsubscribe
   }, [currentlyProcessingId, dispatch])
 
+  // Check if a song was cancelled (uses ref to avoid stale closures)
+  const isCancelled = useCallback(
+    (songId: string): boolean => {
+      return cancelledIdsRef.current.has(songId)
+    },
+    []
+  )
+
+  // Cancel a song — called from outside via the returned function
+  const cancelSong = useCallback(
+    (songId: string) => {
+      cancelledIdsRef.current.add(songId)
+    },
+    []
+  )
+
   // Process a single song (fetch lyrics, separate vocals, then dual-pass transcription)
   const processSong = useCallback(
     async (songId: string) => {
@@ -60,40 +77,43 @@ export function useQueueProcessor({
       if (!song) return
 
       try {
-        // Step 1: Fetch lyrics (if metadata available, fast ~1s)
+        // Step 1 + 2: Fetch lyrics AND separate vocals in parallel
+        // Lyrics fetch is network I/O while separation is CPU/GPU — no conflict
         let plainLyrics: string | undefined
         let syncedLyrics: string | undefined
 
-        if (song.metadata?.artist && song.metadata?.title) {
-          dispatch({ type: 'START_FETCHING_LYRICS', id: songId })
-          try {
-            const lyricsResult = await window.electronAPI.fetchLyrics(
+        const lyricsPromise = (song.metadata?.artist && song.metadata?.title)
+          ? window.electronAPI.fetchLyrics(
               song.metadata.artist,
               song.metadata.title,
               song.metadata.duration ?? undefined
-            )
-            if (lyricsResult.plain_lyrics || lyricsResult.synced_lyrics) {
-              plainLyrics = lyricsResult.plain_lyrics ?? undefined
-              syncedLyrics = lyricsResult.synced_lyrics ?? undefined
-              dispatch({
-                type: 'SET_SONG_LYRICS',
-                id: songId,
-                lyrics: {
-                  plain: lyricsResult.plain_lyrics,
-                  synced: lyricsResult.synced_lyrics,
-                  source: (lyricsResult.lyrics_source as 'genius' | 'lrclib' | null) ?? null
-                }
-              })
-              logLyricsFetched()
-            }
-          } catch {
-            // Lyrics fetch is best-effort, continue without
-          }
-        }
+            ).then((result) => {
+              if (result.plain_lyrics || result.synced_lyrics) {
+                plainLyrics = result.plain_lyrics ?? undefined
+                syncedLyrics = result.synced_lyrics ?? undefined
+                dispatch({
+                  type: 'SET_SONG_LYRICS',
+                  id: songId,
+                  lyrics: {
+                    plain: result.plain_lyrics,
+                    synced: result.synced_lyrics,
+                    source: (result.lyrics_source as 'genius' | 'lrclib' | null) ?? null
+                  }
+                })
+                logLyricsFetched()
+              }
+            }).catch(() => { /* best-effort */ })
+          : Promise.resolve()
 
-        // Step 2: Vocal Separation
         dispatch({ type: 'START_SEPARATING', id: songId })
-        const separationResult = await window.electronAPI.separateAudio(song.filePath, turboEnabled)
+        const [separationResult] = await Promise.all([
+          window.electronAPI.separateAudio(song.filePath, turboEnabled),
+          lyricsPromise
+        ])
+
+        // Check if cancelled before transcription
+        if (isCancelled(songId)) return
+
         dispatch({
           type: 'SEPARATION_COMPLETE',
           id: songId,
@@ -112,6 +132,10 @@ export function useQueueProcessor({
           syncedLyrics,
           dualPassEnabled
         )
+
+        // Check if cancelled before applying results
+        if (isCancelled(songId)) return
+
         dispatch({
           type: 'TRANSCRIPTION_COMPLETE',
           id: songId,
@@ -125,16 +149,21 @@ export function useQueueProcessor({
         dispatch({ type: 'SET_SONG_READY', id: songId })
         onSongReady?.()
       } catch (err) {
+        // Ignore errors for cancelled songs
+        if (isCancelled(songId)) return
         Sentry.captureException(err)
         const message = err instanceof Error ? err.message : String(err)
         if (message.includes('Separation')) logSeparationFailed()
         else logTranscriptionFailed()
         dispatch({ type: 'SET_SONG_ERROR', id: songId, message })
       } finally {
-        dispatch({ type: 'PROCESSING_COMPLETE', id: songId })
+        cancelledIdsRef.current.delete(songId)
+        if (!isCancelled(songId)) {
+          dispatch({ type: 'PROCESSING_COMPLETE', id: songId })
+        }
       }
     },
-    [songs, turboEnabled, dualPassEnabled, dispatch]
+    [songs, turboEnabled, dualPassEnabled, dispatch, isCancelled]
   )
 
   // Watch the queue and process songs sequentially
@@ -179,5 +208,5 @@ export function useQueueProcessor({
     [dispatch]
   )
 
-  return { retrySong }
+  return { retrySong, cancelSong }
 }

@@ -115,6 +115,15 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
               {isSubscribed ? 'Manage subscription' : 'Upgrade to Pro'}
             </button>
             <button
+              onClick={() => {
+                setIsOpen(false)
+                window.electronAPI.checkForUpdates()
+              }}
+              className="w-full text-left px-4 py-2 text-sm text-text-secondary hover:bg-muted transition-colors"
+            >
+              Check for updates
+            </button>
+            <button
               onClick={handleSignOut}
               className="w-full text-left px-4 py-2 text-sm text-text-secondary hover:bg-muted hover:text-text-secondary transition-colors"
             >

@@ -436,6 +436,16 @@ ipcMain.handle('install-update', () => {
   autoUpdater.quitAndInstall()
 })
 
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    const result = await autoUpdater.checkForUpdates()
+    return { updateAvailable: !!result?.updateInfo }
+  } catch (err) {
+    log.error('[AutoUpdater] Manual check failed:', err)
+    return { updateAvailable: false }
+  }
+})
+
 // --- App Lifecycle ---
 
 function getAudioMimeType(filePath: string): string {

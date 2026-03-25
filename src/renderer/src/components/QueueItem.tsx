@@ -7,6 +7,8 @@ interface QueueItemProps {
   onToggleExpand: () => void
   onRemove: () => void
   onRetry: () => void
+  onCancel: () => void
+  onExport: () => void
 }
 
 function getStatusBadge(status: SongStatus, errorMessage: string | null) {
@@ -45,7 +47,9 @@ export default function QueueItem({
   globalCensorType,
   onToggleExpand,
   onRemove,
-  onRetry
+  onRetry,
+  onCancel,
+  onExport
 }: QueueItemProps): React.JSX.Element {
   const isProcessing = song.status === 'transcribing' || song.status === 'transcribing_vocals' || song.status === 'separating' || song.status === 'exporting' || song.status === 'fetching_lyrics'
   const canExpand = song.status === 'ready' || song.status === 'completed' || song.status === 'error'
@@ -112,6 +116,17 @@ export default function QueueItem({
 
         {/* Actions */}
         <div className="flex items-center gap-2">
+          {(song.status === 'ready' || song.status === 'completed') && song.words.some((w) => w.is_profanity) && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onExport()
+              }}
+              className="px-2 py-1 text-xs bg-blue-600 text-white hover:bg-blue-500 rounded font-medium transition-colors"
+            >
+              Export
+            </button>
+          )}
           {song.status === 'error' && (
             <button
               onClick={(e) => {
@@ -123,7 +138,18 @@ export default function QueueItem({
               Retry
             </button>
           )}
-          {!isProcessing && (
+          {isProcessing ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onCancel()
+              }}
+              className="px-2 py-1 text-xs text-text-tertiary hover:text-red-400 transition-colors"
+              title="Cancel processing"
+            >
+              Cancel
+            </button>
+          ) : (
             <button
               onClick={(e) => {
                 e.stopPropagation()

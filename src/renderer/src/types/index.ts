@@ -132,6 +132,7 @@ export type BatchAppAction =
   | { type: 'EXPORT_ALL_PROGRESS'; completed: number }
   | { type: 'EXPORT_ALL_COMPLETE' }
   | { type: 'RETRY_SONG'; id: string }
+  | { type: 'CANCEL_SONG'; id: string }
   | { type: 'PROCESSING_COMPLETE'; id: string }
   | { type: 'SET_HISTORY'; history: HistoryEntry[] }
   | { type: 'ADD_HISTORY_ENTRY'; entry: HistoryEntry }

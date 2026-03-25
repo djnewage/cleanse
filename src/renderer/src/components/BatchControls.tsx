@@ -41,7 +41,7 @@ export default function BatchControls({
   disabled
 }: BatchControlsProps): React.JSX.Element {
   const exportableCount = readyCount + completedCount
-  const canExport = exportableCount > 0 && !isExporting && !disabled
+  const canExport = exportableCount > 0 && !isExporting
 
   return (
     <div className="flex flex-col gap-3 bg-surface/50 rounded-lg p-4 border border-border">

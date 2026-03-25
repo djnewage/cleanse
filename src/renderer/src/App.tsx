@@ -461,6 +461,23 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
       }
     }
 
+    case 'CANCEL_SONG': {
+      const song = state.songs.find((s) => s.id === action.id)
+      if (!song) return state
+      const processingStatuses = ['fetching_lyrics', 'separating', 'transcribing', 'transcribing_vocals']
+      if (!processingStatuses.includes(song.status as string)) return state
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id
+            ? { ...s, status: 'pending' as const, errorMessage: null, words: [], vocalsPath: null, accompanimentPath: null, transcriptionProgress: null, separationProgress: null, lyrics: null }
+            : s
+        ),
+        currentlyProcessingId: null,
+        processingQueue: state.processingQueue.filter((id) => id !== action.id)
+      }
+    }
+
     case 'SET_HISTORY':
       return { ...state, history: action.history }
 
@@ -562,7 +579,7 @@ function MainApp(): React.JSX.Element {
   }, [state.expandedSongId, state.songs])
 
   // Use the queue processor hook
-  const { retrySong } = useQueueProcessor({
+  const { retrySong, cancelSong } = useQueueProcessor({
     songs: state.songs,
     currentlyProcessingId: state.currentlyProcessingId,
     processingQueue: state.processingQueue,
@@ -903,6 +920,69 @@ function MainApp(): React.JSX.Element {
     })
   }, [])
 
+  // Export a single song
+  const handleExportSong = useCallback(async (songId: string) => {
+    const song = state.songs.find((s) => s.id === songId)
+    if (!song || (song.status !== 'ready' && song.status !== 'completed')) return
+
+    const usageInfo = await checkCanProcess()
+    if (!usageInfo.canProcess) {
+      setShowPaywall(true)
+      return
+    }
+
+    const profaneWords = song.words.filter((w) => w.is_profanity)
+    if (profaneWords.length === 0) return
+
+    const censorWords: CensorWord[] = profaneWords.map((w) => ({
+      word: w.word,
+      start: w.start,
+      end: w.end,
+      censor_type: w.censor_type ?? song.defaultCensorType,
+      detection_source: w.detection_source
+    }))
+
+    const baseName = song.fileName
+    const ext = baseName.split('.').pop() || 'mp3'
+    const cleanName = baseName.replace(`.${ext}`, `_clean.${ext}`)
+
+    const outputPath = await window.electronAPI.selectOutputPath(cleanName)
+    if (!outputPath) return
+
+    dispatch({ type: 'START_EXPORT', id: song.id })
+
+    try {
+      const result = await window.electronAPI.censorAudio(
+        song.filePath,
+        censorWords,
+        outputPath,
+        song.vocalsPath ?? undefined,
+        song.accompanimentPath ?? undefined,
+        state.crossfadeMs,
+        state.paddingMs,
+        state.paddingMs
+      )
+      dispatch({ type: 'EXPORT_COMPLETE', id: song.id, outputPath: result.output_path })
+
+      await recordUsage()
+
+      const profanityCount = profaneWords.length
+      await window.electronAPI.addHistoryEntry({
+        originalFileName: song.fileName,
+        originalFilePath: song.filePath,
+        censoredFilePath: result.output_path,
+        dateCreated: Date.now(),
+        wordCount: song.words.length,
+        profanityCount,
+        duration: song.duration,
+        language: song.language
+      })
+    } catch (err) {
+      console.error('Export failed:', err)
+      dispatch({ type: 'SET_SONG_ERROR', id: song.id, message: err instanceof Error ? err.message : String(err) })
+    }
+  }, [state.songs, state.crossfadeMs, state.paddingMs, checkCanProcess, recordUsage])
+
   // Export all ready songs with paywall check
   const handleExportAll = useCallback(async () => {
     if (exportingRef.current) return
@@ -1191,6 +1271,8 @@ function MainApp(): React.JSX.Element {
               onToggleExpand={handleToggleExpand}
               onRemoveSong={handleRemoveSong}
               onRetrySong={retrySong}
+              onCancelSong={(id) => { cancelSong(id); dispatch({ type: 'CANCEL_SONG', id }) }}
+              onExportSong={handleExportSong}
               renderDetailPanel={(song) => (
                 <SongDetailPanel
                   song={song}

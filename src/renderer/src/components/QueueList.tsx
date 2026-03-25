@@ -9,6 +9,8 @@ interface QueueListProps {
   onToggleExpand: (id: string) => void
   onRemoveSong: (id: string) => void
   onRetrySong: (id: string) => void
+  onCancelSong: (id: string) => void
+  onExportSong: (id: string) => void
   renderDetailPanel?: (song: SongEntry) => React.ReactNode
 }
 
@@ -19,6 +21,8 @@ export default function QueueList({
   onToggleExpand,
   onRemoveSong,
   onRetrySong,
+  onCancelSong,
+  onExportSong,
   renderDetailPanel
 }: QueueListProps): React.JSX.Element {
   if (songs.length === 0) {
@@ -56,6 +60,8 @@ export default function QueueList({
               onToggleExpand={() => onToggleExpand(song.id)}
               onRemove={() => onRemoveSong(song.id)}
               onRetry={() => onRetrySong(song.id)}
+              onCancel={() => onCancelSong(song.id)}
+              onExport={() => onExportSong(song.id)}
             />
             {expandedSongId === song.id && renderDetailPanel?.(song)}
           </React.Fragment>
