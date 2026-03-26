@@ -20,6 +20,7 @@ asarUnpack:
   - resources/**
 afterSign: scripts/notarize.js
 mac:
+  minimumSystemVersion: "13.3"
   target:
     - target: dmg
   hardenedRuntime: true
