@@ -28,7 +28,7 @@ if gh release view "$TAG" &>/dev/null; then
 fi
 
 # Clean previous dist
-rm -f dist/*.dmg
+rm -f dist/*.dmg dist/latest-mac.yml
 
 # Build ARM64 (Apple Silicon)
 echo "=== Building ARM64 (Apple Silicon) ==="
@@ -51,6 +51,45 @@ echo "Artifacts to upload:"
 for f in $DMG_FILES; do
   echo "  $f ($(du -h "$f" | cut -f1))"
 done
+
+# Generate latest-mac.yml for electron-updater
+echo ""
+echo "Generating latest-mac.yml..."
+
+RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+
+cat > dist/latest-mac.yml << YMLEOF
+version: ${VERSION}
+files:
+YMLEOF
+
+for f in $DMG_FILES; do
+  FNAME=$(basename "$f")
+  FSIZE=$(stat -f%z "$f")
+  FSHA512=$(shasum -a 512 "$f" | awk '{print $1}' | xxd -r -p | base64)
+  cat >> dist/latest-mac.yml << YMLEOF
+  - url: ${FNAME}
+    sha512: ${FSHA512}
+    size: ${FSIZE}
+YMLEOF
+done
+
+# Use the arm64 DMG as the default path
+ARM64_DMG=$(ls dist/*-${VERSION}-arm64.dmg 2>/dev/null | head -1)
+if [ -n "$ARM64_DMG" ]; then
+  ARM64_SHA=$(shasum -a 512 "$ARM64_DMG" | awk '{print $1}' | xxd -r -p | base64)
+  cat >> dist/latest-mac.yml << YMLEOF
+path: $(basename "$ARM64_DMG")
+sha512: ${ARM64_SHA}
+YMLEOF
+fi
+
+cat >> dist/latest-mac.yml << YMLEOF
+releaseDate: '${RELEASE_DATE}'
+YMLEOF
+
+echo "Generated dist/latest-mac.yml"
+cat dist/latest-mac.yml
 echo ""
 
 # Create the release
@@ -58,7 +97,7 @@ echo "Creating GitHub release $TAG..."
 gh release create "$TAG" \
   --title "$TAG" \
   --generate-notes \
-  $DMG_FILES
+  $DMG_FILES dist/latest-mac.yml
 
 echo ""
 echo "Release $TAG published!"

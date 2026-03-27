@@ -423,8 +423,14 @@ function setupAutoUpdater(): void {
     })
   })
 
+  autoUpdater.on('update-not-available', () => {
+    log.info('[AutoUpdater] No update available')
+    mainWindow?.webContents.send('update-not-available')
+  })
+
   autoUpdater.on('error', (err) => {
     log.error('[AutoUpdater] Error:', err)
+    mainWindow?.webContents.send('update-error', err.message)
   })
 }
 

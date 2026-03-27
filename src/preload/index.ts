@@ -74,6 +74,8 @@ export interface ElectronAPI {
   onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void
   onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void
   checkForUpdates: () => Promise<{ updateAvailable: boolean }>
+  onUpdateNotAvailable: (callback: () => void) => () => void
+  onUpdateError: (callback: (message: string) => void) => () => void
   downloadUpdate: () => Promise<void>
   installUpdate: () => Promise<void>
   getPathForFile: (file: File) => string
@@ -255,6 +257,18 @@ const electronAPI: ElectronAPI = {
   },
 
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+
+  onUpdateNotAvailable: (callback: () => void) => {
+    const handler = (): void => { callback() }
+    ipcRenderer.on('update-not-available', handler)
+    return () => { ipcRenderer.removeListener('update-not-available', handler) }
+  },
+
+  onUpdateError: (callback: (message: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, message: string): void => { callback(message) }
+    ipcRenderer.on('update-error', handler)
+    return () => { ipcRenderer.removeListener('update-error', handler) }
+  },
 
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
 

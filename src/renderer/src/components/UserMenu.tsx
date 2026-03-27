@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 
 interface UserMenuProps {
@@ -8,6 +8,7 @@ interface UserMenuProps {
 export default function UserMenu({ onManageSubscription }: UserMenuProps): React.JSX.Element {
   const { userData, isSubscribed, songsRemaining, freeSongsLimit, signOut, openCustomerPortal } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'up-to-date' | 'error'>('idle')
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Close on click outside
@@ -24,6 +25,19 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
     return () => document.removeEventListener('mousedown', handleClick)
   }, [isOpen])
 
+  // Listen for update-not-available and error events
+  useEffect(() => {
+    const unsubNotAvailable = window.electronAPI.onUpdateNotAvailable(() => {
+      setUpdateStatus('up-to-date')
+      setTimeout(() => setUpdateStatus('idle'), 3000)
+    })
+    const unsubError = window.electronAPI.onUpdateError(() => {
+      setUpdateStatus('error')
+      setTimeout(() => setUpdateStatus('idle'), 3000)
+    })
+    return () => { unsubNotAvailable(); unsubError() }
+  }, [])
+
   const handleManageClick = async () => {
     setIsOpen(false)
     if (isSubscribed) {
@@ -33,10 +47,25 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
     }
   }
 
+  const handleCheckForUpdates = useCallback(() => {
+    setUpdateStatus('checking')
+    window.electronAPI.checkForUpdates()
+    // update-available event will trigger the UpdateModal in App.tsx
+    // update-not-available event will show "up to date" here
+  }, [])
+
   const handleSignOut = () => {
     setIsOpen(false)
     signOut()
   }
+
+  const updateLabel = updateStatus === 'checking'
+    ? 'Checking...'
+    : updateStatus === 'up-to-date'
+      ? 'You\'re up to date!'
+      : updateStatus === 'error'
+        ? 'Check failed'
+        : 'Check for updates'
 
   return (
     <div className="relative flex items-center" ref={menuRef}>
@@ -115,13 +144,19 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
               {isSubscribed ? 'Manage subscription' : 'Upgrade to Pro'}
             </button>
             <button
-              onClick={() => {
-                setIsOpen(false)
-                window.electronAPI.checkForUpdates()
-              }}
-              className="w-full text-left px-4 py-2 text-sm text-text-secondary hover:bg-muted transition-colors"
+              onClick={handleCheckForUpdates}
+              disabled={updateStatus === 'checking'}
+              className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                updateStatus === 'up-to-date'
+                  ? 'text-green-400'
+                  : updateStatus === 'error'
+                    ? 'text-red-400'
+                    : updateStatus === 'checking'
+                      ? 'text-text-disabled cursor-wait'
+                      : 'text-text-secondary hover:bg-muted'
+              }`}
             >
-              Check for updates
+              {updateLabel}
             </button>
             <button
               onClick={handleSignOut}
