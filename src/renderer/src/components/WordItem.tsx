@@ -80,7 +80,7 @@ function WordItemInner({
     } else {
       statusClasses = word.is_profanity
         ? 'bg-profanity-bg-played text-profanity-text-played ring-1 ring-profanity-ring-played'
-        : 'bg-sky-900/30 text-sky-300/50'
+        : 'bg-muted/60 text-text-disabled'
     }
   } else {
     // upcoming or undefined (no playback)
@@ -89,7 +89,7 @@ function WordItemInner({
     } else {
       statusClasses = word.is_profanity
         ? 'bg-profanity-bg text-profanity-text hover:bg-profanity-hover ring-1 ring-profanity-ring'
-        : 'bg-elevated/40 text-text-secondary hover:bg-muted/50'
+        : 'bg-muted/50 text-text-primary hover:bg-muted'
     }
   }
 

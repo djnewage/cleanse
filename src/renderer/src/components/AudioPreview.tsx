@@ -73,7 +73,7 @@ export default function AudioPreview({
       {secondaryPath && (
         <WaveformPlayer
           key={secondaryPath}
-          src={`media://${secondaryPath}`}
+          src={`media://${encodeURIComponent(secondaryPath)}`}
           label="Original"
           onPlay={handleSecondaryPlay}
           audioRef={secondaryRefCallback}
@@ -83,7 +83,7 @@ export default function AudioPreview({
       {primaryPath && (
         <WaveformPlayer
           key={primaryPath}
-          src={`media://${primaryPath}`}
+          src={`media://${encodeURIComponent(primaryPath)}`}
           label={censoredPath ? 'Censored Version' : 'Original'}
           labelColor={censoredPath ? 'text-green-400' : 'text-text-secondary'}
           onPlay={handlePrimaryPlay}
