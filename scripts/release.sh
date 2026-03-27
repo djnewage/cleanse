@@ -28,7 +28,7 @@ if gh release view "$TAG" &>/dev/null; then
 fi
 
 # Clean previous dist
-rm -f dist/*.dmg dist/latest-mac.yml
+rm -f dist/*.dmg dist/*.zip dist/latest-mac.yml
 
 # Build ARM64 (Apple Silicon)
 echo "=== Building ARM64 (Apple Silicon) ==="
@@ -41,18 +41,25 @@ npm run build:mac:x64
 
 # Find built artifacts
 DMG_FILES=$(ls dist/*-${VERSION}-*.dmg 2>/dev/null || true)
+ZIP_FILES=$(ls dist/*-${VERSION}-*.zip 2>/dev/null || true)
+
 if [ -z "$DMG_FILES" ]; then
   echo "Error: No .dmg files found in dist/"
   exit 1
 fi
 
+if [ -z "$ZIP_FILES" ]; then
+  echo "Error: No .zip files found in dist/"
+  exit 1
+fi
+
 echo ""
 echo "Artifacts to upload:"
-for f in $DMG_FILES; do
+for f in $DMG_FILES $ZIP_FILES; do
   echo "  $f ($(du -h "$f" | cut -f1))"
 done
 
-# Generate latest-mac.yml for electron-updater
+# Generate latest-mac.yml for electron-updater (uses ZIP files for auto-update)
 echo ""
 echo "Generating latest-mac.yml..."
 
@@ -63,7 +70,7 @@ version: ${VERSION}
 files:
 YMLEOF
 
-for f in $DMG_FILES; do
+for f in $ZIP_FILES; do
   FNAME=$(basename "$f")
   FSIZE=$(stat -f%z "$f")
   FSHA512=$(shasum -a 512 "$f" | awk '{print $1}' | xxd -r -p | base64)
@@ -74,12 +81,12 @@ for f in $DMG_FILES; do
 YMLEOF
 done
 
-# Use the arm64 DMG as the default path
-ARM64_DMG=$(ls dist/*-${VERSION}-arm64.dmg 2>/dev/null | head -1)
-if [ -n "$ARM64_DMG" ]; then
-  ARM64_SHA=$(shasum -a 512 "$ARM64_DMG" | awk '{print $1}' | xxd -r -p | base64)
+# Use the arm64 ZIP as the default path
+ARM64_ZIP=$(ls dist/*-${VERSION}-arm64.zip 2>/dev/null | head -1)
+if [ -n "$ARM64_ZIP" ]; then
+  ARM64_SHA=$(shasum -a 512 "$ARM64_ZIP" | awk '{print $1}' | xxd -r -p | base64)
   cat >> dist/latest-mac.yml << YMLEOF
-path: $(basename "$ARM64_DMG")
+path: $(basename "$ARM64_ZIP")
 sha512: ${ARM64_SHA}
 YMLEOF
 fi
@@ -92,12 +99,12 @@ echo "Generated dist/latest-mac.yml"
 cat dist/latest-mac.yml
 echo ""
 
-# Create the release
+# Create the release (upload DMGs for manual download + ZIPs for auto-update + metadata)
 echo "Creating GitHub release $TAG..."
 gh release create "$TAG" \
   --title "$TAG" \
   --generate-notes \
-  $DMG_FILES dist/latest-mac.yml
+  $DMG_FILES $ZIP_FILES dist/latest-mac.yml
 
 echo ""
 echo "Release $TAG published!"

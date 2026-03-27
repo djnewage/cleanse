@@ -23,6 +23,7 @@ mac:
   minimumSystemVersion: "13.3"
   target:
     - target: dmg
+    - target: zip
   hardenedRuntime: true
   gatekeeperAssess: false
   notarize: false
