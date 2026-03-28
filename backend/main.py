@@ -35,12 +35,19 @@ for _p in _extra_paths:
         _current_path = _p + os.pathsep + _current_path
 os.environ['PATH'] = _current_path
 
-# Find real ffprobe binary (pydub needs it for audio format detection)
+# Find ffprobe binary (pydub needs it for audio format detection)
 _ffprobe_path = shutil.which('ffprobe')
 if _ffprobe_path:
     AudioSegment.ffprobe = _ffprobe_path
 else:
-    print("[Warning] ffprobe not found on PATH — pydub audio loading may fail", file=sys.stderr)
+    # Fallback: use static-ffmpeg's bundled ffprobe
+    try:
+        import static_ffmpeg
+        _sf_ffmpeg, _sf_ffprobe = static_ffmpeg.run.get_or_fetch_platform_executables_else_raise()
+        AudioSegment.ffprobe = _sf_ffprobe
+        print(f"[Info] Using bundled ffprobe: {_sf_ffprobe}", file=sys.stderr)
+    except Exception as _e:
+        print(f"[Warning] ffprobe not found and static-ffmpeg fallback failed: {_e}", file=sys.stderr)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
