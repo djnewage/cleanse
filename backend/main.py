@@ -35,19 +35,110 @@ for _p in _extra_paths:
         _current_path = _p + os.pathsep + _current_path
 os.environ['PATH'] = _current_path
 
-# Find ffprobe binary (pydub needs it for audio format detection)
-_ffprobe_path = shutil.which('ffprobe')
-if _ffprobe_path:
-    AudioSegment.ffprobe = _ffprobe_path
-else:
-    # Fallback: use static-ffmpeg's bundled ffprobe
-    try:
-        import static_ffmpeg
-        _sf_ffmpeg, _sf_ffprobe = static_ffmpeg.run.get_or_fetch_platform_executables_else_raise()
-        AudioSegment.ffprobe = _sf_ffprobe
-        print(f"[Info] Using bundled ffprobe: {_sf_ffprobe}", file=sys.stderr)
-    except Exception as _e:
-        print(f"[Warning] ffprobe not found and static-ffmpeg fallback failed: {_e}", file=sys.stderr)
+# Pydub requires ffprobe for audio metadata, but it may not be installed.
+# If ffprobe is missing, monkey-patch pydub to probe via `ffmpeg -i` instead.
+if not shutil.which('ffprobe'):
+    import re as _re
+    from subprocess import Popen as _Popen, PIPE as _PIPE
+
+    _CHANNEL_MAP = {
+        "mono": 1, "stereo": 2, "2.1": 3,
+        "3.0": 3, "4.0": 4, "quad": 4, "5.0": 5,
+        "5.1": 6, "5.1(side)": 6, "5.1(back)": 6,
+        "6.1": 7, "7.1": 8, "7.1(wide)": 8,
+    }
+
+    def _ffmpeg_mediainfo_json(filepath, read_ahead_limit=-1):
+        """Probe audio metadata using ffmpeg -i (fallback when ffprobe is absent)."""
+        from pydub.utils import fsdecode
+        try:
+            path = fsdecode(filepath)
+        except TypeError:
+            path = "-"
+        proc = _Popen(
+            [ffmpeg_exe, "-i", path, "-hide_banner", "-f", "null", "-"],
+            stdout=_PIPE, stderr=_PIPE,
+        )
+        _, stderr_bytes = proc.communicate()
+        stderr = stderr_bytes.decode("utf-8", "ignore")
+
+        info = {"streams": [], "format": {}}
+
+        # Parse duration (bitrate may be absent for some formats)
+        dur_m = _re.search(
+            r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", stderr
+        )
+        if dur_m:
+            duration = int(dur_m.group(1)) * 3600 + int(dur_m.group(2)) * 60 + float(dur_m.group(3))
+            info["format"]["duration"] = str(duration)
+        br_m = _re.search(r"bitrate:\s*(\d+)\s*kb/s", stderr)
+        if br_m:
+            info["format"]["bit_rate"] = str(int(br_m.group(1)) * 1000)
+
+        # Parse first audio stream by capturing everything after "Audio:" to EOL,
+        # then splitting on ", " to get positional fields:
+        #   codec (extra), sample_rate Hz, layout, sample_fmt, bitrate kb/s
+        stream_m = _re.search(
+            r"Stream #(\d+):(\d+)[^:]*: Audio:\s*(.+)", stderr
+        )
+        if stream_m:
+            idx = int(stream_m.group(2))
+            parts = [p.strip() for p in stream_m.group(3).split(", ")]
+            # First part is always codec (may include parenthetical like "pcm_s16le ([1][0]...)")
+            codec = parts[0].split()[0].rstrip(",") if parts else "unknown"
+
+            sample_rate = "44100"
+            channels = 2
+            sample_fmt = ""
+            stream_bitrate = None
+
+            for part in parts[1:]:
+                if part.endswith("Hz"):
+                    sample_rate = _re.search(r"(\d+)\s*Hz", part).group(1)
+                elif part.endswith("kb/s"):
+                    m = _re.search(r"(\d+)\s*kb/s", part)
+                    if m:
+                        stream_bitrate = str(int(m.group(1)) * 1000)
+                elif part.lower() in _CHANNEL_MAP:
+                    channels = _CHANNEL_MAP[part.lower()]
+                elif _re.match(r"^[su]\d+p?$", part):
+                    # Integer sample format: s16, s32, u8, s16p, etc.
+                    sample_fmt = part
+                elif part in ("flt", "fltp", "dbl", "dblp"):
+                    sample_fmt = part
+                elif _re.match(r"^(mono|stereo)$", part, _re.IGNORECASE):
+                    channels = _CHANNEL_MAP[part.lower()]
+
+            # Extract bits_per_sample from sample_fmt
+            _FMT_BITS = {"flt": 32, "fltp": 32, "dbl": 64, "dblp": 64}
+            if sample_fmt in _FMT_BITS:
+                bits_per_sample = _FMT_BITS[sample_fmt]
+            else:
+                bits_m = _re.search(r"(\d+)", sample_fmt)
+                bits_per_sample = int(bits_m.group(1)) if bits_m else 0
+
+            stream = {
+                "index": idx,
+                "codec_type": "audio",
+                "codec_name": codec,
+                "sample_rate": sample_rate,
+                "channels": channels,
+                "bits_per_sample": bits_per_sample,
+                "bits_per_raw_sample": bits_per_sample,
+                "sample_fmt": sample_fmt,
+                "duration": info["format"].get("duration", "0"),
+            }
+            if stream_bitrate:
+                stream["bit_rate"] = stream_bitrate
+            info["streams"].append(stream)
+
+        return info
+
+    import pydub.utils
+    import pydub.audio_segment
+    pydub.utils.mediainfo_json = _ffmpeg_mediainfo_json
+    pydub.audio_segment.mediainfo_json = _ffmpeg_mediainfo_json
+    print(f"[Info] ffprobe not found — using ffmpeg-based probe fallback", file=sys.stderr)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

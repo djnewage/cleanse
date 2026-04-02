@@ -24,7 +24,6 @@ datas += collect_data_files('pydub')
 datas += collect_data_files('uvicorn')
 datas += collect_data_files('torchcodec')
 datas += collect_data_files('imageio_ffmpeg')
-datas += collect_data_files('static_ffmpeg')
 
 # Hidden imports that PyInstaller's static analysis misses
 hidden_imports = []
@@ -70,7 +69,6 @@ hidden_imports += [
     'dotenv',
     'yaml',
     'imageio_ffmpeg',
-    'static_ffmpeg',
 ]
 
 a = Analysis(
