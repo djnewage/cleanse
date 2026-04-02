@@ -675,6 +675,15 @@ function MainApp(): React.JSX.Element {
       } else if (Array.isArray(info.releaseNotes)) {
         notes = info.releaseNotes.map((n) => `${n.version}: ${n.note}`).join('\n')
       }
+      // Strip HTML tags and decode entities (electron-updater may return HTML)
+      notes = notes
+        .replace(/<[^>]*>/g, '')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .trim()
       setUpdateState({
         show: true,
         version: info.version,

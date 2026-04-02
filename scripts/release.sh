@@ -103,7 +103,7 @@ echo ""
 echo "Creating GitHub release $TAG..."
 gh release create "$TAG" \
   --title "$TAG" \
-  --generate-notes \
+  --notes "Bug fixes and improvements." \
   $DMG_FILES $ZIP_FILES dist/latest-mac.yml
 
 echo ""
