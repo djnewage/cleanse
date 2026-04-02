@@ -1,0 +1,179 @@
+# Spanish profanity for music context
+# Covers major regional variants: Mexico, Puerto Rico, Colombia,
+# Dominican Republic, Venezuela, Argentina, Chile, Cuba, Spain
+
+# Puta family
+puta
+putas
+puto
+putos
+putada
+putona
+puteria
+hijueputa
+jueputa
+hijodeputa
+hijaputa
+hijaeputa
+hijoeputa
+joputa
+
+# Puta madre (very common in music)
+putamadre
+
+# Mierda family
+mierda
+mierdas
+comemierda
+cagon
+cagona
+
+# Chingar family (Mexico - very common in music)
+chingar
+chinga
+chingada
+chingado
+chingados
+chingadera
+chingon
+chingona
+chingando
+
+# Cabron family
+cabron
+cabrones
+cabrona
+cabronas
+
+# Pendejo family
+pendejo
+pendejos
+pendeja
+pendejas
+
+# Verga family
+verga
+vergas
+vergon
+vergacion
+careverga
+
+# Culo family
+culo
+culos
+culero
+culera
+culear
+culiar
+culiao
+culiado
+culeado
+culeao
+lameculo
+lameculos
+
+# Cojon family
+cojon
+cojones
+cojudo
+
+# Huevon family
+huevon
+huevona
+huevonada
+huevada
+guevon
+guevona
+mamaguevo
+mamagueva
+ahuevado
+aguevado
+aweonao
+ahueonao
+
+# Concha/Cono family (female genitalia - Argentina/Caribbean/Spain)
+cono
+conazo
+concha
+conchetumadre
+conchatumare
+conchesumare
+chocha
+cuca
+panocha
+toto
+totona
+cajeta
+
+# Pinga/Pija family (male genitalia - Caribbean/Argentina)
+pinga
+pija
+picha
+polla
+monda
+caremonda
+bicho
+vicho
+choto
+
+# F*ck equivalents by region
+coger
+follar
+follada
+singar
+zingar
+chichar
+
+# Slurs
+maricon
+maricones
+marica
+marico
+mariconazo
+joto
+pato
+cacorro
+tortillera
+
+# Joder family (Spain)
+joder
+jodido
+jodida
+jodete
+jodiendo
+nojoda
+
+# Mamada family
+mamada
+mamadas
+mamon
+mamao
+mamavicho
+
+# Other insults
+malparido
+malparida
+gonorrea
+pinche
+carajo
+carajos
+ojete
+pelotudo
+pelotuda
+forro
+gilipollas
+capullo
+desgraciado
+desgraciada
+
+# Reggaeton/trap slang (commonly censored)
+bellaco
+bellaca
+bellaqueo
+bellaquear
+puneta
+arrecho
+arrecha
+cuero
+bichiyal
+tecato

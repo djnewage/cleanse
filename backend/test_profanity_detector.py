@@ -1,6 +1,6 @@
 """Tests for profanity_detector: _normalize_word and flag_profanity."""
 
-from profanity_detector import _normalize_word, flag_profanity
+from profanity_detector import _normalize_word, flag_profanity, COMPOUND_PROFANITY_ES
 
 
 class TestNormalizeWord:
@@ -151,3 +151,82 @@ class TestCompoundProfanity:
         assert result[1]["is_profanity"] is True
         assert result[2]["is_profanity"] is True
         assert result[3]["is_profanity"] is False
+
+
+class TestSpanishProfanity:
+    """Verify Spanish profanity words are detected."""
+
+    def _check(self, word):
+        words = [{"word": word, "start": 0.0, "end": 0.5, "confidence": 0.9}]
+        result = flag_profanity(words)
+        assert result[0]["is_profanity"] is True, f"'{word}' was not detected as profanity"
+
+    def test_puta(self):
+        self._check("puta")
+
+    def test_mierda(self):
+        self._check("mierda")
+
+    def test_chingada(self):
+        self._check("chingada")
+
+    def test_pendejo(self):
+        self._check("pendejo")
+
+    def test_cabron(self):
+        self._check("cabron")
+
+    def test_verga(self):
+        self._check("verga")
+
+    def test_pinche(self):
+        self._check("pinche")
+
+    def test_hijueputa(self):
+        self._check("hijueputa")
+
+    def test_carajo(self):
+        self._check("carajo")
+
+    def test_joder(self):
+        self._check("joder")
+
+
+class TestAccentNormalization:
+    """Verify accented characters are normalized for detection."""
+
+    def test_accent_stripped_in_variations(self):
+        variations = _normalize_word("cabrón")
+        assert "cabron" in variations
+
+    def test_n_tilde_stripped(self):
+        variations = _normalize_word("coño")
+        assert "cono" in variations
+
+    def test_cabron_with_accent_detected(self):
+        words = [{"word": "cabrón", "start": 0.0, "end": 0.5, "confidence": 0.9}]
+        result = flag_profanity(words)
+        assert result[0]["is_profanity"] is True
+
+
+class TestSpanishCompoundProfanity:
+    """Verify Spanish compound profanity detection."""
+
+    def _words(self, *texts):
+        return [{"word": t, "start": i * 0.5, "end": (i + 1) * 0.5, "confidence": 0.9} for i, t in enumerate(texts)]
+
+    def test_hijo_puta(self):
+        result = flag_profanity(self._words("hijo", "puta"), language="es")
+        assert result[0]["is_profanity"] is True
+        assert result[1]["is_profanity"] is True
+
+    def test_hija_puta(self):
+        result = flag_profanity(self._words("hija", "puta"), language="es")
+        assert result[0]["is_profanity"] is True
+        assert result[1]["is_profanity"] is True
+
+    def test_spanish_compound_not_flagged_without_language(self):
+        result = flag_profanity(self._words("hijo", "puta"))
+        # "puta" is still flagged as a standalone word, but "hijo" should not be
+        assert result[0]["is_profanity"] is False
+        assert result[1]["is_profanity"] is True

@@ -390,9 +390,9 @@ async def transcribe(req: TranscribeRequest):
         else:
             result = transcribe_audio(req.path, turbo=req.turbo, initial_prompt=req.lyrics)
 
-        primary_words = flag_profanity(result["words"])
-        primary_words = _strip_intro_hallucinations(primary_words)
         detected_language = result["language"]
+        primary_words = flag_profanity(result["words"], language=detected_language)
+        primary_words = _strip_intro_hallucinations(primary_words)
 
         # Pass 2: Transcribe isolated vocals (if available)
         if dual_pass:
@@ -405,7 +405,7 @@ async def transcribe(req: TranscribeRequest):
                 progress_scale=45,
                 sensitive_mode=True,
             )
-            secondary_words = flag_profanity(vocals_result["words"])
+            secondary_words = flag_profanity(vocals_result["words"], language=detected_language)
             raw_count = len(secondary_words)
             raw_profanity = sum(1 for w in secondary_words if w.get("is_profanity"))
             secondary_words = [w for w in secondary_words if w.get("confidence", 1.0) >= 0.15]

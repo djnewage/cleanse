@@ -1,6 +1,7 @@
 """Profanity detection using better-profanity library."""
 
 import re
+import unicodedata
 from pathlib import Path
 from better_profanity import profanity
 
@@ -13,6 +14,13 @@ if custom_words_file.exists():
     with open(custom_words_file, 'r', encoding='utf-8') as f:
         custom_words = [line.strip() for line in f if line.strip() and not line.startswith('#')]
         profanity.add_censor_words(custom_words)
+
+# Load Spanish profanity words
+custom_words_es_file = Path(__file__).parent / "custom_profanity_es.txt"
+if custom_words_es_file.exists():
+    with open(custom_words_es_file, 'r', encoding='utf-8') as f:
+        custom_words_es = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        profanity.add_censor_words(custom_words_es)
 
 
 def _normalize_word(word: str) -> list[str]:
@@ -48,6 +56,15 @@ def _normalize_word(word: str) -> list[str]:
         variations.add(no_trailing_apos)
         variations.add(no_trailing_apos.lower())
 
+    # Add accent-stripped versions of all variations (e.g. "cabrón" -> "cabron")
+    accent_stripped = set()
+    for v in variations:
+        stripped = unicodedata.normalize('NFD', v)
+        stripped = ''.join(c for c in stripped if unicodedata.category(c) != 'Mn')
+        if stripped != v:
+            accent_stripped.add(stripped)
+    variations.update(accent_stripped)
+
     # Remove empty strings
     return [v for v in variations if v]
 
@@ -66,8 +83,20 @@ COMPOUND_PROFANITY = {
     ("dick", "head"), ("dick", "heads"),
 }
 
+COMPOUND_PROFANITY_ES = {
+    ("hijo", "puta"), ("hija", "puta"),
+    ("puta", "madre"), ("puto", "madre"),
+    ("come", "mierda"),
+    ("mama", "guevo"), ("mama", "gueva"),
+    ("mama", "vicho"), ("mama", "bicho"),
+    ("lame", "culo"),
+    ("chupa", "pinga"), ("chupa", "pija"), ("chupa", "pollas"),
+    ("cara", "verga"), ("care", "monda"), ("care", "chimba"),
+    ("concha", "madre"), ("conche", "madre"),
+}
 
-def flag_profanity(words: list[dict]) -> list[dict]:
+
+def flag_profanity(words: list[dict], language: str | None = None) -> list[dict]:
     """
     Take a list of transcribed words and add an `is_profanity` flag to each.
 
@@ -77,6 +106,8 @@ def flag_profanity(words: list[dict]) -> list[dict]:
 
     Args:
         words: List of {"word": str, "start": float, "end": float, "confidence": float}
+        language: Detected language code (e.g. "es" for Spanish). Used to
+                  include language-specific compound profanity patterns.
 
     Returns:
         Same list with added "is_profanity": bool field
@@ -92,10 +123,13 @@ def flag_profanity(words: list[dict]) -> list[dict]:
         flagged.append({**w, "is_profanity": is_profane})
 
     # Second pass: check adjacent word pairs for compound profanity
+    compounds = COMPOUND_PROFANITY
+    if language == "es":
+        compounds = COMPOUND_PROFANITY | COMPOUND_PROFANITY_ES
     for i in range(len(flagged) - 1):
         w1 = re.sub(r'[^\w]', '', flagged[i]["word"]).lower()
         w2 = re.sub(r'[^\w]', '', flagged[i + 1]["word"]).lower()
-        if (w1, w2) in COMPOUND_PROFANITY:
+        if (w1, w2) in compounds:
             flagged[i]["is_profanity"] = True
             flagged[i + 1]["is_profanity"] = True
 
