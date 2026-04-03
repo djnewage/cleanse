@@ -83,6 +83,15 @@ COMPOUND_PROFANITY = {
     ("dick", "head"), ("dick", "heads"),
 }
 
+# Words that better-profanity falsely matches as profanity.
+# These are checked post-detection to override false positives.
+WHITELIST = {
+    "dame",    # Spanish for "give me", falsely matches "damn"
+    "damo",    # Spanish slang for "we give" (damos), falsely matched
+    "woody",   # Name / Toy Story reference, falsely matches substring
+    "dummy",   # Not profanity, falsely matched
+}
+
 COMPOUND_PROFANITY_ES = {
     ("hijo", "puta"), ("hija", "puta"),
     ("puta", "madre"), ("puto", "madre"),
@@ -119,6 +128,10 @@ def flag_profanity(words: list[dict], language: str | None = None) -> list[dict]
         # Generate normalized variations and check if any are profane
         variations = _normalize_word(word_text)
         is_profane = any(profanity.contains_profanity(variant) for variant in variations)
+
+        # Override false positives from whitelist
+        if is_profane and any(v.lower() in WHITELIST for v in variations):
+            is_profane = False
 
         flagged.append({**w, "is_profanity": is_profane})
 

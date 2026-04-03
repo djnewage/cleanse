@@ -230,3 +230,45 @@ class TestSpanishCompoundProfanity:
         # "puta" is still flagged as a standalone word, but "hijo" should not be
         assert result[0]["is_profanity"] is False
         assert result[1]["is_profanity"] is True
+
+
+class TestWhitelist:
+    """Verify whitelisted words are NOT flagged as profanity."""
+
+    def _check_not_profane(self, word):
+        words = [{"word": word, "start": 0.0, "end": 0.5, "confidence": 0.9}]
+        result = flag_profanity(words)
+        assert result[0]["is_profanity"] is False, f"'{word}' should NOT be flagged (whitelisted)"
+
+    def test_dame_not_flagged(self):
+        self._check_not_profane("Dame")
+
+    def test_dame_lowercase_not_flagged(self):
+        self._check_not_profane("dame")
+
+    def test_woody_not_flagged(self):
+        self._check_not_profane("Woody")
+
+    def test_dummy_not_flagged(self):
+        self._check_not_profane("dummy")
+
+    def test_damn_still_flagged(self):
+        """Ensure actual profanity near whitelist words still works."""
+        words = [{"word": "damn", "start": 0.0, "end": 0.5, "confidence": 0.9}]
+        result = flag_profanity(words)
+        assert result[0]["is_profanity"] is True
+
+
+class TestSlangWords:
+    """Verify newly added slang words are detected."""
+
+    def _check(self, word):
+        words = [{"word": word, "start": 0.0, "end": 0.5, "confidence": 0.9}]
+        result = flag_profanity(words)
+        assert result[0]["is_profanity"] is True, f"'{word}' was not detected as profanity"
+
+    def test_coochie(self):
+        self._check("coochie")
+
+    def test_puchi(self):
+        self._check("puchi")
