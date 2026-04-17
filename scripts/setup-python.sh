@@ -35,7 +35,16 @@ fi
 echo "Installing Python dependencies..."
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip -q
-pip install -r "$BACKEND_DIR/requirements.txt"
+# Prefer the frozen lockfile so transitive upgrades (e.g. a future torchcodec
+# roll-forward with macOS-14-only dylibs) can't silently slip in. Fall back to
+# requirements.txt for first-time bootstrap before the lock is generated.
+if [ -f "$BACKEND_DIR/requirements.lock" ]; then
+    echo "Using backend/requirements.lock (frozen)"
+    pip install -r "$BACKEND_DIR/requirements.lock"
+else
+    echo "No lockfile; using requirements.txt"
+    pip install -r "$BACKEND_DIR/requirements.txt"
+fi
 
 echo ""
 echo "=== Setup complete! ==="

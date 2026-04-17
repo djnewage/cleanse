@@ -1,14 +1,31 @@
-"""Tests for MPS->CPU fallback logic in vocal_separator.separate()."""
+"""Tests for vocal_separator — MPS->CPU fallback logic and ffmpeg decode path."""
 
 import os
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 # Heavy deps (torch, torchaudio, demucs, tqdm) are stubbed in conftest.py.
 # device_info is a lightweight local module — import it normally.
-import sys
 sys.modules.setdefault("device_info", MagicMock())
+
+# Try to load real torch once at module import time. Torch's C-extension init
+# registers global TORCH_LIBRARY entries that cannot be re-registered, so we
+# cannot pop+reimport per-test. If this load fails (e.g. in a lightweight
+# test env where torch is absent), _real_torch stays None and the round-trip
+# tests below get skipped.
+_real_torch = None
+_saved_stubs = {mod: sys.modules.pop(mod, None) for mod in ("torch", "torchaudio", "torchaudio.transforms")}
+try:
+    import torch as _real_torch  # noqa: F401
+except ImportError:
+    # Restore stubs so the mocked tests still work.
+    for mod, stub in _saved_stubs.items():
+        if stub is not None:
+            sys.modules[mod] = stub
 
 import vocal_separator  # noqa: E402
 
@@ -36,15 +53,13 @@ def _reset_model_cache():
 @patch("device_info.get_device_string", return_value="mps")
 @patch("vocal_separator._get_model")
 @patch("demucs.apply.apply_model")
-@patch("torchaudio.save")
-@patch("torchaudio.load")
+@patch("vocal_separator._write_wav")
+@patch("vocal_separator._decode_audio_ffmpeg")
 def test_mps_fallback_on_65536_error(
-    mock_load, mock_save, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
+    mock_decode, mock_write, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
 ):
     """apply_model raises NotImplementedError with '65536' on MPS, succeeds on CPU retry."""
-    fake_wav = MagicMock()
-    fake_wav.shape = [2, 44100]
-    mock_load.return_value = (fake_wav, 44100)
+    mock_decode.return_value = np.zeros((2, 44100), dtype=np.float32)
 
     model = MagicMock()
     model.samplerate = 44100
@@ -68,15 +83,13 @@ def test_mps_fallback_on_65536_error(
 @patch("device_info.get_device_string", return_value="mps")
 @patch("vocal_separator._get_model")
 @patch("demucs.apply.apply_model")
-@patch("torchaudio.save")
-@patch("torchaudio.load")
+@patch("vocal_separator._write_wav")
+@patch("vocal_separator._decode_audio_ffmpeg")
 def test_mps_fallback_on_mps_runtime_error(
-    mock_load, mock_save, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
+    mock_decode, mock_write, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
 ):
     """apply_model raises RuntimeError mentioning 'MPS' on MPS, succeeds on CPU retry."""
-    fake_wav = MagicMock()
-    fake_wav.shape = [2, 44100]
-    mock_load.return_value = (fake_wav, 44100)
+    mock_decode.return_value = np.zeros((2, 44100), dtype=np.float32)
 
     model = MagicMock()
     model.samplerate = 44100
@@ -99,15 +112,13 @@ def test_mps_fallback_on_mps_runtime_error(
 @patch("device_info.get_device_string", return_value="cpu")
 @patch("vocal_separator._get_model")
 @patch("demucs.apply.apply_model")
-@patch("torchaudio.save")
-@patch("torchaudio.load")
+@patch("vocal_separator._write_wav")
+@patch("vocal_separator._decode_audio_ffmpeg")
 def test_no_fallback_when_already_on_cpu(
-    mock_load, mock_save, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
+    mock_decode, mock_write, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
 ):
     """When already on CPU, the 65536 error propagates (no infinite retry)."""
-    fake_wav = MagicMock()
-    fake_wav.shape = [2, 44100]
-    mock_load.return_value = (fake_wav, 44100)
+    mock_decode.return_value = np.zeros((2, 44100), dtype=np.float32)
 
     model = MagicMock()
     model.samplerate = 44100
@@ -126,15 +137,13 @@ def test_no_fallback_when_already_on_cpu(
 @patch("device_info.get_device_string", return_value="mps")
 @patch("vocal_separator._get_model")
 @patch("demucs.apply.apply_model")
-@patch("torchaudio.save")
-@patch("torchaudio.load")
+@patch("vocal_separator._write_wav")
+@patch("vocal_separator._decode_audio_ffmpeg")
 def test_unrelated_error_propagates(
-    mock_load, mock_save, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
+    mock_decode, mock_write, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
 ):
     """Unrelated RuntimeError (no '65536' or 'MPS') propagates unchanged."""
-    fake_wav = MagicMock()
-    fake_wav.shape = [2, 44100]
-    mock_load.return_value = (fake_wav, 44100)
+    mock_decode.return_value = np.zeros((2, 44100), dtype=np.float32)
 
     model = MagicMock()
     model.samplerate = 44100
@@ -153,15 +162,13 @@ def test_unrelated_error_propagates(
 @patch("device_info.get_device_string", return_value="mps")
 @patch("vocal_separator._get_model")
 @patch("demucs.apply.apply_model")
-@patch("torchaudio.save")
-@patch("torchaudio.load")
+@patch("vocal_separator._write_wav")
+@patch("vocal_separator._decode_audio_ffmpeg")
 def test_successful_gpu_no_fallback(
-    mock_load, mock_save, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
+    mock_decode, mock_write, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
 ):
     """apply_model succeeds on first call -- no fallback, no model.to('cpu')."""
-    fake_wav = MagicMock()
-    fake_wav.shape = [2, 44100]
-    mock_load.return_value = (fake_wav, 44100)
+    mock_decode.return_value = np.zeros((2, 44100), dtype=np.float32)
 
     model = MagicMock()
     model.samplerate = 44100
@@ -175,3 +182,61 @@ def test_successful_gpu_no_fallback(
     model.to.assert_not_called()
     assert "vocals_path" in result
     assert "accompaniment_path" in result
+
+
+# ---------------------------------------------------------------------------
+# Integration test for the ffmpeg decode path itself.
+#
+# Requires real torch (not the conftest MagicMock stub) because _write_wav
+# calls tensor.detach().cpu().numpy(). Skipped in the lightweight test env.
+# ---------------------------------------------------------------------------
+requires_torch = pytest.mark.skipif(
+    _real_torch is None, reason="Requires real torch (backend venv)"
+)
+
+
+@pytest.fixture
+def stereo_mp3(tmp_path):
+    import imageio_ffmpeg
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    path = tmp_path / "silence.mp3"
+    subprocess.run(
+        [
+            ffmpeg, "-y", "-f", "lavfi",
+            "-i", "anullsrc=r=44100:cl=stereo",
+            "-t", "2", "-c:a", "libmp3lame",
+            str(path),
+        ],
+        check=True, capture_output=True,
+    )
+    return str(path)
+
+
+@requires_torch
+def test_decode_mp3_shape_and_dtype(stereo_mp3):
+    audio = vocal_separator._decode_audio_ffmpeg(stereo_mp3, sampling_rate=44100, channels=2)
+    assert audio.dtype == np.float32
+    assert audio.shape[0] == 2
+    # 2 s × 44100 Hz; MP3 encoder adds ~10 ms padding
+    assert abs(audio.shape[1] - 88200) < 441
+
+
+@requires_torch
+def test_write_wav_round_trip(stereo_mp3, tmp_path):
+    audio = vocal_separator._decode_audio_ffmpeg(stereo_mp3, sampling_rate=44100, channels=2)
+    out = tmp_path / "out.wav"
+    vocal_separator._write_wav(str(out), _real_torch.from_numpy(audio), 44100)
+    assert out.exists() and out.stat().st_size > 0
+
+    back = vocal_separator._decode_audio_ffmpeg(str(out), sampling_rate=44100, channels=2)
+    assert back.shape == audio.shape
+    assert back.dtype == np.float32
+
+
+@requires_torch
+def test_decode_ffmpeg_error_raises(tmp_path):
+    bogus = tmp_path / "not-audio.txt"
+    bogus.write_text("not an audio file")
+    with pytest.raises(RuntimeError, match="ffmpeg failed to decode audio"):
+        vocal_separator._decode_audio_ffmpeg(str(bogus), sampling_rate=44100, channels=2)

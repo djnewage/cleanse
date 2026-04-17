@@ -7,9 +7,8 @@ better-profanity==0.7.0
 python-multipart==0.0.20
 requests>=2.32.0
 demucs>=4.0.0
-torch>=2.0.0
-torchaudio>=2.0.0
-torchcodec>=0.10.0
+torch==2.7.1
+torchaudio==2.7.1
 imageio-ffmpeg>=0.5.1
 scipy>=1.10.0
 tinytag>=1.10.0
