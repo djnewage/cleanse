@@ -39,6 +39,34 @@ echo ""
 echo "=== Building x64 (Intel) ==="
 npm run build:mac:x64
 
+# Guardrail: ensure macOS-14-only FFmpeg/torchcodec dylibs never ship again.
+# A torch>=2.0 float pin silently resolved to torch 2.10 + mandatory torchcodec,
+# whose bundled libav* dylibs link AVFoundation symbols absent on macOS 13.
+echo ""
+echo "=== Verifying bundles contain no forbidden dylibs ==="
+checked_any=0
+for bundle in dist/mac-arm64/Cleanse.app dist/mac/Cleanse.app; do
+  [ -d "$bundle" ] || continue
+  checked_any=1
+  bad=$(find "$bundle" \( -name 'libtorchcodec*' -o -name 'libavdevice*' \
+                       -o -name 'libavutil*.dylib' -o -name 'libavcodec*.dylib' \
+                       -o -name 'libavformat*.dylib' -o -name 'libavfilter*.dylib' \
+                       -o -name 'libswscale*.dylib' -o -name 'libswresample*.dylib' \) 2>/dev/null)
+  if [ -n "$bad" ]; then
+    echo "ERROR: Forbidden dylibs found in $bundle:"
+    echo "$bad"
+    echo ""
+    echo "These pull in macOS-14-only AVFoundation symbols and break users on macOS 13."
+    echo "Audit backend/requirements.txt and cleanse-backend.spec."
+    exit 1
+  fi
+done
+if [ "$checked_any" = "0" ]; then
+  echo "ERROR: No app bundles found under dist/; build output unexpected."
+  exit 1
+fi
+echo "OK: no forbidden dylibs in bundles."
+
 # Find built artifacts
 DMG_FILES=$(ls dist/*-${VERSION}-*.dmg 2>/dev/null || true)
 ZIP_FILES=$(ls dist/*-${VERSION}-*.zip 2>/dev/null || true)
