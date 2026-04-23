@@ -384,7 +384,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
       return {
         ...state,
         songs: state.songs.map((s) =>
-          s.id === action.id ? { ...s, previewFilePath: null } : s
+          s.id === action.id ? { ...s, previewFilePath: null, isGeneratingPreview: false } : s
         )
       }
 
@@ -675,14 +675,15 @@ function MainApp(): React.JSX.Element {
       } else if (Array.isArray(info.releaseNotes)) {
         notes = info.releaseNotes.map((n) => `${n.version}: ${n.note}`).join('\n')
       }
-      // Strip HTML tags and decode entities (electron-updater may return HTML)
+      // Decode entities first so escaped HTML (e.g. &lt;strong&gt;) becomes real
+      // tags that the strip pass can then remove. electron-updater may return HTML.
       notes = notes
-        .replace(/<[^>]*>/g, '')
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
+        .replace(/<[^>]*>/g, '')
         .trim()
       setUpdateState({
         show: true,
@@ -789,13 +790,13 @@ function MainApp(): React.JSX.Element {
     }
   }, [state.expandedSongId, state.songs, state.crossfadeMs, state.paddingMs])
 
-  // Clear preview when crossfade or padding changes so it regenerates
+  // Clear preview when crossfade or padding changes so it regenerates.
+  // Bumping the request ref invalidates any in-flight regen so its dispatch is skipped,
+  // preventing a stale preview from committing with old settings.
   useEffect(() => {
     if (!state.expandedSongId) return
-    const song = state.songs.find((s) => s.id === state.expandedSongId)
-    if (song?.previewFilePath) {
-      dispatch({ type: 'CLEAR_PREVIEW', id: state.expandedSongId })
-    }
+    generationRequestRef.current = Date.now()
+    dispatch({ type: 'CLEAR_PREVIEW', id: state.expandedSongId })
   }, [state.crossfadeMs, state.paddingMs])
 
   // Auto-regenerate preview when words change while panel is open
@@ -806,8 +807,10 @@ function MainApp(): React.JSX.Element {
     const song = state.songs.find((s) => s.id === state.expandedSongId)
     if (!song || song.status !== 'ready') return
 
-    // Don't regenerate if preview exists or already generating
-    if (song.previewFilePath || song.isGeneratingPreview) return
+    // Don't regenerate if a preview already exists. Staleness of any in-flight regen is
+    // handled by generationRequestRef — checking isGeneratingPreview here would drop the
+    // latest settings change when a regen is still running.
+    if (song.previewFilePath) return
 
     // Only regenerate if there are profane words to censor
     const profaneWords = song.words.filter((w) => w.is_profanity)

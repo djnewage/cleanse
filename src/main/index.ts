@@ -1,12 +1,12 @@
 import * as Sentry from '@sentry/electron/main'
+import { app, shell, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
 
 Sentry.init({
   dsn: 'https://c27473b596f92b07557b89836e8e0941@o4510700679593984.ingest.us.sentry.io/4510875528921088',
-  release: 'cleanse@1.5.2',
+  release: `cleanse@${app.getVersion()}`,
   integrations: (defaults) => defaults.filter((i) => i.name !== 'PreloadInjection')
 })
 
-import { app, shell, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
 import { join, extname } from 'path'
 import { createReadStream } from 'fs'
 import { stat, readFile } from 'fs/promises'

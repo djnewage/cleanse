@@ -72,7 +72,7 @@ export default function AudioPreview({
     <div className="flex flex-col gap-4">
       {secondaryPath && (
         <WaveformPlayer
-          key={secondaryPath}
+          key={`secondary-${secondaryPath}`}
           src={`media://${encodeURIComponent(secondaryPath)}`}
           label="Original"
           onPlay={handleSecondaryPlay}
@@ -82,7 +82,7 @@ export default function AudioPreview({
       )}
       {primaryPath && (
         <WaveformPlayer
-          key={primaryPath}
+          key={`primary-${primaryPath}`}
           src={`media://${encodeURIComponent(primaryPath)}`}
           label={censoredPath ? 'Censored Version' : 'Original'}
           labelColor={censoredPath ? 'text-green-400' : 'text-text-secondary'}

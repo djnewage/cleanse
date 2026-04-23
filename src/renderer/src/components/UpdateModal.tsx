@@ -9,6 +9,63 @@ interface UpdateModalProps {
   onClose: () => void
 }
 
+// Render inline markdown: currently only **bold** — plain spans otherwise.
+function renderInline(text: string, keyPrefix: string): React.JSX.Element[] {
+  const parts: React.JSX.Element[] = []
+  const regex = /\*\*([^*]+?)\*\*/g
+  let lastEnd = 0
+  let match: RegExpExecArray | null
+  let i = 0
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastEnd) {
+      parts.push(<span key={`${keyPrefix}-${i++}`}>{text.slice(lastEnd, match.index)}</span>)
+    }
+    parts.push(
+      <strong key={`${keyPrefix}-${i++}`} className="font-semibold text-text-primary">
+        {match[1]}
+      </strong>
+    )
+    lastEnd = match.index + match[0].length
+  }
+  if (lastEnd < text.length) {
+    parts.push(<span key={`${keyPrefix}-${i++}`}>{text.slice(lastEnd)}</span>)
+  }
+  return parts.length > 0 ? parts : [<span key={`${keyPrefix}-0`}>{text}</span>]
+}
+
+// Render release notes as a narrow subset of markdown: ## headings, - bullets,
+// **bold** inline, blank lines as spacing. Anything else renders as plain text.
+function renderReleaseNotes(notes: string): React.JSX.Element[] {
+  const lines = notes.split('\n')
+  const out: React.JSX.Element[] = []
+  lines.forEach((raw, idx) => {
+    const line = raw.trimEnd()
+    if (!line) {
+      out.push(<div key={idx} className="h-2" />)
+      return
+    }
+    if (line.startsWith('## ')) {
+      out.push(
+        <h3 key={idx} className="text-sm font-semibold text-text-primary mt-2 mb-1 first:mt-0">
+          {renderInline(line.slice(3), `h${idx}`)}
+        </h3>
+      )
+      return
+    }
+    if (line.startsWith('- ')) {
+      out.push(
+        <div key={idx} className="flex gap-2 pl-1">
+          <span className="text-text-tertiary" aria-hidden>•</span>
+          <span className="flex-1">{renderInline(line.slice(2), `b${idx}`)}</span>
+        </div>
+      )
+      return
+    }
+    out.push(<div key={idx}>{renderInline(line, `p${idx}`)}</div>)
+  })
+  return out
+}
+
 export default function UpdateModal({
   isOpen,
   version,
@@ -55,8 +112,8 @@ export default function UpdateModal({
             <p className="text-xs font-medium text-text-tertiary uppercase tracking-wide mb-2">
               What's new
             </p>
-            <div className="text-sm text-text-secondary whitespace-pre-wrap">
-              {releaseNotes}
+            <div className="text-sm text-text-secondary space-y-0.5">
+              {renderReleaseNotes(releaseNotes)}
             </div>
           </div>
         )}
