@@ -240,3 +240,32 @@ def test_decode_ffmpeg_error_raises(tmp_path):
     bogus.write_text("not an audio file")
     with pytest.raises(RuntimeError, match="ffmpeg failed to decode audio"):
         vocal_separator._decode_audio_ffmpeg(str(bogus), sampling_rate=44100, channels=2)
+
+
+@patch("vocal_separator._clear_torch_hub_checkpoints")
+@patch("vocal_separator._report_progress")
+@patch("demucs.pretrained.get_model")
+def test_hash_mismatch_clears_cache_and_retries(mock_get_model, mock_progress, mock_clear):
+    """First get_model() fails with 'invalid hash value'; retry succeeds after cache clear."""
+    good = MagicMock()
+    mock_get_model.side_effect = [
+        RuntimeError('invalid hash value (expected "8726e21a", got "b5c5614d")'),
+        good,
+    ]
+    model = vocal_separator._get_model()
+    assert model is good
+    assert mock_get_model.call_count == 2
+    mock_clear.assert_called_once()
+    good.eval.assert_called_once()
+
+
+@patch("vocal_separator._clear_torch_hub_checkpoints")
+@patch("vocal_separator._report_progress")
+@patch("demucs.pretrained.get_model")
+def test_non_hash_runtime_error_propagates(mock_get_model, mock_progress, mock_clear):
+    """RuntimeErrors unrelated to hash mismatch are not retried."""
+    mock_get_model.side_effect = RuntimeError("unrelated CUDA error")
+    with pytest.raises(RuntimeError, match="unrelated CUDA error"):
+        vocal_separator._get_model()
+    assert mock_get_model.call_count == 1
+    mock_clear.assert_not_called()

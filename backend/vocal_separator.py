@@ -89,12 +89,49 @@ class ProgressReporter:
         return self._total
 
 
+def _clear_torch_hub_checkpoints():
+    """Remove cached model files so they're re-downloaded on the next load.
+
+    Demucs downloads each model shard via torch.hub; if a download is interrupted
+    the partial file stays on disk and future runs fail a hash check on that
+    corrupted cache rather than retrying the download. Clearing the directory
+    forces a clean download.
+    """
+    import shutil
+
+    import torch
+
+    try:
+        checkpoints_dir = os.path.join(torch.hub.get_dir(), "checkpoints")
+        if os.path.isdir(checkpoints_dir):
+            shutil.rmtree(checkpoints_dir)
+            print(
+                f"[Separator] Cleared corrupted torch hub checkpoints: {checkpoints_dir}",
+                file=sys.stderr,
+            )
+    except OSError as err:
+        print(f"[Separator] Failed to clear checkpoints: {err}", file=sys.stderr)
+
+
 def _get_model():
     global _model
     if _model is None:
         from demucs.pretrained import get_model
         _report_progress("loading_model", 0, "Loading separation model...")
-        _model = get_model("htdemucs")
+        try:
+            _model = get_model("htdemucs")
+        except RuntimeError as err:
+            if "invalid hash value" not in str(err):
+                raise
+            print(
+                f"[Separator] Model cache hash mismatch, clearing and retrying: {err}",
+                file=sys.stderr,
+            )
+            _clear_torch_hub_checkpoints()
+            _report_progress(
+                "loading_model", 0, "Model cache corrupted, re-downloading..."
+            )
+            _model = get_model("htdemucs")
         _model.eval()
     return _model
 
