@@ -129,9 +129,10 @@ echo ""
 
 # Create the release (upload DMGs for manual download + ZIPs for auto-update + metadata)
 echo "Creating GitHub release $TAG..."
+NOTES="${RELEASE_NOTES:-Bug fixes and improvements.}"
 gh release create "$TAG" \
   --title "$TAG" \
-  --notes "Bug fixes and improvements." \
+  --notes "$NOTES" \
   $DMG_FILES $ZIP_FILES dist/latest-mac.yml
 
 echo ""
