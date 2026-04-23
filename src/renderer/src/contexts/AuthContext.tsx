@@ -94,7 +94,13 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser)
-      if (!firebaseUser) {
+      if (firebaseUser) {
+        const sentryUser = { id: firebaseUser.uid, email: firebaseUser.email ?? undefined }
+        Sentry.setUser(sentryUser)
+        window.electronAPI.setSentryUser(sentryUser)
+      } else {
+        Sentry.setUser(null)
+        window.electronAPI.setSentryUser(null)
         setUserData(null)
         setIsLoading(false)
       }

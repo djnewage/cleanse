@@ -7,7 +7,7 @@ Sentry.init({
   integrations: (defaults) => defaults.filter((i) => i.name !== 'PreloadInjection')
 })
 
-import { join, extname } from 'path'
+import { join, extname, basename } from 'path'
 import { createReadStream } from 'fs'
 import { stat, readFile } from 'fs/promises'
 import { Readable } from 'stream'
@@ -80,6 +80,19 @@ function createWindow(): void {
 }
 
 // --- IPC Handlers ---
+
+// Fast-fail when the source audio has been moved/renamed/deleted between import and
+// processing. Without this, the backend call runs for up to 30s before returning
+// "File not found", and the user just sees a noisy stack trace in Sentry.
+async function ensureFileExists(filePath: string): Promise<void> {
+  try {
+    await stat(filePath)
+  } catch {
+    throw new Error(
+      `File no longer exists on disk: ${basename(filePath)}. It may have been moved, renamed, or deleted — please re-add it from its current location.`
+    )
+  }
+}
 
 ipcMain.handle('read-audio-file', async (_event, filePath: string) => {
   const buffer = await readFile(filePath)
@@ -194,6 +207,7 @@ ipcMain.handle('fetch-lyrics', async (_event, artist: string, title: string, dur
 })
 
 ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolean = false, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass: boolean = true) => {
+  await ensureFileExists(filePath)
   try {
     console.log('[IPC] transcribe-file called with:', filePath, 'turbo:', turbo, 'vocalsPath:', vocalsPath, 'hasLyrics:', !!lyrics, 'dualPass:', dualPass)
     setTranscriptionProgressCallback((data) => {
@@ -232,6 +246,7 @@ ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolea
 })
 
 ipcMain.handle('separate-audio', async (_event, filePath: string, turbo: boolean = false) => {
+  await ensureFileExists(filePath)
   try {
     console.log('[IPC] separate-audio called with:', filePath, 'turbo:', turbo)
     setProgressCallback((data) => {
@@ -271,6 +286,7 @@ ipcMain.handle(
       paddingAfterMs?: number
     }
   ) => {
+    await ensureFileExists(args.filePath)
     try {
       const body: Record<string, unknown> = {
         path: args.filePath,
@@ -328,6 +344,7 @@ ipcMain.handle(
     paddingBeforeMs?: number,
     paddingAfterMs?: number
   ) => {
+    await ensureFileExists(filePath)
     try {
       const body: Record<string, unknown> = { path: filePath, words, output_path: outputPath }
       if (vocalsPath && accompanimentPath) {
@@ -450,6 +467,12 @@ ipcMain.handle('check-for-updates', async () => {
     log.error('[AutoUpdater] Manual check failed:', err)
     return { updateAvailable: false }
   }
+})
+
+// Propagate the authenticated user identity from the renderer so Sentry events
+// captured in the main process are tagged with the same uid as renderer-side events.
+ipcMain.on('set-sentry-user', (_event, user: { id: string; email?: string } | null) => {
+  Sentry.setUser(user)
 })
 
 // --- App Lifecycle ---

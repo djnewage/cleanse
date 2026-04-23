@@ -85,6 +85,7 @@ export interface ElectronAPI {
   openExternal: (url: string) => Promise<void>
   getMachineId: () => Promise<string>
   readAudioFile: (path: string) => Promise<ArrayBuffer>
+  setSentryUser: (user: { id: string; email?: string } | null) => void
 }
 
 export interface TranscriptionResult {
@@ -278,7 +279,9 @@ const electronAPI: ElectronAPI = {
 
   getMachineId: () => ipcRenderer.invoke('get-machine-id'),
 
-  readAudioFile: (path: string) => ipcRenderer.invoke('read-audio-file', path)
+  readAudioFile: (path: string) => ipcRenderer.invoke('read-audio-file', path),
+
+  setSentryUser: (user) => ipcRenderer.send('set-sentry-user', user)
 }
 
 if (process.contextIsolated) {
