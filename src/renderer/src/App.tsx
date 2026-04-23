@@ -675,6 +675,11 @@ function MainApp(): React.JSX.Element {
       } else if (Array.isArray(info.releaseNotes)) {
         notes = info.releaseNotes.map((n) => `${n.version}: ${n.note}`).join('\n')
       }
+      // Signature of a git commit trailer (e.g. "Co-Authored-By: ..."). When a
+      // GitHub release body is empty, electron-updater's Atom feed backfills the
+      // update info with raw commit messages — if we see trailer syntax, the
+      // content is commit-message fallback, not real release notes.
+      const looksLikeCommitFallback = /^(Co-Authored-By|Signed-off-by):/im.test(notes)
       // Decode entities first so escaped HTML (e.g. &lt;strong&gt;) becomes real
       // tags that the strip pass can then remove. electron-updater may return HTML.
       notes = notes
@@ -685,6 +690,9 @@ function MainApp(): React.JSX.Element {
         .replace(/&#39;/g, "'")
         .replace(/<[^>]*>/g, '')
         .trim()
+      if (looksLikeCommitFallback) {
+        notes = 'Bug fixes and improvements.'
+      }
       setUpdateState({
         show: true,
         version: info.version,
