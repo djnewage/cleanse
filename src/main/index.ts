@@ -81,6 +81,17 @@ function createWindow(): void {
 
 // --- IPC Handlers ---
 
+// Avoids "Object has been destroyed" when the renderer quits while an async
+// operation (e.g. backend startup, progress stream) is still in flight. The
+// optional-chaining pattern `mainWindow?.webContents.send(...)` only guards
+// null, not destroyed state.
+function sendToMain(channel: string, ...args: unknown[]): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const wc = mainWindow.webContents
+  if (!wc || wc.isDestroyed()) return
+  wc.send(channel, ...args)
+}
+
 // Fast-fail when the source audio has been moved/renamed/deleted between import and
 // processing. Without this, the backend call runs for up to 30s before returning
 // "File not found", and the user just sees a noisy stack trace in Sentry.
@@ -152,7 +163,7 @@ ipcMain.handle('warmup-model', async () => {
   try {
     console.log('[IPC] warmup-model called')
     setModelDownloadProgressCallback((data) => {
-      mainWindow?.webContents.send('model-download-progress', data)
+      sendToMain('model-download-progress', data)
     })
 
     const result = await fetchBackendStreaming<{ status: string }>('/warmup', {
@@ -211,7 +222,7 @@ ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolea
   try {
     console.log('[IPC] transcribe-file called with:', filePath, 'turbo:', turbo, 'vocalsPath:', vocalsPath, 'hasLyrics:', !!lyrics, 'dualPass:', dualPass)
     setTranscriptionProgressCallback((data) => {
-      mainWindow?.webContents.send('transcription-progress', data)
+      sendToMain('transcription-progress', data)
     })
 
     const body: Record<string, unknown> = { path: filePath, turbo, dual_pass: dualPass }
@@ -250,7 +261,7 @@ ipcMain.handle('separate-audio', async (_event, filePath: string, turbo: boolean
   try {
     console.log('[IPC] separate-audio called with:', filePath, 'turbo:', turbo)
     setProgressCallback((data) => {
-      mainWindow?.webContents.send('separation-progress', data)
+      sendToMain('separation-progress', data)
     })
 
     const result = await fetchBackendStreaming<{
@@ -421,33 +432,33 @@ ipcMain.handle('get-device-info', async () => {
 function setupAutoUpdater(): void {
   autoUpdater.on('update-available', (info) => {
     log.info('[AutoUpdater] Update available:', info.version)
-    mainWindow?.webContents.send('update-available', {
+    sendToMain('update-available', {
       version: info.version,
       releaseNotes: info.releaseNotes
     })
   })
 
   autoUpdater.on('download-progress', (progress) => {
-    mainWindow?.webContents.send('download-progress', {
+    sendToMain('download-progress', {
       percent: progress.percent
     })
   })
 
   autoUpdater.on('update-downloaded', (info) => {
     log.info('[AutoUpdater] Update downloaded:', info.version)
-    mainWindow?.webContents.send('update-downloaded', {
+    sendToMain('update-downloaded', {
       version: info.version
     })
   })
 
   autoUpdater.on('update-not-available', () => {
     log.info('[AutoUpdater] No update available')
-    mainWindow?.webContents.send('update-not-available')
+    sendToMain('update-not-available')
   })
 
   autoUpdater.on('error', (err) => {
     log.error('[AutoUpdater] Error:', err)
-    mainWindow?.webContents.send('update-error', err.message)
+    sendToMain('update-error', err.message)
   })
 }
 
@@ -656,19 +667,19 @@ app.whenReady().then(async () => {
   // Start Python backend after window is created
   try {
     await startPythonBackend()
-    mainWindow?.webContents.send('backend-status', { ready: true })
+    sendToMain('backend-status', { ready: true })
 
     // Fetch and send device info to renderer
     try {
       const deviceInfo = await getDeviceInfo()
-      mainWindow?.webContents.send('device-info', deviceInfo)
+      sendToMain('device-info', deviceInfo)
     } catch (err) {
       console.error('[Main] Failed to fetch device info:', err)
     }
   } catch (err) {
     Sentry.captureException(err)
     console.error('Failed to start Python backend:', err)
-    mainWindow?.webContents.send('backend-status', { ready: false, error: (err as Error).message })
+    sendToMain('backend-status', { ready: false, error: (err as Error).message })
   }
 
   app.on('activate', () => {
