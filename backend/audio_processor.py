@@ -7,6 +7,8 @@ from scipy.signal import butter, sosfilt
 from pydub import AudioSegment
 from pydub.generators import Sine
 
+import debug_dump
+
 # Padding in milliseconds to account for timestamp imprecision and reverb tails.
 # The after-padding is larger to catch echoes/delay effects common in
 # hip-hop and EDM production that extend past the word's end timestamp.
@@ -129,6 +131,7 @@ def censor_audio(
     # Sort by timestamp for deterministic processing order
     words = sorted(words, key=lambda w: w["start"])
 
+    splices = []
     for w in words:
         # Use wider padding for words with estimated timestamps (lyrics-sourced)
         source = w.get("detection_source", "")
@@ -145,9 +148,21 @@ def censor_audio(
             continue
 
         censor_type = w.get("censor_type", "mute")
+        splices.append({
+            "word": w.get("word"),
+            "is_profanity": w.get("is_profanity"),
+            "censor_type": censor_type,
+            "word_start_s": w["start"],
+            "word_end_s": w["end"],
+            "splice_start_ms": start_ms,
+            "splice_end_ms": end_ms,
+            "splice_duration_ms": end_ms - start_ms,
+            "detection_source": source,
+        })
         replacement = _make_replacement(audio, start_ms, end_ms, censor_type)
         audio = _splice_with_crossfade(audio, start_ms, end_ms, replacement, crossfade_ms)
 
+    debug_dump.dump("03-splice-mixed", input_path, splices)
     return _export(audio, output_path)
 
 
@@ -181,6 +196,7 @@ def censor_audio_vocals_only(
     # Sort by timestamp for deterministic processing order
     words = sorted(words, key=lambda w: w["start"])
 
+    splices = []
     for w in words:
         # Use wider padding for words with estimated timestamps (lyrics-sourced)
         source = w.get("detection_source", "")
@@ -213,6 +229,20 @@ def censor_audio_vocals_only(
             file=sys.stderr,
         )
 
+        splices.append({
+            "word": w.get("word"),
+            "is_profanity": w.get("is_profanity"),
+            "censor_type": censor_type,
+            "word_start_s": w["start"],
+            "word_end_s": w["end"],
+            "splice_start_ms": start_ms,
+            "splice_end_ms": end_ms,
+            "splice_duration_ms": end_ms - start_ms,
+            "detection_source": source,
+            "vocal_dbfs": float(vocal_level),
+            "bandreject_applied": is_leaked,
+        })
+
         # Censor vocals (always)
         replacement = _make_replacement(vocals, start_ms, end_ms, censor_type)
         vocals = _splice_with_crossfade(vocals, start_ms, end_ms, replacement, crossfade_ms)
@@ -226,6 +256,7 @@ def censor_audio_vocals_only(
                 accompaniment, start_ms, end_ms, filtered, crossfade_ms
             )
 
+    debug_dump.dump("03-splice-vocals", vocals_path, splices)
     # Mix censored vocals back with accompaniment
     mixed = accompaniment.overlay(vocals)
     return _export(mixed, output_path)
