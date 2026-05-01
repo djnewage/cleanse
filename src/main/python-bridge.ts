@@ -192,9 +192,12 @@ export async function startPythonBackend(): Promise<number> {
     pythonProcess = null
   })
 
-  // Wait for backend to be ready
+  // Wait for backend to be ready. 60s (not 30s) because torch/demucs/whisper
+  // model loading can exceed 30s on low-RAM Macs under memory pressure (Sentry
+  // CLEANSE-APP-G). pollHealth bails immediately on process exit, so real
+  // failures still surface fast.
   console.log('[Python] Waiting for backend to be ready...')
-  const ready = await pollHealth(backendPort, 30000, () => earlyExitCode !== null)
+  const ready = await pollHealth(backendPort, 60000, () => earlyExitCode !== null)
 
   if (ready) {
     isReady = true
@@ -204,7 +207,7 @@ export async function startPythonBackend(): Promise<number> {
     const stderr = stderrChunks.join('\n').slice(-2000)
     const detail = earlyExitCode !== null
       ? `Backend process exited with code ${earlyExitCode}`
-      : 'Backend did not respond within 30 seconds'
+      : 'Backend did not respond within 60 seconds'
     const message = stderr
       ? `${detail}:\n${stderr}`
       : detail
