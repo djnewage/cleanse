@@ -7,6 +7,8 @@ import types
 
 import numpy as np
 
+import debug_dump
+
 
 def _report_progress(step: str, progress: float, message: str):
     """Print a JSON progress line to stdout for the Electron main process to parse."""
@@ -298,8 +300,19 @@ def transcribe_audio(
         if segment.words:
             for w in segment.words:
                 text = w.word.strip()
-                # Skip Whisper hallucinations (§, ♪, ♫, etc.) — keep only words with letters/digits
-                if not any(c.isalnum() for c in text):
+                # Skip Whisper hallucinations during silent/instrumental sections.
+                # Three layers of defense:
+                #   1. No ASCII letter/digit at all → garbage. Catches pure-symbol
+                #      tokens (§, ♪, ♫), single Unicode letters that pass isalnum
+                #      ("ʊ", CJK), and mixed Unicode garbage ("ʊ°°°°°?").
+                #      Tradeoff: songs in non-Latin scripts (Cyrillic, Arabic, CJK)
+                #      lose all transcription. Acceptable — primary user base is
+                #      English/Spanish/French DJs whose words always have ASCII alnum.
+                #   2. Duration > 3s → hallucination spanning silence. Real sung
+                #      words rarely exceed 2s even when sustained.
+                if not any(c.isascii() and c.isalnum() for c in text):
+                    continue
+                if (w.end - w.start) > 3.0:
                     continue
                 words.append(
                     {
@@ -313,6 +326,12 @@ def transcribe_audio(
 
     print(f"[Transcribe] Transcription done in {_time.monotonic() - t2:.1f}s — {len(words)} words", file=sys.stderr)
     _report_progress("complete", round(progress_offset + progress_scale, 1), "Transcription complete!")
+
+    debug_dump.dump("01-transcribe", file_path, {
+        "duration": info.duration,
+        "language": info.language,
+        "words": words,
+    })
 
     return {
         "words": words,

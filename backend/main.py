@@ -148,6 +148,7 @@ from pydantic import BaseModel
 from transcribe import transcribe_audio, warmup_model
 from profanity_detector import flag_profanity
 from audio_processor import censor_audio, censor_audio_vocals_only
+import debug_dump
 from vocal_separator import separate as separate_vocals
 from device_info import detect_device
 from lyrics_fetcher import extract_metadata, fetch_lyrics, find_lyrics_profanity
@@ -392,6 +393,7 @@ async def transcribe(req: TranscribeRequest):
 
         detected_language = result["language"]
         primary_words = flag_profanity(result["words"], language=detected_language)
+        debug_dump.dump("02-flagged-primary", req.path, primary_words)
         primary_words = _strip_intro_hallucinations(primary_words)
 
         # Pass 2: Transcribe isolated vocals (if available)
@@ -406,6 +408,7 @@ async def transcribe(req: TranscribeRequest):
                 sensitive_mode=True,
             )
             secondary_words = flag_profanity(vocals_result["words"], language=detected_language)
+            debug_dump.dump("02-flagged-vocals", req.path, secondary_words)
             raw_count = len(secondary_words)
             raw_profanity = sum(1 for w in secondary_words if w.get("is_profanity"))
             secondary_words = [w for w in secondary_words if w.get("confidence", 1.0) >= 0.15]
@@ -456,6 +459,7 @@ async def transcribe(req: TranscribeRequest):
         # gap-filled words haven't been checked yet)
         if req.synced_lyrics or req.lyrics:
             final_words = flag_profanity(final_words)
+            debug_dump.dump("02-flagged-final", req.path, final_words)
 
         # Cross-reference with synced lyrics to find missed profanities
         if req.synced_lyrics and lyrics_aligned:
