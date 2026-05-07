@@ -15,6 +15,7 @@
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
+    "test:accuracy": "bash scripts/test-accuracy.sh",
     "build:backend": "bash scripts/build-backend.sh",
     "build:backend:x64": "bash scripts/build-backend-x64.sh",
     "build:mac": "npm run build:backend && electron-vite build && electron-builder --mac --arm64",
