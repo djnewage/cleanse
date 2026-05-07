@@ -90,6 +90,14 @@ WHITELIST = {
     "damo",    # Spanish slang for "we give" (damos), falsely matched
     "woody",   # Name / Toy Story reference, falsely matches substring
     "dummy",   # Not profanity, falsely matched
+    "god",     # Common in songs ("oh my god", "thank god")
+    "lord",    # Religious/exclamation, not profanity
+    "hell",    # Common emphasis ("hell yeah", "what the hell")
+    "fat",     # Descriptor, not profanity
+    "slave",   # Historical/political context, not profanity
+    "slaves",  # Plural form
+    "panty",   # Clothing reference
+    "opium",   # Proper noun (record label) and common drug reference
 }
 
 COMPOUND_PROFANITY_ES = {

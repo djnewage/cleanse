@@ -23,7 +23,7 @@ if custom_words_file.exists():
 
 LRCLIB_BASE = "https://lrclib.net/api"
 USER_AGENT = "Cleanse Audio Censor App/1.0 (https://github.com/cleanse)"
-REQUEST_TIMEOUT = 5  # seconds
+REQUEST_TIMEOUT = (5, 15)  # (connect, read) — LRCLIB search can take ~10s on slow links
 
 # Genius API — lazy-initialized client
 _GENIUS_TOKEN = os.environ.get(
@@ -41,7 +41,6 @@ def _get_genius():
             import lyricsgenius
             _genius = lyricsgenius.Genius(
                 _GENIUS_TOKEN,
-                verbose=False,
                 remove_section_headers=True,
                 retries=1,
                 timeout=8,
@@ -139,28 +138,39 @@ def fetch_genius_lyrics(artist: str, title: str) -> str | None:
     if titles_to_try[0] != title:
         titles_to_try.append(title)
 
-    for search_title in titles_to_try:
-        try:
-            song = genius.search_song(search_title, artist)
-            if song and song.lyrics:
-                # Validate artist match
-                if song.artist and not _artist_matches(artist, song.artist):
-                    print(f"[Lyrics] Genius artist mismatch: requested '{artist}', got '{song.artist}'", file=sys.stderr)
-                    continue
+    # Try the full artist string first; if Genius returns a translation page or
+    # wrong artist (common for multi-artist tags like "X & Y"), retry with just
+    # the primary artist. Mirrors LRCLIB's fallback at _fetch_lrclib step 3.
+    artists_to_try = [artist]
+    first_artist = _extract_first_artist(artist)
+    if first_artist and first_artist != artist:
+        artists_to_try.append(first_artist)
 
-                cleaned = _clean_genius_lyrics(song.lyrics)
-                if not cleaned:
-                    continue
+    for search_artist in artists_to_try:
+        for search_title in titles_to_try:
+            try:
+                song = genius.search_song(search_title, search_artist)
+                if song and song.lyrics:
+                    # Validate artist match against the ORIGINAL requested artist
+                    # (not search_artist) so a first-artist-only search still has
+                    # to come back with someone in the original credits.
+                    if song.artist and not _artist_matches(artist, song.artist):
+                        print(f"[Lyrics] Genius artist mismatch: requested '{search_artist}', got '{song.artist}'", file=sys.stderr)
+                        continue
 
-                # Validate content looks like lyrics (not prose/essays)
-                if not _looks_like_lyrics(cleaned):
-                    print(f"[Lyrics] Genius result rejected (doesn't look like lyrics) for '{artist} - {search_title}'", file=sys.stderr)
-                    continue
+                    cleaned = _clean_genius_lyrics(song.lyrics)
+                    if not cleaned:
+                        continue
 
-                print(f"[Lyrics] Found Genius lyrics for '{artist} - {search_title}'", file=sys.stderr)
-                return cleaned
-        except Exception as e:
-            print(f"[Lyrics] Genius search failed for '{search_title}': {e}", file=sys.stderr)
+                    # Validate content looks like lyrics (not prose/essays)
+                    if not _looks_like_lyrics(cleaned):
+                        print(f"[Lyrics] Genius result rejected (doesn't look like lyrics) for '{search_artist} - {search_title}'", file=sys.stderr)
+                        continue
+
+                    print(f"[Lyrics] Found Genius lyrics for '{search_artist} - {search_title}'", file=sys.stderr)
+                    return cleaned
+            except Exception as e:
+                print(f"[Lyrics] Genius search failed for '{search_title}': {e}", file=sys.stderr)
 
     return None
 
@@ -331,12 +341,12 @@ def fetch_lyrics(artist: str | None, title: str | None, duration: float | None =
         lrclib_future = executor.submit(_fetch_lrclib, artist, title, duration)
 
         try:
-            genius_result = genius_future.result(timeout=15)
+            genius_result = genius_future.result(timeout=20)
         except Exception as e:
             print(f"[Lyrics] Genius future failed: {e}", file=sys.stderr)
 
         try:
-            lrclib_result = lrclib_future.result(timeout=15)
+            lrclib_result = lrclib_future.result(timeout=20)
         except Exception as e:
             print(f"[Lyrics] LRCLIB future failed: {e}", file=sys.stderr)
 
