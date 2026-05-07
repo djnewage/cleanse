@@ -150,7 +150,7 @@ from profanity_detector import flag_profanity
 from audio_processor import censor_audio, censor_audio_vocals_only
 from vocal_separator import separate as separate_vocals
 from device_info import detect_device
-from lyrics_fetcher import extract_metadata, fetch_lyrics, find_lyrics_profanity
+from lyrics_fetcher import extract_metadata, fetch_lyrics, find_lyrics_profanity, parse_synced_lyrics
 from lyrics_corrector import (
     correct_words_with_lyrics, fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics,
     extract_profanity_vocab, flag_with_profanity_vocab,
@@ -439,7 +439,26 @@ async def transcribe(req: TranscribeRequest):
         lyrics_aligned = alignment_score >= 0.25
 
         if req.synced_lyrics and lyrics_aligned:
-            final_words = fill_gaps_with_lyrics(final_words, req.synced_lyrics)
+            pre_count = len(final_words)
+            final_words = fill_gaps_with_lyrics(
+                final_words, req.synced_lyrics, audio_duration=result["duration"]
+            )
+            if len(final_words) == pre_count:
+                # Synced gap-fill bailed (typically a remix/edit where the original
+                # lyrics span longer than the audio, tripping its 2x-word safeguard).
+                # Plain gap-fill uses anchor interpolation between matched words,
+                # which adapts to whatever the audio's actual timing is.
+                plain_from_synced = "\n".join(
+                    line["text"] for line in parse_synced_lyrics(req.synced_lyrics)
+                )
+                if plain_from_synced.strip():
+                    print(
+                        "[Pipeline] Synced gap-fill bailed; falling back to plain gap-fill (anchor-based).",
+                        file=sys.stderr,
+                    )
+                    final_words = fill_gaps_with_plain_lyrics(
+                        final_words, plain_from_synced, result["duration"]
+                    )
         elif not req.synced_lyrics and req.lyrics:
             # Fallback: use plain lyrics (no timestamps) with sequence alignment
             final_words = fill_gaps_with_plain_lyrics(

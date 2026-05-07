@@ -48,7 +48,7 @@ def main():
     print("Loading modules...", flush=True)
     from transcribe import transcribe_audio
     from profanity_detector import flag_profanity
-    from lyrics_fetcher import extract_metadata, fetch_lyrics
+    from lyrics_fetcher import extract_metadata, fetch_lyrics, parse_synced_lyrics
     from lyrics_corrector import (
         correct_words_with_lyrics,
         fill_gaps_with_lyrics,
@@ -116,7 +116,21 @@ def main():
     # ── Step 6: Gap filling ──
     pre_gap_count = len(words)
     if synced_lyrics and lyrics_aligned:
-        words = fill_gaps_with_lyrics(words, synced_lyrics)
+        words = fill_gaps_with_lyrics(words, synced_lyrics, audio_duration=audio_duration)
+        if len(words) == pre_gap_count:
+            # Synced gap-fill bailed (typically a remix/edit where original
+            # lyrics span longer than the audio). Fall back to anchor-based
+            # plain gap-fill using the synced lyrics text.
+            plain_from_synced = "\n".join(
+                line["text"] for line in parse_synced_lyrics(synced_lyrics)
+            )
+            if plain_from_synced.strip():
+                print(
+                    "[Pipeline] Synced gap-fill bailed; falling back to plain gap-fill (anchor-based)."
+                )
+                words = fill_gaps_with_plain_lyrics(
+                    words, plain_from_synced, audio_duration
+                )
     elif not synced_lyrics and plain_lyrics:
         words = fill_gaps_with_plain_lyrics(words, plain_lyrics, audio_duration)
     stats["gap_fills"] = len(words) - pre_gap_count

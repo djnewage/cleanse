@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 from typing import List, Dict, Optional, Tuple
 from lyrics_fetcher import parse_synced_lyrics
 from better_profanity import profanity as _profanity_checker
-from profanity_detector import _normalize_word
+from profanity_detector import _normalize_word, WHITELIST
 
 # Configuration constants
 TIME_WINDOW_SECONDS = 5.0  # Max time drift to consider words in same window
@@ -245,6 +245,7 @@ def fill_gaps_with_lyrics(
     synced_lyrics: str,
     overlap_time_threshold: float = 0.75,
     coverage_threshold: float = 0.3,
+    audio_duration: float | None = None,
 ) -> List[Dict]:
     """
     Fill gaps in transcription where synced lyrics have content but transcription is empty.
@@ -258,6 +259,9 @@ def fill_gaps_with_lyrics(
         synced_lyrics: LRC format string
         overlap_time_threshold: Max seconds to consider a transcribed word as covering a lyrics word
         coverage_threshold: Fraction of line words that must be covered to skip gap-fill
+        audio_duration: If provided, lyric lines starting after this (with a small
+            buffer) are dropped. Lets the function work for edits/remixes that are
+            shorter than the original song without tripping the 2x safeguard.
 
     Returns:
         New list with original words + gap-filled words, sorted by start time.
@@ -269,6 +273,18 @@ def fill_gaps_with_lyrics(
     lyrics_lines = parse_synced_lyrics(synced_lyrics)
     if not lyrics_lines:
         return transcribed_words
+
+    if audio_duration is not None:
+        original_count = len(lyrics_lines)
+        lyrics_lines = [l for l in lyrics_lines if l["time"] <= audio_duration + 5]
+        if len(lyrics_lines) < original_count:
+            print(
+                f"[LyricsCorrector] Clipped synced lyrics to audio duration "
+                f"({audio_duration:.1f}s): {len(lyrics_lines)} of {original_count} lines kept",
+                file=sys.stderr,
+            )
+        if not lyrics_lines:
+            return transcribed_words
 
     new_words = []
 
@@ -436,6 +452,11 @@ def fill_gaps_with_plain_lyrics(
     # Step 1: Find where transcription starts in the lyrics
     alignment_start = _find_lyrics_alignment_start(transcribed_words, lyrics_tokens)
     if alignment_start is None:
+        print(
+            f"[LyricsCorrector] Plain gap-fill: no alignment start found "
+            f"(lyrics_tokens={len(lyrics_tokens)}, trans={len(transcribed_words)})",
+            file=sys.stderr,
+        )
         return transcribed_words
 
     # Step 2: Greedy forward alignment from the start position
@@ -457,6 +478,10 @@ def fill_gaps_with_plain_lyrics(
             lyrics_ptr = best_idx + 1
 
     if not alignment:
+        print(
+            f"[LyricsCorrector] Plain gap-fill: alignment empty (start={alignment_start})",
+            file=sys.stderr,
+        )
         return transcribed_words
 
     # Step 3: Identify gap segments and inject words
@@ -516,6 +541,11 @@ def fill_gaps_with_plain_lyrics(
             )
 
     if not new_words:
+        print(
+            f"[LyricsCorrector] Plain gap-fill: no gap segments produced "
+            f"(alignment={len(alignment)}, lyrics_tokens={len(lyrics_tokens)})",
+            file=sys.stderr,
+        )
         return transcribed_words
 
     # Reject if gap-fill would add far more words than the transcription — lyrics are likely wrong
@@ -543,11 +573,18 @@ def extract_profanity_vocab(lyrics_text: str) -> set:
 
     Useful for remixes or poor-alignment scenarios where timestamp-based
     matching fails but the vocabulary is still informative.
+
+    Filters out WHITELIST entries — better-profanity flags some non-profane
+    words ("god", "fat", "slave", proper nouns like "Woody"), and including
+    them in the vocab causes fuzzy-match false positives downstream.
     """
     vocab = set()
     for word in re.findall(r"[\w']+", lyrics_text):
         if _is_profanity(word):
-            vocab.add(word.lower())
+            lowered = word.lower()
+            if any(v in WHITELIST for v in _normalize_word(lowered)):
+                continue
+            vocab.add(lowered)
     return vocab
 
 
@@ -565,6 +602,20 @@ def flag_with_profanity_vocab(
     if not profanity_vocab:
         return words
 
+    # SequenceMatcher ratio is permissive on short tokens — "He's" vs "hoes",
+    # "toes" vs "hoes", and "holes" vs "hoes" all score 0.75. Require a tighter
+    # match for short vocab words to avoid false positives.
+    def _threshold_for(pword: str) -> float:
+        n = len(pword)
+        if n <= 3:
+            return 0.95
+        if n == 4:
+            # Single-substitution against a 4-letter word gives ratio ~0.85
+            # ("hes"/"holes" vs "hoes"). Tighten so coincidental near-matches
+            # don't get flagged as profanity.
+            return 0.90
+        return similarity_threshold
+
     flagged_count = 0
     result = []
     for w in words:
@@ -572,15 +623,19 @@ def flag_with_profanity_vocab(
             result.append(w)
             continue
 
-        # Check if any profanity vocab word is a close match
-        best_sim = 0.0
+        # Defense in depth: even if a WHITELIST word slipped into the vocab
+        # somehow, never flag a transcribed word that itself is whitelisted.
+        if any(v in WHITELIST for v in _normalize_word(w["word"])):
+            result.append(w)
+            continue
+
+        matched = False
         for pword in profanity_vocab:
-            sim = _compute_word_similarity(w["word"], pword)
-            best_sim = max(best_sim, sim)
-            if sim >= similarity_threshold:
+            if _compute_word_similarity(w["word"], pword) >= _threshold_for(pword):
+                matched = True
                 break
 
-        if best_sim >= similarity_threshold:
+        if matched:
             flagged_count += 1
             result.append({**w, "is_profanity": True, "detection_source": "lyrics"})
         else:
