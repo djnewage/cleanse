@@ -6,6 +6,7 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 from pydub import AudioSegment
 from pydub.generators import Sine
+from pydub.utils import mediainfo_json
 
 # Padding in milliseconds to account for timestamp imprecision and reverb tails.
 # The after-padding is larger to catch echoes/delay effects common in
@@ -24,6 +25,18 @@ VOCAL_SILENCE_THRESHOLD = -40
 # Preserves sub-bass/kick (below 250Hz) and hi-hats/cymbals (above 4kHz).
 BANDREJECT_LOW = 250
 BANDREJECT_HIGH = 4000
+
+# Output extensions whose pydub format accepts a `bitrate` kwarg (lossy codecs).
+# WAV/FLAC are lossless and pydub ignores/rejects bitrate for them.
+_LOSSY_FORMATS = {"mp3", "mp4", "ogg"}
+
+# Fallback bitrate when source detection fails. 320k is the max for MP3 and
+# perceptually transparent for stereo music.
+_DEFAULT_LOSSY_BITRATE_KBPS = 320
+
+# Minimum bitrate to accept from source probing. Below this, the source is
+# likely speech-only or corrupted metadata — fall back to the default.
+_MIN_SOURCE_BITRATE_KBPS = 96
 
 
 
@@ -93,12 +106,55 @@ def _splice_with_crossfade(audio: AudioSegment, start_ms: int, end_ms: int, repl
     return before + replacement + after
 
 
-def _export(audio: AudioSegment, output_path: str) -> str:
-    """Export audio to the given path, inferring format from extension."""
+def _detect_source_bitrate_kbps(source_path: str | None) -> int | None:
+    """Probe a source file's audio bitrate in kbps. Returns None on failure.
+
+    Uses mediainfo_json (not mediainfo) because main.py monkey-patches the
+    JSON variant with an ffmpeg-based fallback when ffprobe is not on PATH.
+    """
+    if not source_path or not os.path.isfile(source_path):
+        return None
+    try:
+        info = mediainfo_json(source_path)
+    except Exception:
+        return None
+    # Prefer the audio stream's bit_rate; fall back to container/format bit_rate.
+    candidates = []
+    for stream in info.get("streams", []):
+        if stream.get("codec_type") == "audio" and stream.get("bit_rate"):
+            candidates.append(stream["bit_rate"])
+    fmt_br = info.get("format", {}).get("bit_rate")
+    if fmt_br:
+        candidates.append(fmt_br)
+    for raw in candidates:
+        if raw and str(raw).isdigit():
+            kbps = int(raw) // 1000
+            if kbps >= _MIN_SOURCE_BITRATE_KBPS:
+                return kbps
+    return None
+
+
+def _export(audio: AudioSegment, output_path: str, source_path: str | None = None) -> str:
+    """Export audio, preserving source bitrate for lossy formats.
+
+    Args:
+        audio: The processed AudioSegment to write.
+        output_path: Destination path; format is inferred from extension.
+        source_path: Optional original input path used to probe a target
+            bitrate. Falls back to a high-quality default if unavailable.
+    """
     ext = os.path.splitext(output_path)[1].lower().lstrip(".")
     format_map = {"mp3": "mp3", "wav": "wav", "ogg": "ogg", "m4a": "mp4", "flac": "flac"}
     out_format = format_map.get(ext, "mp3")
-    audio.export(output_path, format=out_format)
+
+    kwargs: dict = {"format": out_format}
+    if out_format in _LOSSY_FORMATS:
+        src_kbps = _detect_source_bitrate_kbps(source_path)
+        # Cap at 320k: that's MP3's ceiling and audibly transparent for AAC/Opus.
+        target_kbps = min(src_kbps or _DEFAULT_LOSSY_BITRATE_KBPS, 320)
+        kwargs["bitrate"] = f"{target_kbps}k"
+
+    audio.export(output_path, **kwargs)
     return output_path
 
 
@@ -148,7 +204,7 @@ def censor_audio(
         replacement = _make_replacement(audio, start_ms, end_ms, censor_type)
         audio = _splice_with_crossfade(audio, start_ms, end_ms, replacement, crossfade_ms)
 
-    return _export(audio, output_path)
+    return _export(audio, output_path, source_path=input_path)
 
 
 def censor_audio_vocals_only(
@@ -159,6 +215,7 @@ def censor_audio_vocals_only(
     crossfade_ms: int = CROSSFADE_MS,
     padding_before_ms: int = PADDING_BEFORE_MS,
     padding_after_ms: int = PADDING_AFTER_MS,
+    source_path: str | None = None,
 ) -> str:
     """
     Censor only the vocals track, then remix with untouched accompaniment.
@@ -171,6 +228,9 @@ def censor_audio_vocals_only(
         crossfade_ms: Duration of crossfade at edit boundaries
         padding_before_ms: Extra ms before each word to censor
         padding_after_ms: Extra ms after each word to censor
+        source_path: Original full-mix input path; used to detect target export
+            bitrate. Demucs stems are typically WAV, so probing them would
+            yield no useful bitrate hint.
 
     Returns:
         The output file path
@@ -228,4 +288,4 @@ def censor_audio_vocals_only(
 
     # Mix censored vocals back with accompaniment
     mixed = accompaniment.overlay(vocals)
-    return _export(mixed, output_path)
+    return _export(mixed, output_path, source_path=source_path)

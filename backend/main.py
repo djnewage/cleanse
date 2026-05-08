@@ -552,6 +552,7 @@ def preview(req: CensorRequest):
                 crossfade_ms=req.crossfade_ms,
                 padding_before_ms=req.padding_before_ms,
                 padding_after_ms=req.padding_after_ms,
+                source_path=req.path,
             )
         else:
             result_path = censor_audio(
@@ -593,6 +594,7 @@ def censor(req: CensorRequest):
                 crossfade_ms=req.crossfade_ms,
                 padding_before_ms=req.padding_before_ms,
                 padding_after_ms=req.padding_after_ms,
+                source_path=req.path,
             )
         else:
             result_path = censor_audio(

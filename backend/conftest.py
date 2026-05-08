@@ -24,3 +24,9 @@ for mod in [
 ]:
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
+
+# scipy.signal probes torch.Tensor with issubclass() at import time. A bare
+# MagicMock attribute fails that check, so expose a real (empty) class.
+class _DummyTensor:
+    pass
+sys.modules["torch"].Tensor = _DummyTensor
