@@ -29,21 +29,99 @@ class TestExport:
         path = str(tmp_path / "out.m4a")
         with patch.object(audio, "export") as mock_export:
             _export(audio, path)
-            mock_export.assert_called_once_with(path, format="mp4")
+            mock_export.assert_called_once_with(path, format="mp4", bitrate="320k")
 
     def test_unknown_extension_falls_back_to_mp3(self, tmp_path):
         audio = pydub.AudioSegment.silent(duration=100)
         path = str(tmp_path / "out.xyz")
         with patch.object(audio, "export") as mock_export:
             _export(audio, path)
-            mock_export.assert_called_once_with(path, format="mp3")
+            mock_export.assert_called_once_with(path, format="mp3", bitrate="320k")
 
     def test_flac_format(self, tmp_path):
+        """Lossless formats must NOT receive a bitrate kwarg."""
         audio = pydub.AudioSegment.silent(duration=100)
         path = str(tmp_path / "out.flac")
         with patch.object(audio, "export") as mock_export:
             _export(audio, path)
             mock_export.assert_called_once_with(path, format="flac")
+
+    def test_lossy_default_bitrate_when_no_source(self, tmp_path):
+        """With no source_path, lossy outputs default to 320k."""
+        audio = pydub.AudioSegment.silent(duration=100)
+        path = str(tmp_path / "out.mp3")
+        with patch.object(audio, "export") as mock_export:
+            _export(audio, path)
+            mock_export.assert_called_once_with(path, format="mp3", bitrate="320k")
+
+    def _info(self, bit_rate: str, where: str = "stream"):
+        """Build a mediainfo_json-shaped dict with bit_rate on stream or format."""
+        if where == "stream":
+            return {"streams": [{"codec_type": "audio", "bit_rate": bit_rate}], "format": {}}
+        return {"streams": [], "format": {"bit_rate": bit_rate}}
+
+    def test_lossy_uses_source_bitrate(self, tmp_path):
+        """When source bitrate is detected, export uses it (capped at 320k)."""
+        audio = pydub.AudioSegment.silent(duration=100)
+        path = str(tmp_path / "out.mp3")
+        src = tmp_path / "song.mp3"
+        src.touch()
+        with patch("audio_processor.mediainfo_json", return_value=self._info("192000")):
+            with patch.object(audio, "export") as mock_export:
+                _export(audio, path, source_path=str(src))
+                mock_export.assert_called_once_with(path, format="mp3", bitrate="192k")
+
+    def test_lossy_uses_format_bitrate_when_no_stream_bitrate(self, tmp_path):
+        """Some containers only report bitrate on the format, not the stream."""
+        audio = pydub.AudioSegment.silent(duration=100)
+        path = str(tmp_path / "out.mp3")
+        src = tmp_path / "song.mp3"
+        src.touch()
+        with patch("audio_processor.mediainfo_json", return_value=self._info("256000", where="format")):
+            with patch.object(audio, "export") as mock_export:
+                _export(audio, path, source_path=str(src))
+                mock_export.assert_called_once_with(path, format="mp3", bitrate="256k")
+
+    def test_lossy_caps_source_bitrate_at_320k(self, tmp_path):
+        """Sources reporting >320k (e.g. lossless WAV) are capped at 320k."""
+        audio = pydub.AudioSegment.silent(duration=100)
+        path = str(tmp_path / "out.mp3")
+        src = tmp_path / "song.wav"
+        src.touch()
+        with patch("audio_processor.mediainfo_json", return_value=self._info("1411000")):
+            with patch.object(audio, "export") as mock_export:
+                _export(audio, path, source_path=str(src))
+                mock_export.assert_called_once_with(path, format="mp3", bitrate="320k")
+
+    def test_lossless_ignores_source_bitrate(self, tmp_path):
+        """WAV/FLAC outputs never get a bitrate kwarg, even with a source path."""
+        audio = pydub.AudioSegment.silent(duration=100)
+        path = str(tmp_path / "out.wav")
+        src = tmp_path / "song.mp3"
+        src.touch()
+        with patch("audio_processor.mediainfo_json", return_value=self._info("192000")):
+            with patch.object(audio, "export") as mock_export:
+                _export(audio, path, source_path=str(src))
+                mock_export.assert_called_once_with(path, format="wav")
+
+    def test_low_source_bitrate_falls_back_to_default(self, tmp_path):
+        """A suspiciously low (or stale) source bitrate falls back to 320k."""
+        audio = pydub.AudioSegment.silent(duration=100)
+        path = str(tmp_path / "out.mp3")
+        src = tmp_path / "song.mp3"
+        src.touch()
+        with patch("audio_processor.mediainfo_json", return_value=self._info("32000")):
+            with patch.object(audio, "export") as mock_export:
+                _export(audio, path, source_path=str(src))
+                mock_export.assert_called_once_with(path, format="mp3", bitrate="320k")
+
+    def test_missing_source_path_falls_back_to_default(self, tmp_path):
+        """A source_path that doesn't exist on disk should fall back to 320k."""
+        audio = pydub.AudioSegment.silent(duration=100)
+        path = str(tmp_path / "out.mp3")
+        with patch.object(audio, "export") as mock_export:
+            _export(audio, path, source_path="/does/not/exist.mp3")
+            mock_export.assert_called_once_with(path, format="mp3", bitrate="320k")
 
 
 class TestMakeReplacement:
