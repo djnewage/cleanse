@@ -549,7 +549,11 @@ app.whenReady().then(async () => {
   // Supports HTTP Range requests so <audio> elements can seek
   protocol.handle('media', async (request) => {
     const raw = request.url.slice('media://'.length)
-    const filePath = decodeURIComponent(raw)
+    let filePath = decodeURIComponent(raw)
+    // Chromium strips the colon from Windows drive letters (C:/… → C/…)
+    if (/^[a-zA-Z]\//.test(filePath)) {
+      filePath = filePath[0] + ':' + filePath.slice(1)
+    }
 
     try {
       const fileStat = await stat(filePath)

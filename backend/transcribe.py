@@ -311,7 +311,7 @@ def transcribe_audio(
                 )
                 last_end = max(last_end, w.end)
 
-    print(f"[Transcribe] Transcription done in {_time.monotonic() - t2:.1f}s — {len(words)} words", file=sys.stderr)
+    print(f"[Transcribe] Transcription done in {_time.monotonic() - t2:.1f}s - {len(words)} words", file=sys.stderr)
     _report_progress("complete", round(progress_offset + progress_scale, 1), "Transcription complete!")
 
     return {

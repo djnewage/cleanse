@@ -69,11 +69,15 @@ function getBackendPath(): string {
 function getBackendCommand(): { command: string; args: string[] } {
   if (app.isPackaged) {
     // PyInstaller binary — standalone executable, no Python needed
-    const binary = path.join(process.resourcesPath, 'backend', 'cleanse-backend')
+    const exeName = process.platform === 'win32' ? 'cleanse-backend.exe' : 'cleanse-backend'
+    const binary = path.join(process.resourcesPath, 'backend', exeName)
     return { command: binary, args: ['--port', String(backendPort)] }
   }
   // Dev mode — use venv python + main.py
-  const pythonPath = path.join(getBackendPath(), 'venv', 'bin', 'python3')
+  const pythonPath =
+    process.platform === 'win32'
+      ? path.join(getBackendPath(), 'venv', 'Scripts', 'python.exe')
+      : path.join(getBackendPath(), 'venv', 'bin', 'python3')
   return { command: pythonPath, args: ['main.py', '--port', String(backendPort)] }
 }
 
@@ -118,7 +122,11 @@ export async function startPythonBackend(): Promise<number> {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      PYTHONUNBUFFERED: '1'
+      PYTHONUNBUFFERED: '1',
+      // UTF-8 mode: makes Python use UTF-8 for stdio AND filesystem paths,
+      // so non-ASCII usernames (e.g. C:\Users\Müller) don't break the venv
+      // path or file imports on Windows. No-op on macOS/Linux (already UTF-8).
+      PYTHONUTF8: '1'
     }
   })
 

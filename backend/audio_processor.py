@@ -269,7 +269,7 @@ def censor_audio_vocals_only(
             f"censor={censor_type} "
             f"vocal_dBFS={vocal_level:.1f} "
             f"source={w.get('detection_source', 'unknown')}"
-            f"{'  → BANDREJECT' if is_leaked else ''}",
+            f"{'  -> BANDREJECT' if is_leaked else ''}",
             file=sys.stderr,
         )
 

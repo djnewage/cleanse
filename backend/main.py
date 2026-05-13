@@ -8,6 +8,13 @@ import tempfile
 import threading
 from urllib.parse import unquote
 
+# Force UTF-8 on Windows so Unicode in log messages doesn't crash with 'charmap'
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Required for PyInstaller: without this, multiprocessing child processes
 # re-execute main.py and crash on argparse (they receive internal args like
 # -B -S -I that argparse doesn't recognise). Must be called before anything else.
@@ -138,7 +145,7 @@ if not shutil.which('ffprobe'):
     import pydub.audio_segment
     pydub.utils.mediainfo_json = _ffmpeg_mediainfo_json
     pydub.audio_segment.mediainfo_json = _ffmpeg_mediainfo_json
-    print(f"[Info] ffprobe not found — using ffmpeg-based probe fallback", file=sys.stderr)
+    print(f"[Info] ffprobe not found - using ffmpeg-based probe fallback", file=sys.stderr)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -418,7 +425,7 @@ async def transcribe(req: TranscribeRequest):
                 f"[Dual-Pass] Vocals pass: {len(vocals_result['words'])} words, "
                 f"{raw_profanity} profanity, "
                 f"{len(secondary_words)} after confidence filter (removed {raw_count - len(secondary_words)})"
-                f"{' — PRIMARY SPARSE, importing all vocals words' if sparse else ''}",
+                f"{' - PRIMARY SPARSE, importing all vocals words' if sparse else ''}",
                 file=sys.stderr,
             )
             final_words = merge_word_lists(primary_words, secondary_words, import_all=sparse)

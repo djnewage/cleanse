@@ -15,7 +15,7 @@ export default function FileUpload({ onFilesSelected, disabled }: FileUploadProp
     if (filePaths.length > 0) {
       const files = filePaths.map((path) => ({
         path,
-        name: path.split('/').pop() || path
+        name: path.split(/[\\/]/).pop() || path
       }))
       onFilesSelected(files)
     }

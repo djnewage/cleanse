@@ -44,6 +44,22 @@ linux:
     - deb
   maintainer: ''
   category: Utility
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  artifactName: ${name}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Cleanse
 publish:
   provider: github
   owner: djnewage

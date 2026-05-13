@@ -98,7 +98,7 @@ def correct_words_with_lyrics(
                 corrected_word["detection_source"] = "lyrics_corrected"
 
                 print(
-                    f"[LyricsCorrector] Corrected '{tw['word']}' → '{lyrics_word}' "
+                    f"[LyricsCorrector] Corrected '{tw['word']}' -> '{lyrics_word}' "
                     f"(similarity: {similarity:.2f}, trans_conf: {tw['confidence']:.2f})"
                 )
 
@@ -669,8 +669,8 @@ if __name__ == "__main__":
     for w in corrected:
         if "original_word" in w:
             print(
-                f"✅ {w['original_word']} → {w['word']} "
+                f"[OK] {w['original_word']} -> {w['word']} "
                 f"(confidence: {w['correction_confidence']:.2f})"
             )
         else:
-            print(f"⏭️  {w['word']} (no correction)")
+            print(f"[SKIP] {w['word']} (no correction)")
