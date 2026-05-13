@@ -42,7 +42,12 @@ $LockFile = Join-Path $BackendDir 'requirements.lock'
 $ReqFile = Join-Path $BackendDir 'requirements.txt'
 if (Test-Path $LockFile) {
     Write-Host 'Using backend/requirements.lock (frozen)'
-    & $VenvPip install -r $LockFile
+    # uvloop is Unix-only (transitive dep of uvicorn[standard] on macOS/Linux).
+    # The lockfile is generated on macOS and pins uvloop without a platform marker,
+    # so strip it here — uvicorn falls back to asyncio's default loop on Windows.
+    $FilteredLock = Join-Path $env:TEMP 'cleanse-requirements-win.lock'
+    Get-Content $LockFile | Where-Object { $_ -notmatch '^uvloop==' } | Set-Content $FilteredLock
+    & $VenvPip install -r $FilteredLock
 } else {
     Write-Host 'No lockfile; using requirements.txt'
     & $VenvPip install -r $ReqFile
