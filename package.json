@@ -18,12 +18,14 @@
     "test:accuracy": "bash scripts/test-accuracy.sh",
     "build:backend": "bash scripts/build-backend.sh",
     "build:backend:x64": "bash scripts/build-backend-x64.sh",
+    "build:backend:win": "powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
     "build:mac": "npm run build:backend && electron-vite build && electron-builder --mac --arm64",
     "build:mac:x64": "npm run build:backend:x64 && electron-vite build && electron-builder --mac --x64",
     "build:mac:dev": "npm run build:backend && electron-vite build && electron-builder --mac --arm64",
-    "build:win": "npm run build && electron-builder --win",
+    "build:win": "npm run build:backend:win && electron-vite build && electron-builder --win --x64",
     "build:linux": "electron-vite build && electron-builder --linux",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "release:win": "powershell -ExecutionPolicy Bypass -File scripts/release.ps1"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
