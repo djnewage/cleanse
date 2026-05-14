@@ -1,5 +1,3 @@
-const { notarize } = require('@electron/notarize');
-
 exports.default = async function notarizing(context) {
   const { electronPlatformName, appOutDir } = context;
 
@@ -19,6 +17,10 @@ exports.default = async function notarizing(context) {
     console.log('Skipping notarization — APPLE_API_KEY, APPLE_API_KEY_ID, or APPLE_API_ISSUER not set.');
     return;
   }
+
+  // @electron/notarize is ESM-only; defer the import so this CommonJS
+  // file still loads on Windows (where this function early-returns).
+  const { notarize } = await import('@electron/notarize');
 
   const appPath = `${appOutDir}/${appName}.app`;
   console.log(`afterSign hook: notarizing ${appBundleId}`);
