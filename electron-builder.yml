@@ -49,9 +49,8 @@ win:
     - target: nsis
       arch:
         - x64
-    - target: zip
-      arch:
-        - x64
+  # zip target removed: artifact exceeds GitHub's 2 GiB release-asset limit.
+  # NSIS installer (.exe) is the primary distribution channel anyway.
   artifactName: ${name}-${version}-${arch}.${ext}
 nsis:
   oneClick: false
