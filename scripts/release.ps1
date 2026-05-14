@@ -25,7 +25,8 @@ if ($branch -ne 'master') {
     exit 1
 }
 
-if ((git diff-index --quiet HEAD -- 2>$null; $LASTEXITCODE) -ne 0) {
+git diff-index --quiet HEAD -- 2>$null
+if ($LASTEXITCODE -ne 0) {
     Write-Error 'Uncommitted changes detected. Commit or stash first.'
     exit 1
 }
