@@ -1,10 +1,27 @@
 import * as Sentry from '@sentry/electron/main'
 import { app, shell, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
 
+// Errors that originate from user-facing file-state checks (file moved, renamed,
+// missing volume) are surfaced to the user as friendly toasts; reporting them
+// to Sentry just creates noise. Drop them before they leave the process.
+const USER_FACING_ERROR_PATTERNS = [
+  /File no longer exists on disk/i,
+  /File not found:/i
+]
+
+function isUserFacingError(message: string | undefined): boolean {
+  if (!message) return false
+  return USER_FACING_ERROR_PATTERNS.some((re) => re.test(message))
+}
+
 Sentry.init({
   dsn: 'https://c27473b596f92b07557b89836e8e0941@o4510700679593984.ingest.us.sentry.io/4510875528921088',
   release: `cleanse@${app.getVersion()}`,
-  integrations: (defaults) => defaults.filter((i) => i.name !== 'PreloadInjection')
+  integrations: (defaults) => defaults.filter((i) => i.name !== 'PreloadInjection'),
+  beforeSend(event) {
+    const msg = event.exception?.values?.[0]?.value ?? event.message
+    return isUserFacingError(msg) ? null : event
+  }
 })
 
 import { join, extname, basename } from 'path'
