@@ -142,7 +142,9 @@ export default function WaveformPlayer({
   }, [src]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const togglePlayPause = useCallback(() => {
-    wavesurferRef.current?.playPause()
+    wavesurferRef.current?.playPause()?.catch((err: unknown) => {
+      console.warn('[WaveformPlayer] play failed:', err)
+    })
   }, [])
 
   return (
