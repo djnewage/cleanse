@@ -4,6 +4,7 @@ import json as json_module
 import multiprocessing
 import os
 import sys
+import time
 import tempfile
 import threading
 from urllib.parse import unquote
@@ -151,6 +152,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from typing import Literal
+
+ExportFormat = Literal["mp3", "wav", "flac"]
 
 from transcribe import transcribe_audio, warmup_model
 from profanity_detector import flag_profanity
@@ -162,6 +166,28 @@ from lyrics_corrector import (
     correct_words_with_lyrics, fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics,
     extract_profanity_vocab, flag_with_profanity_vocab,
 )
+
+
+def _purge_stale_previews() -> None:
+    """Delete cleanse-preview files older than 24h on startup.
+
+    Catches orphans from prior sessions where the renderer crashed or quit
+    without giving the backend a chance to clean up.
+    """
+    import glob
+    temp_dir = os.path.join(tempfile.gettempdir(), "cleanse-preview")
+    if not os.path.isdir(temp_dir):
+        return
+    cutoff = time.time() - 24 * 3600
+    for path in glob.glob(os.path.join(temp_dir, "*_preview_*")):
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError as e:
+            print(f"[Startup] Could not remove stale preview {path}: {e}", file=sys.stderr)
+
+
+_purge_stale_previews()
 
 
 app = FastAPI(title="Cleanse Backend")
@@ -254,6 +280,7 @@ class CensorRequest(BaseModel):
     crossfade_ms: int = 30
     padding_before_ms: int = 50
     padding_after_ms: int = 250
+    output_format: ExportFormat | None = None
 
 
 @app.get("/health")
@@ -547,7 +574,18 @@ def preview(req: CensorRequest):
         # Create preview filename with timestamp to handle edits
         base = os.path.basename(req.path)
         name, ext = os.path.splitext(base)
+        if req.output_format:
+            ext = f".{req.output_format}"
         import time
+        import glob
+        # Cap cleanse-preview/ at one file per source song: every regen leaves
+        # an orphaned 5-40 MB preview behind otherwise, which exhausts the temp
+        # disk after a few format/crossfade toggles.
+        for stale in glob.glob(os.path.join(temp_dir, f"{name}_preview_*")):
+            try:
+                os.remove(stale)
+            except OSError as e:
+                print(f"[Preview] Could not remove stale preview {stale}: {e}", file=sys.stderr)
         preview_path = os.path.join(temp_dir, f"{name}_preview_{int(time.time())}{ext}")
 
         words_dicts = [w.model_dump() for w in req.words]
@@ -591,7 +629,17 @@ def censor(req: CensorRequest):
         output_path = req.output_path
         if not output_path:
             base, ext = os.path.splitext(req.path)
+            if req.output_format:
+                ext = f".{req.output_format}"
             output_path = f"{base}_clean{ext}"
+        elif req.output_format:
+            # User picked a format but the dialog returned a path without the
+            # matching extension — coerce. The dialog's typed extension still
+            # wins if it's an explicit audio extension.
+            existing_ext = os.path.splitext(output_path)[1].lower().lstrip(".")
+            known_exts = {"mp3", "wav", "flac", "aiff", "aif", "ogg", "m4a"}
+            if existing_ext not in known_exts:
+                output_path = os.path.splitext(output_path)[0] + f".{req.output_format}"
 
         words_dicts = [w.model_dump() for w in req.words]
 

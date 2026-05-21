@@ -144,7 +144,7 @@ def _export(audio: AudioSegment, output_path: str, source_path: str | None = Non
             bitrate. Falls back to a high-quality default if unavailable.
     """
     ext = os.path.splitext(output_path)[1].lower().lstrip(".")
-    format_map = {"mp3": "mp3", "wav": "wav", "ogg": "ogg", "m4a": "mp4", "flac": "flac"}
+    format_map = {"mp3": "mp3", "wav": "wav", "ogg": "ogg", "m4a": "mp4", "flac": "flac", "aiff": "aiff", "aif": "aiff"}
     out_format = format_map.get(ext, "mp3")
 
     kwargs: dict = {"format": out_format}

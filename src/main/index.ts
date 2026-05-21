@@ -165,7 +165,7 @@ ipcMain.handle('select-output-path', async (_event, defaultName: string) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: defaultName,
     filters: [
-      { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac'] }
+      { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aiff'] }
     ]
   })
   if (result.canceled || !result.filePath) return null
@@ -312,6 +312,7 @@ ipcMain.handle(
       crossfadeMs: number
       paddingBeforeMs?: number
       paddingAfterMs?: number
+      outputFormat?: string
     }
   ) => {
     await ensureFileExists(args.filePath)
@@ -330,6 +331,9 @@ ipcMain.handle(
       if (args.vocalsPath && args.accompanimentPath) {
         body.vocals_path = args.vocalsPath
         body.accompaniment_path = args.accompanimentPath
+      }
+      if (args.outputFormat) {
+        body.output_format = args.outputFormat
       }
 
       const resp = await fetchBackend('/preview', {
@@ -370,7 +374,8 @@ ipcMain.handle(
     accompanimentPath?: string,
     crossfadeMs?: number,
     paddingBeforeMs?: number,
-    paddingAfterMs?: number
+    paddingAfterMs?: number,
+    outputFormat?: string
   ) => {
     await ensureFileExists(filePath)
     try {
@@ -387,6 +392,9 @@ ipcMain.handle(
       }
       if (paddingAfterMs !== undefined) {
         body.padding_after_ms = paddingAfterMs
+      }
+      if (outputFormat) {
+        body.output_format = outputFormat
       }
 
       const resp = await fetchBackend('/censor', {
@@ -514,7 +522,9 @@ function getAudioMimeType(filePath: string): string {
     '.m4a': 'audio/mp4',
     '.flac': 'audio/flac',
     '.aac': 'audio/aac',
-    '.wma': 'audio/x-ms-wma'
+    '.wma': 'audio/x-ms-wma',
+    '.aiff': 'audio/aiff',
+    '.aif': 'audio/aiff'
   }
   return mimeTypes[ext] || 'application/octet-stream'
 }

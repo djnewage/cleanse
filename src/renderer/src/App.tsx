@@ -5,6 +5,7 @@ import type {
   BatchAppState,
   BatchAppAction,
   CensorType,
+  ExportFormat,
   SongEntry,
   CensorWord,
   TranscribedWord
@@ -54,6 +55,11 @@ function fuzzyMatch(word: string, target: string): boolean {
     return matches / longer.length >= 0.8
   }
   return false
+}
+
+function resolveExportExt(sourceName: string, format: ExportFormat): string {
+  if (format !== 'source') return format
+  return sourceName.split('.').pop()?.toLowerCase() || 'mp3'
 }
 
 function applyCustomProfanity(words: TranscribedWord[], customWords: string[]): TranscribedWord[] {
@@ -272,6 +278,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
           s.id === action.songId
             ? {
                 ...s,
+                status: s.status === 'completed' ? 'ready' : s.status,
                 words: [...s.words, action.word].sort((a, b) => a.start - b.start),
                 censoredFilePath: null,
                 previewFilePath: null
@@ -287,6 +294,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
           s.id === action.songId
             ? {
                 ...s,
+                status: s.status === 'completed' ? 'ready' : s.status,
                 words: s.words.filter((_, i) => i !== action.wordIndex),
                 censoredFilePath: null,
                 previewFilePath: null
@@ -302,6 +310,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
           s.id === action.songId
             ? {
                 ...s,
+                status: s.status === 'completed' ? 'ready' : s.status,
                 words: s.words.map((w, i) =>
                   i === action.wordIndex ? { ...w, is_profanity: !w.is_profanity } : w
                 ),
@@ -319,6 +328,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
           s.id === action.songId
             ? {
                 ...s,
+                status: s.status === 'completed' ? 'ready' : s.status,
                 words: s.words.map((w, i) =>
                   i === action.wordIndex ? { ...w, censor_type: action.censorType } : w
                 ),
@@ -336,6 +346,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
           s.id === action.songId
             ? {
                 ...s,
+                status: s.status === 'completed' ? 'ready' : s.status,
                 words: s.words.map((w) => ({ ...w, censor_type: undefined })),
                 censoredFilePath: null,
                 previewFilePath: null
@@ -348,7 +359,9 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
       return {
         ...state,
         songs: state.songs.map((s) =>
-          s.id === action.songId ? { ...s, defaultCensorType: action.censorType, censoredFilePath: null, previewFilePath: null } : s
+          s.id === action.songId
+            ? { ...s, status: s.status === 'completed' ? 'ready' : s.status, defaultCensorType: action.censorType, censoredFilePath: null, previewFilePath: null }
+            : s
         )
       }
 
@@ -564,6 +577,27 @@ function MainApp(): React.JSX.Element {
   const [modelStatus, setModelStatus] = useState<'waiting' | 'downloading' | 'loading' | 'ready'>('waiting')
   const [modelDownloadProgress, setModelDownloadProgress] = useState(0)
   const [modelDownloadMessage, setModelDownloadMessage] = useState('')
+  const [exportFormat, setExportFormat] = useState<ExportFormat>(() => {
+    try {
+      const saved = localStorage.getItem('cleanse.exportFormat')
+      if (saved === 'source' || saved === 'mp3' || saved === 'wav' || saved === 'flac') {
+        return saved
+      }
+    } catch { /* ignore */ }
+    return 'source'
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('cleanse.exportFormat', exportFormat)
+    } catch { /* ignore quota errors */ }
+  }, [exportFormat])
+
+  // Track the expanded song's previewFilePath as its own value so effects
+  // that depend on regeneration can re-fire when CLEAR_PREVIEW flips it null.
+  const expandedSongPreviewPath = state.expandedSongId
+    ? (state.songs.find((s) => s.id === state.expandedSongId)?.previewFilePath ?? null)
+    : null
 
   // Memoized signature of expanded song's censored words
   const expandedSongWordsSignature = useMemo(() => {
@@ -784,7 +818,8 @@ function MainApp(): React.JSX.Element {
               accompanimentPath: song.accompanimentPath ?? undefined,
               crossfadeMs: state.crossfadeMs,
               paddingBeforeMs: Math.round(state.paddingMs * 1.5),
-              paddingAfterMs: state.paddingMs
+              paddingAfterMs: state.paddingMs,
+              outputFormat: exportFormat === 'source' ? undefined : exportFormat
             })
 
             dispatch({ type: 'PREVIEW_GENERATED', id, previewPath })
@@ -796,16 +831,16 @@ function MainApp(): React.JSX.Element {
         }
       }
     }
-  }, [state.expandedSongId, state.songs, state.crossfadeMs, state.paddingMs])
+  }, [state.expandedSongId, state.songs, state.crossfadeMs, state.paddingMs, exportFormat])
 
-  // Clear preview when crossfade or padding changes so it regenerates.
+  // Clear preview when crossfade, padding, or export format changes so it regenerates.
   // Bumping the request ref invalidates any in-flight regen so its dispatch is skipped,
   // preventing a stale preview from committing with old settings.
   useEffect(() => {
     if (!state.expandedSongId) return
     generationRequestRef.current = Date.now()
     dispatch({ type: 'CLEAR_PREVIEW', id: state.expandedSongId })
-  }, [state.crossfadeMs, state.paddingMs])
+  }, [state.crossfadeMs, state.paddingMs, exportFormat])
 
   // Auto-regenerate preview when words change while panel is open
   useEffect(() => {
@@ -848,7 +883,8 @@ function MainApp(): React.JSX.Element {
           accompanimentPath: song.accompanimentPath ?? undefined,
           crossfadeMs: state.crossfadeMs,
           paddingBeforeMs: Math.round(state.paddingMs * 1.5),
-          paddingAfterMs: state.paddingMs
+          paddingAfterMs: state.paddingMs,
+          outputFormat: exportFormat === 'source' ? undefined : exportFormat
         })
 
         // Only update if this request is still current
@@ -866,7 +902,7 @@ function MainApp(): React.JSX.Element {
     }, 500)
 
     return () => clearTimeout(timeoutId)
-  }, [state.expandedSongId, expandedSongWordsSignature, state.crossfadeMs, state.paddingMs])
+  }, [state.expandedSongId, expandedSongWordsSignature, state.crossfadeMs, state.paddingMs, exportFormat, expandedSongPreviewPath])
 
   // Remove song from queue
   const handleRemoveSong = useCallback((id: string) => {
@@ -963,8 +999,9 @@ function MainApp(): React.JSX.Element {
     }))
 
     const baseName = song.fileName
-    const ext = baseName.split('.').pop() || 'mp3'
-    const cleanName = baseName.replace(`.${ext}`, `_clean.${ext}`)
+    const sourceExt = baseName.split('.').pop() || 'mp3'
+    const targetExt = resolveExportExt(baseName, exportFormat)
+    const cleanName = baseName.replace(`.${sourceExt}`, `_clean.${targetExt}`)
 
     const outputPath = await window.electronAPI.selectOutputPath(cleanName)
     if (!outputPath) return
@@ -980,7 +1017,8 @@ function MainApp(): React.JSX.Element {
         song.accompanimentPath ?? undefined,
         state.crossfadeMs,
         state.paddingMs,
-        state.paddingMs
+        state.paddingMs,
+        exportFormat === 'source' ? undefined : exportFormat
       )
       dispatch({ type: 'EXPORT_COMPLETE', id: song.id, outputPath: result.output_path })
 
@@ -1001,7 +1039,7 @@ function MainApp(): React.JSX.Element {
       console.error('Export failed:', err)
       dispatch({ type: 'SET_SONG_ERROR', id: song.id, message: err instanceof Error ? err.message : String(err) })
     }
-  }, [state.songs, state.crossfadeMs, state.paddingMs, checkCanProcess, recordUsage])
+  }, [state.songs, state.crossfadeMs, state.paddingMs, exportFormat, checkCanProcess, recordUsage])
 
   // Export all ready songs with paywall check
   const handleExportAll = useCallback(async () => {
@@ -1041,8 +1079,9 @@ function MainApp(): React.JSX.Element {
     if (exportableSongs.length === 1) {
       const song = exportableSongs[0]
       const baseName = song.fileName
-      const ext = baseName.split('.').pop() || 'mp3'
-      const cleanName = baseName.replace(`.${ext}`, `_clean.${ext}`)
+      const sourceExt = baseName.split('.').pop() || 'mp3'
+      const targetExt = resolveExportExt(baseName, exportFormat)
+      const cleanName = baseName.replace(`.${sourceExt}`, `_clean.${targetExt}`)
       singleOutputPath = await window.electronAPI.selectOutputPath(cleanName)
       if (!singleOutputPath) {
         exportingRef.current = false
@@ -1076,8 +1115,9 @@ function MainApp(): React.JSX.Element {
         }))
 
         const baseName = song.fileName
-        const ext = baseName.split('.').pop() || 'mp3'
-        const cleanName = baseName.replace(`.${ext}`, `_clean.${ext}`)
+        const sourceExt = baseName.split('.').pop() || 'mp3'
+        const targetExt = resolveExportExt(baseName, exportFormat)
+        const cleanName = baseName.replace(`.${sourceExt}`, `_clean.${targetExt}`)
         const outputPath = singleOutputPath ?? `${outputDir}/${cleanName}`
 
         const result = await window.electronAPI.censorAudio(
@@ -1088,7 +1128,8 @@ function MainApp(): React.JSX.Element {
           song.accompanimentPath ?? undefined,
           state.crossfadeMs,
           state.paddingMs,
-          state.paddingMs
+          state.paddingMs,
+          exportFormat === 'source' ? undefined : exportFormat
         )
 
         dispatch({ type: 'EXPORT_COMPLETE', id: song.id, outputPath: result.output_path })
@@ -1128,7 +1169,7 @@ function MainApp(): React.JSX.Element {
     dispatch({ type: 'EXPORT_ALL_COMPLETE' })
     logExportCompleted(successfulExports)
     exportingRef.current = false
-  }, [state.songs, checkCanProcess, recordUsage])
+  }, [state.songs, exportFormat, checkCanProcess, recordUsage])
 
   // Toggle turbo mode
   const handleToggleTurbo = useCallback((enabled: boolean) => {
@@ -1288,6 +1329,7 @@ function MainApp(): React.JSX.Element {
               songs={state.songs}
               expandedSongId={state.expandedSongId}
               globalCensorType={state.globalDefaultCensorType}
+              exportFormat={exportFormat}
               onToggleExpand={handleToggleExpand}
               onRemoveSong={handleRemoveSong}
               onRetrySong={retrySong}
@@ -1319,6 +1361,8 @@ function MainApp(): React.JSX.Element {
               onSetCrossfadeMs={(ms) => dispatch({ type: 'SET_CROSSFADE_MS', ms })}
               paddingMs={state.paddingMs}
               onSetPaddingMs={(ms) => dispatch({ type: 'SET_PADDING_MS', ms })}
+              exportFormat={exportFormat}
+              onSetExportFormat={setExportFormat}
               onExportAll={handleExportAll}
               onClearAll={handleClearAll}
               isExporting={state.isExportingAll}

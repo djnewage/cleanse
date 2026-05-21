@@ -1,4 +1,5 @@
-import type { CensorType } from '../types'
+import type { CensorType, ExportFormat } from '../types'
+import ExportFormatPicker from './ExportFormatPicker'
 
 interface BatchControlsProps {
   songCount: number
@@ -10,6 +11,8 @@ interface BatchControlsProps {
   onSetCrossfadeMs: (ms: number) => void
   paddingMs: number
   onSetPaddingMs: (ms: number) => void
+  exportFormat: ExportFormat
+  onSetExportFormat: (format: ExportFormat) => void
   onExportAll: () => void
   onClearAll: () => void
   isExporting: boolean
@@ -34,6 +37,8 @@ export default function BatchControls({
   onSetCrossfadeMs,
   paddingMs,
   onSetPaddingMs,
+  exportFormat,
+  onSetExportFormat,
   onExportAll,
   onClearAll,
   isExporting,
@@ -131,6 +136,14 @@ export default function BatchControls({
         >
           Clear Queue
         </button>
+
+        <div className="ml-auto">
+          <ExportFormatPicker
+            value={exportFormat}
+            onChange={onSetExportFormat}
+            disabled={disabled || isExporting}
+          />
+        </div>
 
         <button
           onClick={onExportAll}

@@ -1,9 +1,10 @@
-import type { SongEntry, SongStatus, CensorType } from '../types'
+import type { SongEntry, SongStatus, CensorType, ExportFormat } from '../types'
 
 interface QueueItemProps {
   song: SongEntry
   isExpanded: boolean
   globalCensorType: CensorType
+  exportFormat: ExportFormat
   onToggleExpand: () => void
   onRemove: () => void
   onRetry: () => void
@@ -45,6 +46,7 @@ export default function QueueItem({
   song,
   isExpanded,
   globalCensorType,
+  exportFormat,
   onToggleExpand,
   onRemove,
   onRetry,
@@ -124,7 +126,7 @@ export default function QueueItem({
               }}
               className="px-2 py-1 text-xs bg-blue-600 text-white hover:bg-blue-500 rounded font-medium transition-colors"
             >
-              Export
+              {exportFormat === 'source' ? 'Export' : `Export · ${exportFormat.toUpperCase()}`}
             </button>
           )}
           {song.status === 'error' && (
