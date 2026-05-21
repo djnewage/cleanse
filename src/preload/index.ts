@@ -51,6 +51,7 @@ export interface ElectronAPI {
     crossfadeMs: number
     paddingBeforeMs?: number
     paddingAfterMs?: number
+    outputFormat?: string
   }) => Promise<string>
   censorAudio: (
     path: string,
@@ -60,7 +61,8 @@ export interface ElectronAPI {
     accompanimentPath?: string,
     crossfadeMs?: number,
     paddingBeforeMs?: number,
-    paddingAfterMs?: number
+    paddingAfterMs?: number,
+    outputFormat?: string
   ) => Promise<{ output_path: string }>
   getBackendStatus: () => Promise<{ ready: boolean }>
   getDeviceInfo: () => Promise<DeviceInfo>
@@ -157,10 +159,11 @@ const electronAPI: ElectronAPI = {
     crossfadeMs: number
     paddingBeforeMs?: number
     paddingAfterMs?: number
+    outputFormat?: string
   }) => ipcRenderer.invoke('preview-audio', args),
 
-  censorAudio: (path: string, words: CensorWord[], outputPath?: string, vocalsPath?: string, accompanimentPath?: string, crossfadeMs?: number, paddingBeforeMs?: number, paddingAfterMs?: number) =>
-    ipcRenderer.invoke('censor-audio', path, words, outputPath, vocalsPath, accompanimentPath, crossfadeMs, paddingBeforeMs, paddingAfterMs),
+  censorAudio: (path: string, words: CensorWord[], outputPath?: string, vocalsPath?: string, accompanimentPath?: string, crossfadeMs?: number, paddingBeforeMs?: number, paddingAfterMs?: number, outputFormat?: string) =>
+    ipcRenderer.invoke('censor-audio', path, words, outputPath, vocalsPath, accompanimentPath, crossfadeMs, paddingBeforeMs, paddingAfterMs, outputFormat),
 
   getBackendStatus: () => ipcRenderer.invoke('get-backend-status'),
 

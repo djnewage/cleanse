@@ -18,6 +18,8 @@ export interface CensorWord {
 
 export type CensorType = 'mute' | 'beep' | 'reverse' | 'tape_stop'
 
+export type ExportFormat = 'source' | 'mp3' | 'wav' | 'flac'
+
 export interface SeparationProgress {
   step: string
   progress: number
