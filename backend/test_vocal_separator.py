@@ -184,6 +184,73 @@ def test_successful_gpu_no_fallback(
     assert "accompaniment_path" in result
 
 
+@patch("vocal_separator._report_progress")
+@patch("device_info.get_device_string", return_value="cpu")
+@patch("vocal_separator._get_model")
+@patch("demucs.apply.apply_model")
+@patch("vocal_separator._write_wav")
+@patch("vocal_separator._decode_audio_ffmpeg")
+def test_extra_stems_are_emitted_additively(
+    mock_decode, mock_write, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
+):
+    """extra_stems writes individual stem files without changing the existing keys."""
+    mock_decode.return_value = np.zeros((2, 44100), dtype=np.float32)
+    model = MagicMock()
+    model.samplerate = 44100
+    mock_get_model.return_value = model
+    mock_apply.return_value = _make_fake_sources()
+
+    result = vocal_separator.separate(
+        "input.wav", str(tmp_path), extra_stems=["drums", "bass"]
+    )
+
+    # Existing contract is preserved
+    assert "vocals_path" in result and "accompaniment_path" in result
+    # New stem paths are present and named off the input basename
+    assert result["drums_path"].endswith("input_drums.wav")
+    assert result["bass_path"].endswith("input_bass.wav")
+    # vocals + accompaniment + drums + bass = 4 writes
+    assert mock_write.call_count == 4
+
+
+@patch("vocal_separator._report_progress")
+@patch("device_info.get_device_string", return_value="cpu")
+@patch("vocal_separator._get_model")
+@patch("demucs.apply.apply_model")
+@patch("vocal_separator._write_wav")
+@patch("vocal_separator._decode_audio_ffmpeg")
+def test_unknown_extra_stem_raises_before_separation(
+    mock_decode, mock_write, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
+):
+    """An invalid stem name fails fast, before the expensive separation runs."""
+    with pytest.raises(ValueError, match="Unknown stem"):
+        vocal_separator.separate("input.wav", str(tmp_path), extra_stems=["guitar"])
+    mock_apply.assert_not_called()
+    mock_get_model.assert_not_called()
+
+
+@patch("vocal_separator._report_progress")
+@patch("device_info.get_device_string", return_value="cpu")
+@patch("vocal_separator._get_model")
+@patch("demucs.apply.apply_model")
+@patch("vocal_separator._write_wav")
+@patch("vocal_separator._decode_audio_ffmpeg")
+def test_no_extra_stems_keeps_two_outputs(
+    mock_decode, mock_write, mock_apply, mock_get_model, mock_device, mock_progress, tmp_path
+):
+    """Default call (no extra_stems) still writes exactly vocals + accompaniment."""
+    mock_decode.return_value = np.zeros((2, 44100), dtype=np.float32)
+    model = MagicMock()
+    model.samplerate = 44100
+    mock_get_model.return_value = model
+    mock_apply.return_value = _make_fake_sources()
+
+    result = vocal_separator.separate("input.wav", str(tmp_path))
+
+    assert set(result) == {"vocals_path", "accompaniment_path"}
+    assert mock_write.call_count == 2
+
+
 # ---------------------------------------------------------------------------
 # Integration test for the ffmpeg decode path itself.
 #
