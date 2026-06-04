@@ -15,6 +15,7 @@ Audio convention in this module: float32 arrays shaped [samples, channels]
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -60,6 +61,73 @@ def write_wav(path: str, audio: np.ndarray, sample_rate: int) -> None:
     if audio.ndim == 1:
         audio = audio[:, None]
     wavfile.write(path, sample_rate, (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16))
+
+
+# Lossless render targets. AIFF/FLAC carry full ID3/Vorbis tags incl. cover art;
+# WAV is lossless but a poor tag container (no reliable embedded artwork).
+_PCM_CODEC = {"wav": "pcm_s16le", "aiff": "pcm_s16be"}
+_ART_FORMATS = {"aiff", "flac"}
+
+
+def _edit_title(source_path: str, suffix: str) -> str:
+    """Original title + suffix, e.g. 'Tony Soprano (Intro Edit)'. Falls back to the
+    filename when the source has no title tag."""
+    title = None
+    try:
+        from tinytag import TinyTag
+        title = TinyTag.get(source_path).title
+    except Exception:
+        pass
+    if not title:
+        title = os.path.splitext(os.path.basename(source_path))[0]
+    return f"{title} {suffix}".strip()
+
+
+def render_edit(
+    audio: np.ndarray,
+    sample_rate: int,
+    output_path: str,
+    source_path: str,
+    title_suffix: str = "(Intro Edit)",
+) -> str:
+    """Write the assembled edit to a lossless file, carrying the source's tags +
+    cover art and appending ``title_suffix`` to the title.
+
+    The audio is written as 16-bit PCM then remuxed via ffmpeg, copying all source
+    metadata (-map_metadata, so BPM/key survive if tagged) and the embedded cover
+    art (AIFF/FLAC only — WAV has no reliable art container), with the title
+    overridden to the edit name. Mirrors the metadata-copy pattern used by the
+    censor pipeline's _copy_metadata.
+    """
+    import subprocess
+    import tempfile
+    import imageio_ffmpeg
+
+    ext = os.path.splitext(output_path)[1].lower().lstrip(".")
+    ext = {"aif": "aiff"}.get(ext, ext)
+    if ext not in _PCM_CODEC and ext != "flac":
+        raise ValueError(f"Unsupported render format '{ext}'; use wav/aiff/flac")
+
+    tmp = tempfile.mktemp(suffix=".wav")
+    write_wav(tmp, audio, sample_rate)
+    try:
+        ff = imageio_ffmpeg.get_ffmpeg_exe()
+        want_art = ext in _ART_FORMATS
+        cmd = [ff, "-y", "-i", tmp, "-i", source_path, "-map", "0:a"]
+        if want_art:
+            cmd += ["-map", "1:v:0?"]
+        cmd += ["-c:a", _PCM_CODEC.get(ext, "flac")]
+        if want_art:
+            cmd += ["-c:v", "copy", "-disposition:v:0", "attached_pic"]
+        cmd += ["-map_metadata", "1", "-metadata", f"title={_edit_title(source_path, title_suffix)}"]
+        if ext in ("wav", "aiff"):
+            cmd += ["-write_id3v2", "1"]
+        cmd += [output_path]
+        subprocess.run(cmd, check=True, capture_output=True)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return output_path
 
 
 def _bar_rms(stem: np.ndarray, downbeats: list[int]) -> np.ndarray:

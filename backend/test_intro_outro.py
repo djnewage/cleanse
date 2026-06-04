@@ -1,5 +1,7 @@
 """Tests for intro_outro: bar math, loop-source picking, and seamless tiling."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -164,6 +166,63 @@ class TestAssembleEdit:
         joined = _crossfade_join(a, b, c)
         # max step anywhere should be far below the raw 1.0 butt-join discontinuity
         assert float(np.max(np.abs(np.diff(joined[:, 0])))) < 0.1
+
+
+class TestRenderEdit:
+    """Integration tests: shell out to the bundled ffmpeg to build a tagged
+    source and probe the rendered output."""
+
+    def _ffmpeg(self):
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+
+    def _make_source(self, path, with_art=True):
+        import subprocess
+        ff = self._ffmpeg()
+        cmd = [ff, "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1"]
+        if with_art:
+            art = os.path.splitext(path)[0] + "_art.png"
+            subprocess.run([ff, "-y", "-f", "lavfi", "-i", "color=c=green:s=64x64:d=1",
+                            "-frames:v", "1", art], check=True, capture_output=True)
+            cmd += ["-i", art, "-map", "0:a", "-map", "1:v"]
+        cmd += ["-c:a", "libmp3lame", "-id3v2_version", "3",
+                "-metadata", "title=My Song", "-metadata", "artist=The Artist",
+                "-metadata", "TBPM=140"]
+        if with_art:
+            cmd += ["-disposition:v:0", "attached_pic"]
+        cmd += [path]
+        subprocess.run(cmd, check=True, capture_output=True)
+
+    def _probe(self, path):
+        import subprocess
+        return subprocess.run([self._ffmpeg(), "-i", path], capture_output=True).stderr
+
+    def test_aiff_carries_tags_art_and_title_suffix(self, tmp_path):
+        from intro_outro import render_edit
+        src = str(tmp_path / "src.mp3")
+        self._make_source(src, with_art=True)
+        out = str(tmp_path / "edit.aiff")
+        render_edit(_sine_stem(SR), SR, out, src)
+
+        info = self._probe(out)
+        assert b"My Song (Intro Edit)" in info     # title suffixed
+        assert b"The Artist" in info               # artist preserved
+        assert b"TBPM" in info or b"140" in info    # BPM tag preserved
+        assert b"attached pic" in info              # cover art carried (AIFF)
+
+    def test_wav_renders_with_suffixed_title(self, tmp_path):
+        from intro_outro import render_edit
+        src = str(tmp_path / "src.mp3")
+        self._make_source(src, with_art=False)
+        out = str(tmp_path / "edit.wav")
+        render_edit(_sine_stem(SR), SR, out, src)
+        assert os.path.exists(out) and os.path.getsize(out) > 0
+        assert b"My Song (Intro Edit)" in self._probe(out)
+
+    def test_unsupported_format_raises(self, tmp_path):
+        from intro_outro import render_edit
+        with pytest.raises(ValueError, match="Unsupported render format"):
+            render_edit(_sine_stem(SR), SR, str(tmp_path / "x.ogg"), str(tmp_path / "src.mp3"))
 
 
 class TestIO:
