@@ -47,6 +47,14 @@ def load_stem(path: str) -> tuple[np.ndarray, int]:
     return data, sr
 
 
+def load_audio(path: str, sample_rate: int, channels: int = 2) -> np.ndarray:
+    """Decode any audio file (MP3/M4A/WAV/AIFF) to float32 [samples, channels] at
+    the given rate. Reuses the app's ffmpeg decode path (handles formats scipy
+    cannot). Used to load the untouched original body."""
+    from vocal_separator import _decode_audio_ffmpeg
+    return _decode_audio_ffmpeg(path, sampling_rate=sample_rate, channels=channels).T.copy()
+
+
 def write_wav(path: str, audio: np.ndarray, sample_rate: int) -> None:
     """Write float32 [samples, channels] (or [samples]) to 16-bit PCM WAV."""
     if audio.ndim == 1:
@@ -142,6 +150,94 @@ def build_beat_loop(
 
     # Trim to exactly total_bars (drop the trailing crossfade tail of the last tile).
     return out[: n_tiles * loop_len]
+
+
+def _crossfade_join(a: np.ndarray, b: np.ndarray, c: int) -> np.ndarray:
+    """Concatenate a + b with a short equal-power crossfade over c samples.
+
+    Used for the hard-drop seams (intro->body, body->outro). The crossfade exists
+    ONLY to kill the click at the join — it is a few ms, not a musical fade. The
+    join is otherwise a hard cut on the "1".
+    """
+    if c <= 0 or len(a) < c or len(b) < c:
+        return np.concatenate([a, b])
+    fade_in, fade_out = _equal_power_ramps(c)
+    blended = a[-c:] * fade_out[:, None] + b[:c] * fade_in[:, None]
+    return np.concatenate([a[:-c], blended, b[c:]])
+
+
+@dataclass
+class EditResult:
+    audio: np.ndarray                 # [samples, channels] float32
+    sample_rate: int
+    drop_sample: int | None           # where the body (original) enters, post-join
+    outro_sample: int | None          # where the outro beat begins, post-join
+
+
+def assemble_edit(
+    original: np.ndarray,
+    loop_stem: np.ndarray,
+    grid: Beatgrid,
+    *,
+    loop_source_idx: int,
+    loop_bars: int = 2,
+    intro_bars: int = 16,
+    drop_idx: int | None = None,
+    outro_bars: int = 0,
+    outro_idx: int | None = None,
+    crossfade_ms: float = 6.0,
+) -> EditResult:
+    """Assemble a full intro/outro edit: beat intro -> ORIGINAL body -> beat outro.
+
+    The body is the UNTOUCHED original audio (not the stem recombination), entered
+    on a downbeat with a hard drop. Only the intro/outro loops are stem-derived.
+
+    Args:
+        original: full-fidelity original audio [samples, channels].
+        loop_stem: the loop source stem (drums or drums+bass) [samples, channels].
+        grid: beatgrid (detected or Serato).
+        loop_source_idx: downbeat index the loop phrase is taken from.
+        intro_bars / outro_bars: beat-loop lengths (0 disables that side).
+        drop_idx: downbeat index where the original body enters. Defaults to
+            loop_source_idx so the looped groove flows straight into the real
+            track on the same phase.
+        outro_idx: downbeat index where the body ends and the outro beat starts.
+            Required if outro_bars > 0.
+    """
+    db = grid.downbeats_samples
+    sr = grid.sample_rate
+    c = max(1, int(round(crossfade_ms / 1000.0 * sr)))
+    if drop_idx is None:
+        drop_idx = loop_source_idx
+    if outro_bars > 0 and outro_idx is None:
+        raise ValueError("outro_idx is required when outro_bars > 0")
+
+    body_start = db[drop_idx]
+    body_end = db[outro_idx] if outro_bars > 0 else len(original)
+    if body_end <= body_start:
+        raise ValueError("body end must come after body start (check drop_idx/outro_idx)")
+    body = original[body_start:body_end]
+
+    audio = None
+    drop_sample = None
+    outro_sample = None
+
+    if intro_bars > 0:
+        intro = build_beat_loop(loop_stem, grid, loop_source_idx, loop_bars, intro_bars, crossfade_ms)
+        audio = intro
+        # post-join, the body starts one crossfade earlier than the raw intro length
+        drop_sample = max(len(intro) - c, 0)
+        audio = _crossfade_join(audio, body, c)
+    else:
+        audio = body
+
+    if outro_bars > 0:
+        outro = build_beat_loop(loop_stem, grid, loop_source_idx, loop_bars, outro_bars, crossfade_ms)
+        outro_sample = max(len(audio) - c, 0)
+        audio = _crossfade_join(audio, outro, c)
+
+    return EditResult(audio=audio.astype(np.float32), sample_rate=sr,
+                      drop_sample=drop_sample, outro_sample=outro_sample)
 
 
 def seam_discontinuity(audio: np.ndarray, loop_len: int, n_tiles: int) -> float:

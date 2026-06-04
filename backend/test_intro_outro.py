@@ -8,6 +8,8 @@ from intro_outro import (
     build_beat_loop,
     pick_loop_source,
     seam_discontinuity,
+    assemble_edit,
+    _crossfade_join,
     load_stem,
     write_wav,
 )
@@ -94,6 +96,74 @@ class TestPickLoopSource:
         grid, _ = _grid(120.0, 1)
         stem = _sine_stem(grid.downbeats_samples[-1])
         assert pick_loop_source(stem, grid, loop_bars=2) == 0
+
+
+class TestAssembleEdit:
+    def test_intro_then_body_structure(self):
+        """Intro beats prepend the original body, which enters on the drop downbeat."""
+        grid, spb = _grid(120.0, 32)
+        n = grid.downbeats_samples[-1] + spb
+        # distinct signals so we can tell intro (loop) from body (original)
+        loop_stem = _sine_stem(n, freq=110.0)
+        original = _sine_stem(n, freq=440.0)
+
+        res = assemble_edit(
+            original, loop_stem, grid,
+            loop_source_idx=4, loop_bars=2, intro_bars=8, drop_idx=4,
+        )
+        loop_len = grid.downbeats_samples[6] - grid.downbeats_samples[4]
+        intro_len = (8 // 2) * loop_len
+        body_len = len(original) - grid.downbeats_samples[4]
+        # length ~= intro + body minus one crossfade overlap
+        assert abs(res.audio.shape[0] - (intro_len + body_len)) <= int(0.01 * SR)
+        assert res.drop_sample is not None and res.drop_sample > 0
+        assert np.all(np.isfinite(res.audio))
+
+    def test_body_is_the_original_not_the_stem(self):
+        """The body region must come from `original`, never the loop stem."""
+        grid, spb = _grid(120.0, 16)
+        n = grid.downbeats_samples[-1] + spb
+        loop_stem = np.zeros((n, 2), dtype=np.float32)          # silent stem
+        original = _sine_stem(n, freq=440.0)                    # audible original
+
+        res = assemble_edit(
+            original, loop_stem, grid,
+            loop_source_idx=2, loop_bars=2, intro_bars=4, drop_idx=2,
+        )
+        # well past the drop, audio must be the (audible) original, not silence
+        tail = res.audio[res.drop_sample + SR:]
+        assert np.max(np.abs(tail)) > 0.1
+
+    def test_outro_requires_index(self):
+        grid, spb = _grid(120.0, 16)
+        n = grid.downbeats_samples[-1] + spb
+        stem = _sine_stem(n)
+        with pytest.raises(ValueError, match="outro_idx is required"):
+            assemble_edit(stem, stem, grid, loop_source_idx=0, intro_bars=4, outro_bars=4)
+
+    def test_full_intro_body_outro(self):
+        grid, spb = _grid(128.0, 40)
+        n = grid.downbeats_samples[-1] + spb
+        loop_stem = _sine_stem(n, freq=110.0)
+        original = _sine_stem(n, freq=440.0)
+        res = assemble_edit(
+            original, loop_stem, grid,
+            loop_source_idx=2, loop_bars=2,
+            intro_bars=8, drop_idx=2,
+            outro_bars=8, outro_idx=30,
+        )
+        assert res.drop_sample is not None and res.outro_sample is not None
+        assert res.outro_sample > res.drop_sample
+        assert np.max(np.abs(res.audio)) <= 1.0
+
+    def test_crossfade_join_declicks(self):
+        """A join between two offset DC-ish blocks should not leave a hard step."""
+        a = np.ones((1000, 1), dtype=np.float32) * 0.5
+        b = np.ones((1000, 1), dtype=np.float32) * -0.5
+        c = 64
+        joined = _crossfade_join(a, b, c)
+        # max step anywhere should be far below the raw 1.0 butt-join discontinuity
+        assert float(np.max(np.abs(np.diff(joined[:, 0])))) < 0.1
 
 
 class TestIO:
