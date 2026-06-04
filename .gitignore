@@ -22,3 +22,6 @@ tsconfig.web.tsbuildinfo
 
 # Auto intro/outro spike: copyrighted test audio (keep the script, not the media)
 backend/spikes/test_tracks/
+
+# Nested Python caches
+**/__pycache__/
