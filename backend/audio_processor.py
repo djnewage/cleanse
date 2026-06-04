@@ -2,6 +2,7 @@
 
 import os
 import sys
+import subprocess
 import numpy as np
 from scipy.signal import butter, sosfilt
 from pydub import AudioSegment
@@ -37,6 +38,11 @@ _DEFAULT_LOSSY_BITRATE_KBPS = 320
 # Minimum bitrate to accept from source probing. Below this, the source is
 # likely speech-only or corrupted metadata — fall back to the default.
 _MIN_SOURCE_BITRATE_KBPS = 96
+
+# Output formats whose containers reliably carry tags + embedded cover art via an
+# ffmpeg stream-copy remux. WAV/AIFF have no standard cover-art container and OGG
+# cover embedding is unreliable via stream copy, so they are intentionally skipped.
+_SUPPORTED_META_FORMATS = {"mp3", "flac", "m4a", "mp4"}
 
 
 
@@ -134,6 +140,62 @@ def _detect_source_bitrate_kbps(source_path: str | None) -> int | None:
     return None
 
 
+def _ffmpeg_exe() -> str:
+    """Resolve the ffmpeg binary, preferring pydub's configured converter."""
+    converter = getattr(AudioSegment, "converter", None)
+    if converter:
+        return converter
+    import imageio_ffmpeg
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def _copy_metadata(source_path: str | None, output_path: str, out_format: str) -> None:
+    """Copy tags + embedded cover art from source into the exported file.
+
+    Best-effort: pydub's export writes raw audio with no tags or artwork, so we
+    remux via ffmpeg (stream copy — no re-encode) to carry the source's metadata
+    and cover image onto the cleaned output. Any failure is swallowed so the core
+    censoring output is never lost; the pydub-exported file is simply left as-is.
+    """
+    if not source_path or not os.path.isfile(source_path):
+        return
+    if out_format not in _SUPPORTED_META_FORMATS:
+        return
+
+    base, ext = os.path.splitext(output_path)
+    temp_path = f"{base}.meta{ext}"
+    cmd = [
+        _ffmpeg_exe(), "-y",
+        "-i", output_path,    # input 0: the cleaned audio we just wrote
+        "-i", source_path,    # input 1: original, for metadata + cover art
+        "-map", "0:a",        # keep the cleaned audio
+        "-map", "1:v:0?",     # optional cover-art stream from the source
+        "-c", "copy",         # no re-encode
+        "-map_metadata", "1", # copy all container tags from the source
+        "-disposition:v:0", "attached_pic",
+    ]
+    if out_format == "mp3":
+        cmd += ["-id3v2_version", "3"]
+    cmd.append(temp_path)
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=120)
+        if result.returncode == 0 and os.path.isfile(temp_path) and os.path.getsize(temp_path) > 0:
+            os.replace(temp_path, output_path)
+        else:
+            stderr = result.stderr.decode("utf-8", "replace")[-500:]
+            print(f"[Metadata] ffmpeg remux failed (rc={result.returncode}): {stderr}", file=sys.stderr)
+            if os.path.isfile(temp_path):
+                os.remove(temp_path)
+    except Exception as e:
+        print(f"[Metadata] Failed to copy metadata to {output_path}: {e}", file=sys.stderr)
+        if os.path.isfile(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
 def _export(audio: AudioSegment, output_path: str, source_path: str | None = None) -> str:
     """Export audio, preserving source bitrate for lossy formats.
 
@@ -155,6 +217,7 @@ def _export(audio: AudioSegment, output_path: str, source_path: str | None = Non
         kwargs["bitrate"] = f"{target_kbps}k"
 
     audio.export(output_path, **kwargs)
+    _copy_metadata(source_path, output_path, out_format)
     return output_path
 
 

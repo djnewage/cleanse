@@ -1,12 +1,14 @@
-"""Tests for audio_processor: _export format mapping, _make_replacement, _splice_with_crossfade."""
+"""Tests for audio_processor: _export format mapping, _make_replacement, _splice_with_crossfade, _copy_metadata."""
 
 import os
+import subprocess
 from unittest.mock import patch
 
+import imageio_ffmpeg
 import pydub
 
 # Heavy deps are stubbed in conftest.py. pydub is installed.
-from audio_processor import _make_replacement, _splice_with_crossfade, _export
+from audio_processor import _make_replacement, _splice_with_crossfade, _export, _copy_metadata
 
 
 class TestExport:
@@ -122,6 +124,85 @@ class TestExport:
         with patch.object(audio, "export") as mock_export:
             _export(audio, path, source_path="/does/not/exist.mp3")
             mock_export.assert_called_once_with(path, format="mp3", bitrate="320k")
+
+
+class TestCopyMetadata:
+    """_copy_metadata remuxes source tags + cover art onto the exported file.
+
+    These are integration tests: they shell out to the bundled ffmpeg (the same
+    binary the feature uses) to build a fixture with embedded art and to probe
+    the result, since ffprobe is not assumed present in the environment.
+    """
+
+    def _ffmpeg(self):
+        return imageio_ffmpeg.get_ffmpeg_exe()
+
+    def _make_source_with_art(self, path):
+        """Create a 1s MP3 with embedded cover art + an artist tag via ffmpeg."""
+        ff = self._ffmpeg()
+        art = os.path.splitext(path)[0] + "_art.png"
+        subprocess.run(
+            [ff, "-y", "-f", "lavfi", "-i", "color=c=blue:s=64x64:d=1", "-frames:v", "1", art],
+            capture_output=True, check=True,
+        )
+        subprocess.run(
+            [ff, "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-i", art,
+             "-map", "0:a", "-map", "1:v", "-c:a", "libmp3lame", "-id3v2_version", "3",
+             "-metadata", "artist=TestArtist", "-disposition:v:0", "attached_pic", path],
+            capture_output=True, check=True,
+        )
+
+    def _probe(self, path):
+        return subprocess.run([self._ffmpeg(), "-i", path], capture_output=True).stderr
+
+    def test_copies_cover_art_and_tags_to_mp3(self, tmp_path):
+        src = str(tmp_path / "src.mp3")
+        self._make_source_with_art(src)
+        # A freshly exported output carries no metadata (as pydub produces).
+        out = str(tmp_path / "out.mp3")
+        pydub.AudioSegment.silent(duration=1000).export(out, format="mp3")
+        assert b"attached pic" not in self._probe(out)  # sanity: starts bare
+
+        _copy_metadata(src, out, "mp3")
+
+        info = self._probe(out)
+        assert b"attached pic" in info  # cover art carried over
+        assert b"TestArtist" in info    # text tags carried over
+
+    def test_no_leftover_temp_file_on_success(self, tmp_path):
+        src = str(tmp_path / "src.mp3")
+        self._make_source_with_art(src)
+        out = str(tmp_path / "out.mp3")
+        pydub.AudioSegment.silent(duration=1000).export(out, format="mp3")
+        _copy_metadata(src, out, "mp3")
+        assert not os.path.exists(str(tmp_path / "out.meta.mp3"))
+
+    def test_unsupported_format_is_noop(self, tmp_path):
+        """WAV/AIFF have no cover-art container -> skip the remux entirely."""
+        src = str(tmp_path / "src.mp3")
+        open(src, "w").close()
+        with patch("audio_processor.subprocess.run") as mock_run:
+            _copy_metadata(src, str(tmp_path / "out.wav"), "wav")
+            mock_run.assert_not_called()
+
+    def test_missing_source_is_noop(self, tmp_path):
+        with patch("audio_processor.subprocess.run") as mock_run:
+            _copy_metadata("/does/not/exist.mp3", str(tmp_path / "out.mp3"), "mp3")
+            mock_run.assert_not_called()
+
+    def test_ffmpeg_failure_leaves_output_intact(self, tmp_path):
+        """A failed remux must leave the original exported file untouched."""
+        src = str(tmp_path / "src.mp3")
+        open(src, "w").close()  # empty/invalid source -> ffmpeg returns nonzero
+        out = str(tmp_path / "out.mp3")
+        pydub.AudioSegment.silent(duration=500).export(out, format="mp3")
+        before = os.path.getsize(out)
+
+        _copy_metadata(src, out, "mp3")  # error is swallowed
+
+        assert os.path.exists(out)
+        assert os.path.getsize(out) == before
+        assert not os.path.exists(str(tmp_path / "out.meta.mp3"))
 
 
 class TestMakeReplacement:
