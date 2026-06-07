@@ -301,6 +301,51 @@ ipcMain.handle('separate-audio', async (_event, filePath: string, turbo: boolean
 })
 
 ipcMain.handle(
+  'intro-outro',
+  async (
+    _event,
+    args: {
+      filePath: string
+      introBars?: number
+      outroBars?: number
+      loopBars?: number
+      stems?: string[]
+      outputFormat?: 'wav' | 'aiff' | 'flac'
+      outputPath?: string
+    }
+  ) => {
+    await ensureFileExists(args.filePath)
+    try {
+      setProgressCallback((data) => {
+        sendToMain('intro-outro-progress', data)
+      })
+
+      const result = await fetchBackendStreaming<{ output_path: string }>('/intro-outro', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: args.filePath,
+          intro_bars: args.introBars ?? 16,
+          outro_bars: args.outroBars ?? 16,
+          loop_bars: args.loopBars ?? 2,
+          stems: args.stems ?? ['drums'],
+          output_format: args.outputFormat ?? 'aiff',
+          output_path: args.outputPath
+        })
+      })
+
+      return result
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const cause = err instanceof Error && err.cause ? ` [cause: ${err.cause}]` : ''
+      throw new Error(`Intro/outro error: ${await describeBackendError(msg + cause)}`)
+    } finally {
+      setProgressCallback(null)
+    }
+  }
+)
+
+ipcMain.handle(
   'preview-audio',
   async (
     _event,
