@@ -51,6 +51,7 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
         filePath: song.filePath,
         introBars,
         outroBars,
+        loopBars: 4,
         stems: stemsForMode(stemMode),
         outputFormat,
         grid: opts?.grid,
