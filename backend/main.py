@@ -279,6 +279,10 @@ class IntroOutroRequest(BaseModel):
     stems: list[str] = ["drums"]  # ["drums"] or ["drums", "bass"]
     output_format: Literal["wav", "aiff", "flac"] = "aiff"
     output_path: str | None = None
+    # For fast "nudge + regenerate": pass back the grid (with nudged downbeats) and
+    # the stem paths from a previous response to skip detection + separation.
+    grid: dict | None = None
+    stem_paths: dict | None = None
 
 
 class CensorRequest(BaseModel):
@@ -580,6 +584,7 @@ async def intro_outro(req: IntroOutroRequest):
             build_intro_outro_edit, req.path, output_path,
             intro_bars=req.intro_bars, outro_bars=req.outro_bars,
             loop_bars=req.loop_bars, stems=tuple(req.stems),
+            grid=req.grid, stem_paths=req.stem_paths,
         ),
         media_type="application/x-ndjson",
     )
