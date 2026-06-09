@@ -312,6 +312,8 @@ ipcMain.handle(
       stems?: string[]
       outputFormat?: 'wav' | 'aiff' | 'flac'
       outputPath?: string
+      grid?: unknown
+      stemPaths?: Record<string, string>
     }
   ) => {
     await ensureFileExists(args.filePath)
@@ -320,7 +322,12 @@ ipcMain.handle(
         sendToMain('intro-outro-progress', data)
       })
 
-      const result = await fetchBackendStreaming<{ output_path: string }>('/intro-outro', {
+      const result = await fetchBackendStreaming<{
+        output_path: string
+        grid: unknown
+        stem_paths: Record<string, string>
+        loop_source_idx: number
+      }>('/intro-outro', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -330,7 +337,9 @@ ipcMain.handle(
           loop_bars: args.loopBars ?? 2,
           stems: args.stems ?? ['drums'],
           output_format: args.outputFormat ?? 'aiff',
-          output_path: args.outputPath
+          output_path: args.outputPath,
+          grid: args.grid,
+          stem_paths: args.stemPaths
         })
       })
 

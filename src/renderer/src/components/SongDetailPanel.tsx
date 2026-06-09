@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { SongEntry, CensorType, TranscribedWord } from '../types'
 import TranscriptEditor from './TranscriptEditor'
 import AudioPreview from './AudioPreview'
+import IntroEditTab from './IntroEditTab'
 import { usePlaybackTime } from '../hooks/usePlaybackTime'
 
 interface SongDetailPanelProps {
@@ -212,6 +213,9 @@ export default function SongDetailPanel({
           onTogglePlayback={togglePlayback}
         />
       )}
+
+      {/* Intro Edit (Auto Intro/Outro DJ edit) */}
+      {showAudioPreview && <IntroEditTab song={song} />}
 
       {/* Song-level censor type selector */}
       <div className="flex items-center gap-4">

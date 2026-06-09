@@ -34,6 +34,21 @@ export interface AudioMetadata {
   duration: number | null
 }
 
+export interface BeatGrid {
+  bpm: number
+  sample_rate: number
+  downbeats_samples: number[]
+  beats_samples: number[]
+  source: string
+}
+
+export interface IntroOutroResult {
+  output_path: string
+  grid: BeatGrid
+  stem_paths: Record<string, string>
+  loop_source_idx: number
+}
+
 export interface ElectronAPI {
   selectAudioFile: () => Promise<string | null>
   selectAudioFiles: () => Promise<string[]>
@@ -51,7 +66,9 @@ export interface ElectronAPI {
     stems?: string[]
     outputFormat?: 'wav' | 'aiff' | 'flac'
     outputPath?: string
-  }) => Promise<{ output_path: string }>
+    grid?: BeatGrid
+    stemPaths?: Record<string, string>
+  }) => Promise<IntroOutroResult>
   onIntroOutroProgress: (callback: (progress: SeparationProgress) => void) => () => void
   previewAudio: (args: {
     filePath: string
@@ -169,6 +186,8 @@ const electronAPI: ElectronAPI = {
     stems?: string[]
     outputFormat?: 'wav' | 'aiff' | 'flac'
     outputPath?: string
+    grid?: BeatGrid
+    stemPaths?: Record<string, string>
   }) => ipcRenderer.invoke('intro-outro', args),
 
   previewAudio: (args: {
