@@ -235,19 +235,27 @@ def _crossfade_join(a: np.ndarray, b: np.ndarray, c: int) -> np.ndarray:
     return np.concatenate([a[:-c], blended, b[c:]])
 
 
-def _highpass_sweep(
-    audio: np.ndarray, sr: int, start_hz: float = 400.0, end_hz: float = 20.0, order: int = 2
+def _lowpass_sweep(
+    audio: np.ndarray, sr: int, start_hz: float = 450.0, open_hz: float = 20000.0,
+    order: int = 2, curve: float = 2.0,
 ) -> np.ndarray:
-    """Open a high-pass filter across ``audio``: cutoff starts at ``start_hz`` and
-    sweeps DOWN to ``end_hz`` (≈ fully open) by the end, so the buffer grows from
-    thin/distant to full. Subtle build for the intro.
+    """Open a low-pass filter across ``audio``: cutoff starts muffled at ``start_hz``
+    (dark — hats/brightness removed, just the low thump) and sweeps UP to ``open_hz``
+    (≈ fully open) by the end, so the loop goes from muffled to bright as it
+    approaches the drop. The classic "filter build into the drop."
+
+    Low-pass (not high-pass) because on drum loops the hats carry most of the energy
+    and live up high — removing/restoring them is what the ear actually hears, so the
+    sweep is clearly audible (a high-pass only swaps the inaudible low end). ``curve``
+    > 1 back-loads it: stays muffled for most of the intro and brightens mainly in the
+    final bars, so it reads as a build rather than opening by the halfway point.
 
     Block-processed with filter state carried across blocks (so there are no
     per-block discontinuities), cutoff interpolated logarithmically per block.
     Same-length output.
     """
     n = len(audio)
-    if n == 0 or start_hz <= end_hz:
+    if n == 0 or open_hz <= start_hz:
         return audio
     x = audio if audio.ndim == 2 else audio[:, None]
     ch = x.shape[1]
@@ -260,9 +268,14 @@ def _highpass_sweep(
     while pos < n:
         end = min(pos + block, n)
         p = (pos + (end - pos) / 2.0) / n            # progress at block centre
-        fc = start_hz * (end_hz / start_hz) ** p     # log sweep, start_hz -> end_hz
-        sos = butter(order, max(fc, 1.0) / nyq, btype="highpass", output="sos")
+        fc = start_hz * (open_hz / start_hz) ** (p ** curve)  # back-loaded log sweep up
         seg = x[pos:end]
+        if fc >= nyq * 0.95:                          # effectively open -> pass through clean
+            out[pos:end] = seg
+            zi = [None] * ch                          # re-seed state on next filtered block
+            pos = end
+            continue
+        sos = butter(order, fc / nyq, btype="lowpass", output="sos")
         for c in range(ch):
             if zi[c] is None:
                 zi[c] = sosfilt_zi(sos) * seg[0, c]
@@ -365,7 +378,7 @@ def assemble_edit(
     build_stem: np.ndarray | None = None,
     intro_build_bars: int = 1,
     intro_sweep: bool = True,
-    sweep_start_hz: float = 400.0,
+    sweep_start_hz: float = 450.0,
 ) -> EditResult:
     """Assemble a full intro/outro edit: beat intro -> ORIGINAL body -> beat outro.
 
@@ -407,7 +420,7 @@ def assemble_edit(
         # Subtle "DJ intro" treatment (length-preserving, so the drop stays on the "1"):
         # open a high-pass across the intro, then lift a snare roll into the drop.
         if intro_sweep:
-            intro = _highpass_sweep(intro, sr, start_hz=sweep_start_hz)
+            intro = _lowpass_sweep(intro, sr, start_hz=sweep_start_hz)
         if intro_build_bars > 0:
             intro = _snare_build(
                 intro, build_stem if build_stem is not None else loop_stem,
