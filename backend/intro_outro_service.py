@@ -73,6 +73,8 @@ def build_intro_outro_edit(
 
     _progress("assembling", 85, "Building edit...")
     loop_stem, _ = io.load_stem(stem_res[f"{stems[0]}_path"])
+    # Drums-only stem drives the snare-roll build, so bass never muddies the roll.
+    build_stem = loop_stem if stems[0] == "drums" else None
     for extra in stems[1:]:
         more, _ = io.load_stem(stem_res[f"{extra}_path"])
         n = min(len(loop_stem), len(more))
@@ -92,6 +94,7 @@ def build_intro_outro_edit(
         loop_source_idx=src, loop_bars=loop_bars,
         intro_bars=intro_bars, drop_idx=src,
         outro_bars=outro_bars, outro_idx=outro_idx,
+        build_stem=build_stem,
     )
 
     _progress("rendering", 95, "Rendering output...")

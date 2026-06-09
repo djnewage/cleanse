@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.io import wavfile
+from scipy.signal import butter, sosfilt, sosfilt_zi
 
 
 @dataclass
@@ -234,6 +235,113 @@ def _crossfade_join(a: np.ndarray, b: np.ndarray, c: int) -> np.ndarray:
     return np.concatenate([a[:-c], blended, b[c:]])
 
 
+def _highpass_sweep(
+    audio: np.ndarray, sr: int, start_hz: float = 400.0, end_hz: float = 20.0, order: int = 2
+) -> np.ndarray:
+    """Open a high-pass filter across ``audio``: cutoff starts at ``start_hz`` and
+    sweeps DOWN to ``end_hz`` (≈ fully open) by the end, so the buffer grows from
+    thin/distant to full. Subtle build for the intro.
+
+    Block-processed with filter state carried across blocks (so there are no
+    per-block discontinuities), cutoff interpolated logarithmically per block.
+    Same-length output.
+    """
+    n = len(audio)
+    if n == 0 or start_hz <= end_hz:
+        return audio
+    x = audio if audio.ndim == 2 else audio[:, None]
+    ch = x.shape[1]
+    nyq = sr / 2.0
+    block = 2048
+    out = np.empty_like(x)
+    # per-channel filter state, lazily initialised to the first block's steady state
+    zi = [None] * ch
+    pos = 0
+    while pos < n:
+        end = min(pos + block, n)
+        p = (pos + (end - pos) / 2.0) / n            # progress at block centre
+        fc = start_hz * (end_hz / start_hz) ** p     # log sweep, start_hz -> end_hz
+        sos = butter(order, max(fc, 1.0) / nyq, btype="highpass", output="sos")
+        seg = x[pos:end]
+        for c in range(ch):
+            if zi[c] is None:
+                zi[c] = sosfilt_zi(sos) * seg[0, c]
+            y, zi[c] = sosfilt(sos, seg[:, c], zi=zi[c])
+            out[pos:end, c] = y
+        pos = end
+    return out if audio.ndim == 2 else out[:, 0]
+
+
+def _snare_build(
+    intro: np.ndarray,
+    build_stem: np.ndarray,
+    grid: Beatgrid,
+    loop_source_idx: int,
+    sr: int,
+    build_bars: int = 1,
+    gain: float = 0.6,
+) -> np.ndarray:
+    """Overlay an accelerating backbeat-snare roll on the LAST ``build_bars`` of the
+    intro, in place (same length). The roll releases into the drop, turning a flat
+    loop into a buildup. Subtle: 1 bar, 1/8 -> 1/16 with a gentle crescendo.
+
+    The snare one-shot is sliced from beat 2 of the loop's source bar (snare-dominant
+    in 4/4; kick sits on 1 & 3), taken from ``build_stem`` (drums-only) so bass doesn't
+    muddy it.
+    """
+    n = len(intro)
+    db = grid.downbeats_samples
+    if build_bars <= 0 or n == 0 or loop_source_idx >= len(db):
+        return intro
+    beat_len = (
+        grid.beats_samples[1] - grid.beats_samples[0]
+        if len(grid.beats_samples) >= 2
+        else int(round(sr * 60.0 / grid.bpm))
+    )
+    bar_len = beat_len * 4
+    out = intro if intro.ndim == 2 else intro[:, None]
+    ch = out.shape[1]
+
+    # Snare one-shot: beat 2 of the source bar -> +1/2 beat, windowed to avoid clicks.
+    bs = build_stem if build_stem.ndim == 2 else build_stem[:, None]
+    if bs.shape[1] != ch:                            # mono stem vs stereo intro
+        bs = np.repeat(bs[:, :1], ch, axis=1) if bs.shape[1] == 1 else bs[:, :ch]
+    snare_at = db[loop_source_idx] + beat_len
+    slice_len = max(1, beat_len // 2)
+    if snare_at + slice_len > len(bs):
+        return intro
+    shot = bs[snare_at:snare_at + slice_len].astype(np.float32).copy()
+    fade = max(1, int(0.010 * sr))                   # 10 ms fade-out tail
+    if fade < len(shot):
+        shot[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)[:, None]
+
+    # Hit grid over the build region: 1/8 notes for the first half, 1/16 for the second.
+    build_start = n - build_bars * bar_len
+    if build_start < 0:
+        return intro
+    eighth, sixteenth = beat_len // 2, beat_len // 4
+    offsets: list[int] = []
+    for b in range(build_bars):
+        base = b * bar_len
+        for k in range(4):                           # beats 1-2: 1/8 notes
+            offsets.append(base + k * eighth)
+        for k in range(8):                           # beats 3-4: 1/16 notes
+            offsets.append(base + 2 * beat_len + k * sixteenth)
+
+    total = build_bars * bar_len
+    for off in offsets:
+        cres = 0.35 + 0.55 * (off / max(total, 1))   # crescendo 0.35 -> 0.9
+        amp = gain * cres
+        start = build_start + off
+        end = min(start + len(shot), n)
+        if start >= n:
+            break
+        out[start:end] += shot[: end - start] * amp
+
+    np.clip(out, -1.0, 1.0, out=out)
+    return out if intro.ndim == 2 else out[:, 0]
+
+
 @dataclass
 class EditResult:
     audio: np.ndarray                 # [samples, channels] float32
@@ -254,6 +362,10 @@ def assemble_edit(
     outro_bars: int = 0,
     outro_idx: int | None = None,
     crossfade_ms: float = 6.0,
+    build_stem: np.ndarray | None = None,
+    intro_build_bars: int = 1,
+    intro_sweep: bool = True,
+    sweep_start_hz: float = 400.0,
 ) -> EditResult:
     """Assemble a full intro/outro edit: beat intro -> ORIGINAL body -> beat outro.
 
@@ -292,6 +404,15 @@ def assemble_edit(
 
     if intro_bars > 0:
         intro = build_beat_loop(loop_stem, grid, loop_source_idx, loop_bars, intro_bars, crossfade_ms)
+        # Subtle "DJ intro" treatment (length-preserving, so the drop stays on the "1"):
+        # open a high-pass across the intro, then lift a snare roll into the drop.
+        if intro_sweep:
+            intro = _highpass_sweep(intro, sr, start_hz=sweep_start_hz)
+        if intro_build_bars > 0:
+            intro = _snare_build(
+                intro, build_stem if build_stem is not None else loop_stem,
+                grid, loop_source_idx, sr, build_bars=intro_build_bars,
+            )
         audio = intro
         # post-join, the body starts one crossfade earlier than the raw intro length
         drop_sample = max(len(intro) - c, 0)
