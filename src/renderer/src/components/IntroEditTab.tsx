@@ -7,10 +7,19 @@ interface IntroEditTabProps {
 }
 
 type StemMode = 'drums' | 'drumsbass'
+type OutputFormat = 'flac' | 'wav' | 'aiff'
 const BAR_OPTIONS = [8, 16, 32] as const
+const FORMAT_OPTIONS: OutputFormat[] = ['flac', 'wav', 'aiff']
 
 function stemsForMode(mode: StemMode): string[] {
   return mode === 'drumsbass' ? ['drums', 'bass'] : ['drums']
+}
+
+// WAV and FLAC decode + play in Chromium; AIFF does not, so it can't drive the
+// in-app waveform/player.
+function isPreviewable(outputPath: string): boolean {
+  const p = outputPath.toLowerCase()
+  return p.endsWith('.wav') || p.endsWith('.flac')
 }
 
 /**
@@ -26,6 +35,7 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
   const [introBars, setIntroBars] = useState(16)
   const [outroBars, setOutroBars] = useState(16)
   const [stemMode, setStemMode] = useState<StemMode>('drums')
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>('flac')
   const [isGenerating, setIsGenerating] = useState(false)
   const [progress, setProgress] = useState<SeparationProgress | null>(null)
   const [result, setResult] = useState<IntroEditResult | null>(null)
@@ -42,6 +52,7 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
         introBars,
         outroBars,
         stems: stemsForMode(stemMode),
+        outputFormat,
         grid: opts?.grid,
         stemPaths: opts?.stemPaths
       })
@@ -157,6 +168,23 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
             ))}
           </div>
         </div>
+
+        {/* Output format */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-text-tertiary">Format:</span>
+          <div className="flex rounded-md overflow-hidden border border-border-strong">
+            {FORMAT_OPTIONS.map((f) => (
+              <button
+                key={f}
+                onClick={() => setOutputFormat(f)}
+                disabled={isGenerating}
+                className={`${segBtn(outputFormat === f)} uppercase`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Generate / Regenerate */}
@@ -186,12 +214,21 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
       {/* Preview + nudge */}
       {result && (
         <div className="space-y-3">
-          <WaveformPlayer
-            key={`introedit-${genCount}`}
-            src={`media://${encodeURIComponent(result.outputPath)}`}
-            label={`Intro Edit • ${result.grid.bpm.toFixed(0)} BPM`}
-            labelColor="text-blue-400"
-          />
+          {isPreviewable(result.outputPath) ? (
+            <WaveformPlayer
+              key={`introedit-${genCount}`}
+              src={`media://${encodeURIComponent(result.outputPath)}`}
+              label={`Intro Edit • ${result.grid.bpm.toFixed(0)} BPM`}
+              labelColor="text-blue-400"
+            />
+          ) : (
+            <div className="text-xs text-text-tertiary px-3 py-3 bg-surface border border-border rounded">
+              <span className="text-blue-400">Intro Edit • {result.grid.bpm.toFixed(0)} BPM</span>
+              {' — '}
+              In-app preview isn’t available for AIFF. Use “Reveal in Finder” to open the
+              exported file, or switch the format to FLAC/WAV and Regenerate to preview here.
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-xs text-text-tertiary">Nudge the “1”:</span>
