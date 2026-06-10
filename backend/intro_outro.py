@@ -250,9 +250,11 @@ def _lowpass_sweep(
     > 1 back-loads it: stays muffled for most of the intro and brightens mainly in the
     final bars, so it reads as a build rather than opening by the halfway point.
 
-    Block-processed with filter state carried across blocks (so there are no
-    per-block discontinuities), cutoff interpolated logarithmically per block.
-    Same-length output.
+    Implemented as a **tap-crossfade morph** rather than a time-varying filter: a small
+    set of CLEAN, statically-filtered copies of the whole buffer at log-spaced cutoffs are
+    crossfaded per sample according to the sweep curve. This is artifact-free — unlike
+    swapping filter coefficients block-to-block while carrying state, which spikes at every
+    block boundary (large internal state at low cutoffs) and distorts. Same-length output.
     """
     n = len(audio)
     if n == 0 or open_hz <= start_hz:
@@ -260,28 +262,32 @@ def _lowpass_sweep(
     x = audio if audio.ndim == 2 else audio[:, None]
     ch = x.shape[1]
     nyq = sr / 2.0
-    block = 2048
-    out = np.empty_like(x)
-    # per-channel filter state, lazily initialised to the first block's steady state
-    zi = [None] * ch
-    pos = 0
-    while pos < n:
-        end = min(pos + block, n)
-        p = (pos + (end - pos) / 2.0) / n            # progress at block centre
-        fc = start_hz * (open_hz / start_hz) ** (p ** curve)  # back-loaded log sweep up
-        seg = x[pos:end]
-        if fc >= nyq * 0.95:                          # effectively open -> pass through clean
-            out[pos:end] = seg
-            zi = [None] * ch                          # re-seed state on next filtered block
-            pos = end
+
+    # Tap cutoffs: K-1 static low-passes log-spaced start_hz..open_hz, plus an unfiltered
+    # top tap (full fidelity at the drop). Index K-1 == "open" (no filtering).
+    K = 12
+    cuts = np.logspace(np.log10(start_hz), np.log10(min(open_hz, nyq * 0.99)), K - 1)
+
+    # Per-sample target cutoff from the back-loaded curve, mapped to a fractional tap index.
+    p = np.arange(n, dtype=np.float64) / max(n - 1, 1)
+    fc = start_hz * (open_hz / start_hz) ** (p ** curve)
+    tap_axis = np.concatenate([np.log10(cuts), [np.log10(nyq)]])  # last tap = open
+    t = np.interp(np.log10(fc), tap_axis, np.arange(K))           # fractional tap in [0, K-1]
+
+    # Accumulate one tap at a time (triangular crossfade weights sum to 1 between neighbours).
+    out = np.zeros_like(x)
+    for k in range(K):
+        w = np.clip(1.0 - np.abs(t - k), 0.0, 1.0)
+        if not w.any():
             continue
-        sos = butter(order, fc / nyq, btype="lowpass", output="sos")
-        for c in range(ch):
-            if zi[c] is None:
-                zi[c] = sosfilt_zi(sos) * seg[0, c]
-            y, zi[c] = sosfilt(sos, seg[:, c], zi=zi[c])
-            out[pos:end, c] = y
-        pos = end
+        if k == K - 1:                                # open tap = unfiltered
+            tap = x
+        else:
+            sos = butter(order, cuts[k] / nyq, btype="lowpass", output="sos")
+            # seed state to the first sample (no startup thump); zi shape (sections, ch, 2)
+            zi0 = sosfilt_zi(sos)[:, None, :] * x[0][None, :, None]
+            tap, _ = sosfilt(sos, x, axis=0, zi=zi0)
+        out += tap * w[:, None]
     return out if audio.ndim == 2 else out[:, 0]
 
 
@@ -349,10 +355,15 @@ def _snare_build(
         end = min(start + len(shot), n)
         if start >= n:
             break
-        out[start:end] += shot[: end - start] * amp
-
-    np.clip(out, -1.0, 1.0, out=out)
+        out[start:end] += shot[: end - start] * amp   # clip-safety applied by caller
     return out if intro.ndim == 2 else out[:, 0]
+
+
+def _limit_peak(audio: np.ndarray, ceil: float = 0.99) -> np.ndarray:
+    """Scalar gain-trim so the peak never exceeds ``ceil`` — avoids hard-clip distortion
+    from lowpass overshoot / the snare overlay without altering the waveform shape."""
+    peak = float(np.abs(audio).max()) if audio.size else 0.0
+    return audio * (ceil / peak) if peak > ceil else audio
 
 
 @dataclass
@@ -426,6 +437,7 @@ def assemble_edit(
                 intro, build_stem if build_stem is not None else loop_stem,
                 grid, loop_source_idx, sr, build_bars=intro_build_bars,
             )
+        intro = _limit_peak(intro)               # safety: no hard-clip distortion
         audio = intro
         # post-join, the body starts one crossfade earlier than the raw intro length
         drop_sample = max(len(intro) - c, 0)
