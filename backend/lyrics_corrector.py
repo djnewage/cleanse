@@ -567,6 +567,126 @@ def fill_gaps_with_plain_lyrics(
     return result
 
 
+def find_plain_lyrics_profanity(
+    transcribed_words: List[Dict],
+    plain_lyrics: str,
+    song_duration: float,
+    cover_window: float = 0.75,
+    inject_pad: float = 0.20,
+    max_gap_span: float = 6.0,
+) -> List[Dict]:
+    """Inject profanities that appear in PLAIN (un-timestamped) lyrics but are
+    missing from the transcription. The plain-lyrics analogue of
+    ``find_lyrics_profanity`` (which needs synced lyrics) — closes the gap for the
+    common case where only plain lyrics are available (e.g. Genius).
+
+    Aligns the lyric word-sequence to the transcript (same greedy match as the
+    plain gap-fill) to place each missed profanity at an estimated time:
+      * if the profane lyric word aligned to a transcribed word, use that word's
+        timing (accurate) — this recovers mis-heard profanities like "nigga"->"yeah";
+      * otherwise interpolate between the nearest matched anchors, but only when the
+        gap is tight (<= ``max_gap_span``) so we don't censor a random spot.
+    Skips any profanity already detected nearby (``cover_window``). Injected words
+    are flagged profanity with a slightly widened window (``inject_pad``) for safety.
+
+    Returns NEW words only (caller appends + re-sorts). Exempt from the gap-fill's
+    global 2x reject — it only ever adds the few profane tokens, never bulk lyrics.
+    """
+    if not plain_lyrics or not transcribed_words:
+        return []
+
+    lyrics_tokens: List[str] = []
+    for line in plain_lyrics.strip().split("\n"):
+        for word in line.split():
+            clean = re.sub(r"^[^\w'*@$]+|[^\w'*@$]+$", "", word)
+            if clean:
+                lyrics_tokens.append(clean)
+    if not lyrics_tokens:
+        return []
+
+    # Profane lyric token positions -> display word.
+    prof_tokens: Dict[int, str] = {}
+    for li, tok in enumerate(lyrics_tokens):
+        if _is_profanity(tok) and not any(v in WHITELIST for v in _normalize_word(tok.lower())):
+            prof_tokens[li] = re.sub(r"[^\w'*@$]", "", tok)
+    if not prof_tokens:
+        return []
+
+    # Greedy forward alignment lyrics -> transcript (mirrors fill_gaps_with_plain_lyrics).
+    start = _find_lyrics_alignment_start(transcribed_words, lyrics_tokens)
+    if start is None:
+        return []
+    alignment: List[tuple] = []  # (lyrics_idx, trans_idx)
+    ptr = start
+    for t_idx, tw in enumerate(transcribed_words):
+        best_idx, best_sim = None, 0.0
+        for l_idx in range(ptr, min(ptr + 20, len(lyrics_tokens))):
+            sim = _compute_word_similarity(tw["word"], lyrics_tokens[l_idx])
+            if sim > best_sim and sim >= 0.6:
+                best_sim, best_idx = sim, l_idx
+        if best_idx is not None:
+            alignment.append((best_idx, t_idx))
+            ptr = best_idx + 1
+    if not alignment:
+        return []
+    matched = {a[0]: a[1] for a in alignment}
+
+    detected_times = [
+        (w["start"] + w["end"]) / 2 for w in transcribed_words if w.get("is_profanity")
+    ]
+
+    def estimate(li: int):
+        if li in matched:                          # aligned -> accurate timing
+            tw = transcribed_words[matched[li]]
+            return tw["start"], tw["end"], True
+        before_t = after_t = None                  # else interpolate between anchors
+        for a_l, a_t in alignment:
+            if a_l < li:
+                before_t = transcribed_words[a_t]["end"]
+            elif a_l > li:
+                after_t = transcribed_words[a_t]["start"]
+                break
+        if before_t is None and after_t is None:
+            return None
+        if before_t is None:
+            before_t = max(after_t - 0.5, 0.0)
+        if after_t is None:
+            after_t = min(before_t + 0.5, song_duration)
+        if after_t <= before_t or (after_t - before_t) > max_gap_span:
+            return None                            # too wide to place confidently
+        mid = (before_t + after_t) / 2
+        return mid, mid + 0.3, False
+
+    injected: List[Dict] = []
+    for li, word in sorted(prof_tokens.items()):
+        if li in matched and transcribed_words[matched[li]].get("is_profanity"):
+            continue                               # already caught
+        est = estimate(li)
+        if est is None:
+            continue
+        s, e, _accurate = est
+        center = (s + e) / 2
+        if any(abs(center - dt) < cover_window for dt in detected_times):
+            continue                               # already covered nearby
+        injected.append({
+            "word": word,
+            "start": round(max(s - inject_pad, 0.0), 3),
+            "end": round(e + inject_pad, 3),
+            "confidence": 0.5,
+            "is_profanity": True,
+            "detection_source": "lyrics",
+        })
+        detected_times.append(center)              # avoid double-injecting repeats
+
+    if injected:
+        print(
+            f"[LyricsCorrector] Plain-lyrics profanity injector: recovered {len(injected)} "
+            f"missed profanit{'y' if len(injected) == 1 else 'ies'} from lyrics",
+            file=sys.stderr,
+        )
+    return injected
+
+
 def extract_profanity_vocab(lyrics_text: str) -> set:
     """
     Extract unique profanity words from lyrics text (time-agnostic).

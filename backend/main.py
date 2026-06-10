@@ -164,7 +164,7 @@ from device_info import detect_device
 from lyrics_fetcher import extract_metadata, fetch_lyrics, find_lyrics_profanity, parse_synced_lyrics
 from lyrics_corrector import (
     correct_words_with_lyrics, fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics,
-    extract_profanity_vocab, flag_with_profanity_vocab,
+    extract_profanity_vocab, flag_with_profanity_vocab, find_plain_lyrics_profanity,
 )
 
 
@@ -510,11 +510,20 @@ async def transcribe(req: TranscribeRequest):
         if req.synced_lyrics or req.lyrics:
             final_words = flag_profanity(final_words)
 
-        # Cross-reference with synced lyrics to find missed profanities
+        # Cross-reference with lyrics to find missed profanities. Synced lyrics use
+        # real timestamps; plain-only lyrics (e.g. Genius) use the alignment-based
+        # plain injector so a profanity Whisper dropped/mis-heard is still caught.
         if req.synced_lyrics and lyrics_aligned:
             lyrics_detections = find_lyrics_profanity(req.synced_lyrics, final_words)
             if lyrics_detections:
                 final_words = final_words + lyrics_detections
+                final_words.sort(key=lambda w: w["start"])
+        elif not req.synced_lyrics and req.lyrics:
+            plain_detections = find_plain_lyrics_profanity(
+                final_words, req.lyrics, result["duration"]
+            )
+            if plain_detections:
+                final_words = final_words + plain_detections
                 final_words.sort(key=lambda w: w["start"])
 
         # Time-agnostic profanity vocab check — works even for remixes
