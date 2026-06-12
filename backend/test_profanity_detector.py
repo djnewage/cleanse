@@ -272,3 +272,55 @@ class TestSlangWords:
 
     def test_puchi(self):
         self._check("puchi")
+
+
+class TestStyleRecallLayer:
+    """Fuzzy/de-elongation recall layer (scan_token). The NEGATIVES table is the
+    spec for the gates — zero false positives is the bar. Metaphone was rejected
+    because its vowel-dropping collides with common words (shot/beach/count)."""
+
+    from profanity_detector import scan_token
+
+    # Stylized / elongated spellings that SHOULD be caught beyond the exact list.
+    POSITIVES = ["biiitch", "pusssy", "fuuuck", "shiiit", "niggaaa", "fuuck", "shiit",
+                 "biitch", "biatchhh"]
+
+    # Common words that MUST NEVER be flagged. Two collision families:
+    # (a) vowel-drop / single-edit neighbors of profanity roots (shot, count, shirt);
+    # (b) natural doubled-letter words that de-elongation collapses (good, moon, grass).
+    NEGATIVES = [
+        # (a) edit-distance / vowel-drop neighbors
+        "shot", "sheet", "shoot", "shoots", "beach", "batch", "fake", "folk",
+        "cant", "can't", "shirt", "glass", "count", "ship", "class", "hash",
+        "peach", "fact", "sheep", "duck", "sick", "sit", "chic", "clock", "rich",
+        "which", "beech", "snitch", "ditch", "pitch", "witch", "assassin",
+        "assess", "grass", "bass", "pass", "cocktail", "title", "shut", "chat",
+        # (b) doubled-letter words exercised by the runs-of-2 de-elongation
+        "good", "moon", "soon", "balloon", "coffee", "success", "cool", "look",
+        "book", "feel", "see", "off", "egg", "ball", "small", "still", "happy",
+        "butter", "dinner", "mirror", "yellow", "cookie", "raccoon", "cocoon",
+    ]
+
+    def _flagged(self, word):
+        from profanity_detector import flag_profanity
+        w = [{"word": word, "start": 0.0, "end": 0.5, "confidence": 0.9}]
+        return flag_profanity(w)[0]["is_profanity"]
+
+    def test_positives_caught(self):
+        for w in self.POSITIVES:
+            assert self._flagged(w) is True, f"stylized '{w}' was NOT flagged"
+
+    def test_no_false_positives(self):
+        fps = [w for w in self.NEGATIVES if self._flagged(w)]
+        assert not fps, f"FALSE POSITIVES (clean words flagged as profanity): {fps}"
+
+    def test_deelongation_routes_through_exact(self):
+        from profanity_detector import scan_token
+        assert scan_token("fuuuck")["match_type"] == "deelongate"
+        assert scan_token("biiitch")["match_type"] == "deelongate"
+
+    def test_whitelist_still_wins(self):
+        # whitelisted words never match, even with elongation
+        from profanity_detector import scan_token
+        assert scan_token("god") is None
+        assert scan_token("hellll") is None  # -> hell (whitelisted)

@@ -4,6 +4,7 @@ uvicorn[standard]==0.34.0
 faster-whisper==1.1.0
 pydub==0.25.1
 better-profanity==0.7.0
+rapidfuzz>=3.0.0
 python-multipart==0.0.20
 requests>=2.32.0
 demucs>=4.0.0
