@@ -10,11 +10,14 @@ sys.modules.setdefault("requests", MagicMock())
 
 from lyrics_corrector import (  # noqa: E402
     _compute_word_similarity,
+    _line_corroborated,
     _should_correct_word,
     correct_words_with_lyrics,
     fill_gaps_with_lyrics,
     extract_profanity_vocab,
+    find_lyrics_profanity,
     flag_with_profanity_vocab,
+    normalize_word_timeline,
 )
 
 
@@ -180,6 +183,207 @@ class TestFillGapsWithLyrics:
         assert len(gap_words) == 0
 
 
+def assert_karaoke_invariants(words):
+    """Karaoke-correctness assertions: sorted, non-overlapping [start, end)
+    intervals with positive durations — what the renderer's binary search
+    assumes. Shared by the invariant and normalization test classes."""
+    for i, w in enumerate(words):
+        assert w["start"] <= w["end"], (
+            f"word[{i}] {w['word']!r}: start {w['start']} > end {w['end']}"
+        )
+        assert w["start"] >= 0, f"word[{i}] {w['word']!r} has negative start {w['start']}"
+
+    for i in range(len(words) - 1):
+        assert words[i]["start"] <= words[i + 1]["start"], (
+            f"words not sorted by start: [{i}] {words[i]['word']!r}@{words[i]['start']} "
+            f"> [{i+1}] {words[i+1]['word']!r}@{words[i+1]['start']}"
+        )
+
+    # No overlapping [start, end) intervals — would make two words "active"
+    # at the same time in the karaoke UI.
+    for i in range(len(words) - 1):
+        assert words[i]["end"] <= words[i + 1]["start"] + 1e-6, (
+            f"overlap: [{i}] {words[i]['word']!r} ends {words[i]['end']} "
+            f"after [{i+1}] {words[i+1]['word']!r} starts {words[i+1]['start']}"
+        )
+
+
+class TestKaraokeTimingInvariants:
+    """Invariants that must hold for word timestamps to render correctly in karaoke.
+
+    The frontend uses binary search on [start, end) intervals to pick the active
+    word. Violating these invariants causes wrong-word highlighting, double-active
+    states, or words highlighting before they're sung.
+    """
+
+    def _assert_invariants(self, words):
+        assert_karaoke_invariants(words)
+
+    def test_gap_fill_preserves_sort_order(self):
+        """Gap-filled words merged with transcribed words must remain sorted by start."""
+        words = [
+            {"word": "intro", "start": 5.0, "end": 5.4, "confidence": 0.9, "is_profanity": False},
+            {"word": "later", "start": 30.0, "end": 30.4, "confidence": 0.9, "is_profanity": False},
+        ]
+        synced = "[00:10.00] gap line one\n[00:20.00] gap line two"
+        result = fill_gaps_with_lyrics(words, synced)
+        self._assert_invariants(result)
+
+    def test_gap_fill_no_overlap_with_whisper_words(self):
+        """When Whisper timestamps and LRC timestamps are close, the merged
+        list should not produce two words active at the same moment."""
+        # Whisper word at 10.5s; LRC line at 10.0s would put gap-fill words
+        # starting at 10.0 — overlap risk.
+        words = [
+            {"word": "shortbreak", "start": 5.0, "end": 5.3, "confidence": 0.9, "is_profanity": False},
+            {"word": "uniqueword", "start": 10.5, "end": 10.8, "confidence": 0.9, "is_profanity": False},
+        ]
+        synced = "[00:10.00] alpha beta gamma delta"
+        result = fill_gaps_with_lyrics(words, synced)
+        self._assert_invariants(result)
+
+    def test_gap_words_within_line_window(self):
+        """Every lyrics_gap word's start should fall within its source line's
+        time window — never before line.time, never after the next line."""
+        synced = "[00:10.00] alpha beta\n[00:15.00] gamma delta\n[00:25.00] epsilon"
+        # Empty transcription forces all lines to gap-fill
+        words = [
+            {"word": "decoy", "start": 1.0, "end": 1.3, "confidence": 0.9, "is_profanity": False},
+        ]
+        result = fill_gaps_with_lyrics(words, synced)
+        gap = [w for w in result if w.get("detection_source") == "lyrics_gap"]
+        # Lines: 10s, 15s, 25s
+        line_times = [10.0, 15.0, 25.0]
+        for gw in gap:
+            owner = max((lt for lt in line_times if lt <= gw["start"] + 1e-6), default=None)
+            assert owner is not None, (
+                f"gap word {gw['word']!r} at {gw['start']} starts before any LRC line"
+            )
+            # Find the next line after the owner
+            next_line = next((lt for lt in line_times if lt > owner), float("inf"))
+            assert gw["start"] < next_line, (
+                f"gap word {gw['word']!r} at {gw['start']} starts past next line @{next_line}"
+            )
+
+    def test_gap_word_durations_are_positive(self):
+        """A 'word' with start == end would never be active in [start, end) lookup."""
+        synced = "[00:10.00] alpha beta gamma"
+        words = [{"word": "x", "start": 1.0, "end": 1.3, "confidence": 0.9, "is_profanity": False}]
+        result = fill_gaps_with_lyrics(words, synced)
+        for w in result:
+            assert w["end"] > w["start"], (
+                f"word {w['word']!r} has zero/negative duration ({w['start']}, {w['end']})"
+            )
+
+
+class TestNormalizeWordTimeline:
+    """normalize_word_timeline is the last pipeline step and must guarantee the
+    karaoke invariants regardless of what the injectors produced."""
+
+    def _w(self, word, start, end, source=None, profanity=False, **extra):
+        d = {"word": word, "start": start, "end": end, "confidence": 0.9,
+             "is_profanity": profanity, **extra}
+        if source:
+            d["detection_source"] = source
+        return d
+
+    def test_empty_input(self):
+        assert normalize_word_timeline([]) == []
+
+    def test_sorts_by_start(self):
+        words = [self._w("b", 2.0, 2.4), self._w("a", 1.0, 1.4)]
+        result = normalize_word_timeline(words)
+        assert [w["word"] for w in result] == ["a", "b"]
+        assert_karaoke_invariants(result)
+
+    def test_clamps_negative_start_and_audio_duration(self):
+        words = [self._w("a", -0.5, 0.4), self._w("b", 179.0, 999.0)]
+        result = normalize_word_timeline(words, audio_duration=180.0)
+        assert result[0]["start"] == 0.0
+        assert result[1]["end"] == 180.0
+        assert_karaoke_invariants(result)
+
+    def test_repairs_inverted_interval(self):
+        words = [self._w("a", 5.0, 4.0)]
+        result = normalize_word_timeline(words)
+        assert result[0]["end"] > result[0]["start"]
+
+    def test_synthetic_yields_to_real(self):
+        real = self._w("real", 10.0, 10.5)
+        synth = self._w("gap", 9.8, 10.2, source="lyrics_gap")
+        result = normalize_word_timeline([real, synth])
+        assert_karaoke_invariants(result)
+        kept_real = next(w for w in result if w["word"] == "real")
+        assert (kept_real["start"], kept_real["end"]) == (10.0, 10.5)
+
+    def test_real_profanity_keeps_interval_over_real_clean(self):
+        # dual-pass merge timing rewrites can overlap real neighbors;
+        # never shrink a mute.
+        prof = self._w("fuck", 10.0, 10.6, profanity=True)
+        clean = self._w("yeah", 10.4, 10.9)
+        result = normalize_word_timeline([prof, clean])
+        assert_karaoke_invariants(result)
+        kept = next(w for w in result if w["word"] == "fuck")
+        assert (kept["start"], kept["end"]) == (10.0, 10.6)
+
+    def test_nested_synthetic_profanity_transfers_flag(self):
+        real = self._w("ducking", 10.0, 10.6)
+        synth = self._w("fucking", 10.1, 10.5, source="lyrics", profanity=True)
+        result = normalize_word_timeline([real, synth])
+        assert_karaoke_invariants(result)
+        assert len(result) == 1
+        assert result[0]["word"] == "ducking"
+        assert result[0]["is_profanity"] is True
+        assert result[0]["detection_source"] == "lyrics"
+
+    def test_dissimilar_synthetic_profanity_dropped_not_transferred(self):
+        # Gap-fill even-spacing can land a profanity on an unrelated real word
+        # ("niggas" over "asked"). That's positional guesswork, not a
+        # mishearing — muting the real word would hole out clean vocals.
+        real = self._w("asked", 10.0, 10.6)
+        synth = self._w("niggas", 10.1, 10.5, source="lyrics_gap", profanity=True)
+        result = normalize_word_timeline([real, synth])
+        assert len(result) == 1
+        assert result[0]["word"] == "asked"
+        assert result[0]["is_profanity"] is False
+
+    def test_nested_clean_synthetic_dropped(self):
+        real = self._w("hello", 10.0, 10.6)
+        synth = self._w("filler", 10.1, 10.5, source="lyrics_gap")
+        result = normalize_word_timeline([real, synth])
+        assert [w["word"] for w in result] == ["hello"]
+
+    def test_partial_overlap_trims_not_drops(self):
+        real = self._w("real", 10.0, 10.5)
+        synth = self._w("gap", 10.3, 11.0, source="lyrics_gap")
+        result = normalize_word_timeline([real, synth])
+        assert_karaoke_invariants(result)
+        assert len(result) == 2
+        kept_synth = next(w for w in result if w["word"] == "gap")
+        assert kept_synth["start"] == 10.5
+
+    def test_idempotent(self):
+        words = [
+            self._w("a", 1.0, 1.5),
+            self._w("b", 1.3, 1.8, source="lyrics_gap"),
+            self._w("c", 1.7, 2.2, profanity=True),
+        ]
+        once = normalize_word_timeline(words)
+        twice = normalize_word_timeline(once)
+        assert once == twice
+        assert_karaoke_invariants(twice)
+
+    def test_burst_of_overlapping_synthetics(self):
+        # gap-fill can smear a whole line across overlapping estimates
+        words = [self._w(f"w{i}", 10.0 + i * 0.1, 10.0 + i * 0.1 + 0.35, source="lyrics_gap")
+                 for i in range(10)]
+        words.append(self._w("real", 10.5, 10.9))
+        result = normalize_word_timeline(words)
+        assert_karaoke_invariants(result)
+        kept_real = next(w for w in result if w["word"] == "real")
+        assert (kept_real["start"], kept_real["end"]) == (10.5, 10.9)
+
+
 class TestProfanityVocab:
     def test_extracts_profanity_words(self):
         vocab = extract_profanity_vocab("I say fuck and shit every day")
@@ -273,3 +477,97 @@ class TestVocabLyricsPresenceGuard:
     def test_no_lyrics_text_keeps_old_behavior(self):
         result = flag_with_profanity_vocab(self._word("fuckin"), {"fucking"})
         assert result[0]["is_profanity"] is True
+
+
+class TestLineCorroboration:
+    def _tw(self, word, start):
+        return {"word": word, "start": start, "end": start + 0.3, "confidence": 0.9,
+                "is_profanity": False}
+
+    def test_matching_line_corroborated(self):
+        transcribed = [self._tw("oh", 10.1), self._tw("shit", 10.6), self._tw("man", 11.0)]
+        assert _line_corroborated("oh shit man", 10.0, 15.0, transcribed) is True
+
+    def test_offset_line_not_corroborated(self):
+        # Wrong-version lyrics: line claims 10s but nothing matching is sung there
+        transcribed = [self._tw("completely", 10.1), self._tw("different", 10.6),
+                       self._tw("words", 11.0)]
+        assert _line_corroborated("oh shit man", 10.0, 15.0, transcribed) is False
+
+    def test_empty_region_not_corroborated(self):
+        transcribed = [self._tw("oh", 60.0)]
+        assert _line_corroborated("oh shit man", 10.0, 15.0, transcribed) is False
+
+    def test_synthetic_words_dont_corroborate(self):
+        # gap-filled words come FROM the lyrics — they must not vouch for them
+        transcribed = [
+            {**self._tw("oh", 10.1), "detection_source": "lyrics_gap"},
+            {**self._tw("shit", 10.6), "detection_source": "lyrics_gap"},
+            {**self._tw("man", 11.0), "detection_source": "lyrics_gap"},
+        ]
+        assert _line_corroborated("oh shit man", 10.0, 15.0, transcribed) is False
+
+
+class TestFindLyricsProfanity:
+    def test_detects_new_profanity(self):
+        synced = "[00:10.00] oh shit man"
+        transcribed = [
+            {"word": "oh", "start": 10.0, "end": 10.3, "confidence": 0.9, "is_profanity": False},
+            {"word": "man", "start": 11.0, "end": 11.3, "confidence": 0.9, "is_profanity": False},
+        ]
+        result = find_lyrics_profanity(synced, transcribed)
+        assert len(result) >= 1
+        profane_words = [d["word"] for d in result]
+        assert "shit" in profane_words
+        assert result[0]["detection_source"] == "lyrics"
+        assert result[0]["is_profanity"] is True
+
+    def test_no_duplicate_when_already_detected(self):
+        synced = "[00:10.00] oh shit"
+        # "oh shit" -- 2 words, line duration ~5s, word_duration ~2.5s
+        # "shit" is word index 1 -> estimated_start = 10.0 + 1*2.5 = 12.5
+        transcribed = [
+            {"word": "shit", "start": 12.5, "end": 12.8, "confidence": 0.9, "is_profanity": True},
+        ]
+        result = find_lyrics_profanity(synced, transcribed, overlap_threshold=0.75)
+        # abs(12.5 - 12.5) = 0.0 < 0.75 -> duplicate, should not be added
+        assert len(result) == 0
+
+    def test_empty_synced_lyrics(self):
+        assert find_lyrics_profanity("", []) == []
+
+    def test_no_profanity_in_lyrics(self):
+        synced = "[00:10.00] hello beautiful world"
+        result = find_lyrics_profanity(synced, [])
+        assert result == []
+
+    def test_whitelisted_words_not_injected(self):
+        # Regression: raw contains_profanity bypassed WHITELIST, injecting
+        # false mutes for everyday words in clean lyric lines.
+        synced = "[00:10.00] oh my god I feel the hell of it\n[00:15.00] she got fat pockets and panty lines"
+        result = find_lyrics_profanity(synced, [
+            {"word": "oh", "start": 10.0, "end": 10.3, "confidence": 0.9, "is_profanity": False},
+        ])
+        assert result == [], f"whitelisted words injected as profanity: {[d['word'] for d in result]}"
+
+    def test_stylized_spelling_injected(self):
+        # Regression: the injector used only the exact tier, missing elongated
+        # spellings that scan_token's de-elongation tier catches. Line must be
+        # corroborated by the transcript for injection to happen.
+        synced = "[00:10.00] fuuuck this whole thing"
+        result = find_lyrics_profanity(synced, [
+            {"word": "this", "start": 10.3, "end": 10.5, "confidence": 0.9, "is_profanity": False},
+            {"word": "whole", "start": 10.6, "end": 10.9, "confidence": 0.9, "is_profanity": False},
+        ])
+        assert any(d["word"] == "fuuuck" for d in result)
+
+    def test_uncorroborated_line_skipped(self):
+        # Offset/wrong-version lyrics: the line has profanity, but nothing
+        # matching that line is sung at its timestamp — no injection.
+        synced = "[00:10.00] fuck this whole thing"
+        result = find_lyrics_profanity(synced, [
+            {"word": "totally", "start": 10.2, "end": 10.5, "confidence": 0.9, "is_profanity": False},
+            {"word": "unrelated", "start": 10.6, "end": 10.9, "confidence": 0.9, "is_profanity": False},
+            {"word": "singing", "start": 11.0, "end": 11.3, "confidence": 0.9, "is_profanity": False},
+        ])
+        assert result == []

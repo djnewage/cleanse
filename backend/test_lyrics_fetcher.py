@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 sys.modules.setdefault("tinytag", MagicMock())
 sys.modules.setdefault("requests", MagicMock())
 
-from lyrics_fetcher import _extract_first_artist, _clean_search_title, parse_synced_lyrics, find_lyrics_profanity  # noqa: E402
+from lyrics_fetcher import _extract_first_artist, _clean_search_title, parse_synced_lyrics  # noqa: E402
 
 
 class TestExtractFirstArtist:
@@ -68,58 +68,6 @@ class TestParseSyncedLyrics:
         assert result[0]["text"] == "Valid line"
 
 
-class TestFindLyricsProfanity:
-    def test_detects_new_profanity(self):
-        synced = "[00:10.00] oh shit man"
-        transcribed = [
-            {"word": "oh", "start": 10.0, "end": 10.3, "confidence": 0.9, "is_profanity": False},
-            {"word": "man", "start": 11.0, "end": 11.3, "confidence": 0.9, "is_profanity": False},
-        ]
-        result = find_lyrics_profanity(synced, transcribed)
-        assert len(result) >= 1
-        profane_words = [d["word"] for d in result]
-        assert "shit" in profane_words
-        assert result[0]["detection_source"] == "lyrics"
-        assert result[0]["is_profanity"] is True
-
-    def test_no_duplicate_when_already_detected(self):
-        synced = "[00:10.00] oh shit"
-        # "oh shit" -- 2 words, line duration ~5s, word_duration ~2.5s
-        # "shit" is word index 1 -> estimated_start = 10.0 + 1*2.5 = 12.5
-        transcribed = [
-            {"word": "shit", "start": 12.5, "end": 12.8, "confidence": 0.9, "is_profanity": True},
-        ]
-        result = find_lyrics_profanity(synced, transcribed, overlap_threshold=0.75)
-        # abs(12.5 - 12.5) = 0.0 < 0.75 -> duplicate, should not be added
-        assert len(result) == 0
-
-    def test_empty_synced_lyrics(self):
-        assert find_lyrics_profanity("", []) == []
-
-    def test_no_profanity_in_lyrics(self):
-        synced = "[00:10.00] hello beautiful world"
-        result = find_lyrics_profanity(synced, [])
-        assert result == []
-
-    def test_whitelisted_words_not_injected(self):
-        # Regression: raw contains_profanity bypassed WHITELIST, injecting
-        # false mutes for everyday words in clean lyric lines.
-        synced = "[00:10.00] oh my god I feel the hell of it\n[00:15.00] she got fat pockets and panty lines"
-        result = find_lyrics_profanity(synced, [
-            {"word": "oh", "start": 10.0, "end": 10.3, "confidence": 0.9, "is_profanity": False},
-        ])
-        assert result == [], f"whitelisted words injected as profanity: {[d['word'] for d in result]}"
-
-    def test_stylized_spelling_injected(self):
-        # Regression: the injector used only the exact tier, missing elongated
-        # spellings that scan_token's de-elongation tier catches.
-        synced = "[00:10.00] fuuuck this whole thing"
-        result = find_lyrics_profanity(synced, [
-            {"word": "yeah", "start": 10.0, "end": 10.3, "confidence": 0.9, "is_profanity": False},
-        ])
-        assert any(d["word"] == "fuuuck" for d in result)
-
-
 class TestCleanSearchTitle:
     def test_simple_remix(self):
         assert _clean_search_title("Song (remix)") == "Song"
@@ -147,3 +95,126 @@ class TestCleanSearchTitle:
 
     def test_preserves_non_tag_parens(self):
         assert _clean_search_title("Song (feat. Artist)") == "Song (feat. Artist)"
+
+
+class TestSelectLrclibResult:
+    """Duration-verified search-hit selection — a wrong-duration hit is a
+    different version of the song whose synced timestamps are all offset."""
+
+    def _entry(self, duration, synced=True, plain=True, **extra):
+        return {
+            "duration": duration,
+            "syncedLyrics": "[00:01.00] hi" if synced else None,
+            "plainLyrics": "hi" if plain else None,
+            **extra,
+        }
+
+    def test_first_hit_wins_when_duration_unknown(self):
+        from lyrics_fetcher import _select_lrclib_result
+        entry, matched = _select_lrclib_result([self._entry(147), self._entry(183)], None)
+        assert matched is True
+        assert entry["duration"] == 147
+
+    def test_all_mismatched_returns_first_flagged(self):
+        # The Acronym case: 183s DJ edit vs 147/148s official entries
+        from lyrics_fetcher import _select_lrclib_result
+        entry, matched = _select_lrclib_result([self._entry(147), self._entry(148)], 182.9)
+        assert matched is False
+        assert entry["duration"] == 147
+
+    def test_later_matching_candidate_beats_first_mismatch(self):
+        from lyrics_fetcher import _select_lrclib_result
+        entry, matched = _select_lrclib_result([self._entry(147), self._entry(181)], 182.9)
+        assert matched is True
+        assert entry["duration"] == 181
+
+    def test_tolerance_boundary(self):
+        from lyrics_fetcher import _select_lrclib_result
+        entry, matched = _select_lrclib_result([self._entry(178)], 182.9)
+        assert matched is True  # |178 - 182.9| = 4.9 <= 5.0
+
+    def test_lyricless_entries_skipped(self):
+        from lyrics_fetcher import _select_lrclib_result
+        instrumental = self._entry(183, synced=False, plain=False)
+        entry, matched = _select_lrclib_result([instrumental, self._entry(183)], 183.0)
+        assert matched is True
+        assert entry["plainLyrics"]
+
+    def test_no_usable_entries(self):
+        from lyrics_fetcher import _select_lrclib_result
+        entry, matched = _select_lrclib_result([self._entry(183, synced=False, plain=False)], 183.0)
+        assert entry is None
+
+    def test_entry_without_duration_not_trusted_when_duration_known(self):
+        from lyrics_fetcher import _select_lrclib_result
+        entry, matched = _select_lrclib_result([self._entry(None)], 183.0)
+        assert matched is False
+
+
+class TestFetchLrclibDurationMismatch:
+    def test_mismatch_drops_synced_keeps_plain(self, monkeypatch):
+        import lyrics_fetcher as lf
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            class R:
+                status_code = 404
+            if url.endswith("/get"):
+                return R()
+            r = R()
+            r.status_code = 200
+            r.json = lambda: [{
+                "duration": 147.0,
+                "syncedLyrics": "[00:01.63] Nobody pray for me\n[00:05.00] real words",
+                "plainLyrics": "Nobody pray for me\nreal words",
+            }]
+            return r
+
+        monkeypatch.setattr(lf.requests, "get", fake_get)
+        result = lf._fetch_lrclib("Ken Carson", "The Acronym", duration=182.9)
+        assert result["synced_lyrics"] is None
+        assert result["duration_mismatch"] is True
+        assert "Nobody pray for me" in result["plain_lyrics"]
+
+    def test_synced_only_mismatch_converts_to_plain(self, monkeypatch):
+        import lyrics_fetcher as lf
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            class R:
+                status_code = 404
+            if url.endswith("/get"):
+                return R()
+            r = R()
+            r.status_code = 200
+            r.json = lambda: [{
+                "duration": 147.0,
+                "syncedLyrics": "[00:01.63] alpha beta\n[00:05.00] gamma",
+                "plainLyrics": None,
+            }]
+            return r
+
+        monkeypatch.setattr(lf.requests, "get", fake_get)
+        result = lf._fetch_lrclib("A", "B", duration=182.9)
+        assert result["synced_lyrics"] is None
+        assert result["plain_lyrics"] == "alpha beta\ngamma"
+
+    def test_matching_duration_keeps_synced(self, monkeypatch):
+        import lyrics_fetcher as lf
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            class R:
+                status_code = 404
+            if url.endswith("/get"):
+                return R()
+            r = R()
+            r.status_code = 200
+            r.json = lambda: [{
+                "duration": 182.0,
+                "syncedLyrics": "[00:01.63] alpha",
+                "plainLyrics": "alpha",
+            }]
+            return r
+
+        monkeypatch.setattr(lf.requests, "get", fake_get)
+        result = lf._fetch_lrclib("A", "B", duration=182.9)
+        assert result["synced_lyrics"] == "[00:01.63] alpha"
+        assert "duration_mismatch" not in result
