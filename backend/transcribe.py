@@ -367,8 +367,11 @@ def transcribe_audio(
         if segment.words:
             for w in segment.words:
                 text = w.word.strip()
-                # Skip Whisper hallucinations (§, ♪, ♫, etc.) — keep only words with letters/digits
-                if not any(c.isalnum() for c in text):
+                # Skip Whisper hallucinations (§, ♪, ♫, etc.) — keep only words
+                # with letters/digits. Exception: a run of asterisks is Whisper
+                # censoring profanity it heard (censored-subtitle training
+                # data); keep it so the wildcard tier can flag and mute it.
+                if not any(c.isalnum() for c in text) and not re.fullmatch(r"\*{3,}", text):
                     continue
                 words.append(
                     {

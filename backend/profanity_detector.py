@@ -143,6 +143,38 @@ _STYLE_TARGETS: tuple[str, ...] = (
 _FUZZY_MIN = 90          # fuzzy-tier ratio floor (test-table tuned)
 _STYLE_MIN_LEN = 4       # never approximate-match very short tokens
 
+# Wildcard tier matches censored forms (f***, sh-t) rather than mishearings, so
+# it can safely cover more roots than the fuzzy tier without FP risk.
+_WILDCARD_TARGETS: tuple[str, ...] = _STYLE_TARGETS + (
+    "ass", "dick", "dicks", "cock", "damn", "dammit", "goddamn",
+    "bastard", "slut", "sluts", "hoes",
+)
+_WILDCARD_MIN_LEN = 3    # a** / f-- need 3; anything shorter is noise
+
+
+def _wildcard_match(token: str) -> dict | None:
+    """Censored-form tier: '*' and '-' act as single-char wildcards, so
+    f*** -> fuck, n***a -> nigga, f**king -> fucking, f--- -> fuck. Whisper
+    emits these (censored-subtitle training data) — and Genius lyrics passed as
+    initial_prompt are often asterisk-censored, biasing it further. Exact-length
+    matching only: every wildcard stands for exactly one character, so ordinary
+    hyphenated words (t-shirt, check-in) can't align with any target."""
+    raw = re.sub(r"[^\w*\-]", "", token).lower()
+    if len(raw) < _WILDCARD_MIN_LEN or not re.search(r"[*\-]", raw):
+        return None
+    letters = re.sub(r"[*\-]", "", raw)
+    if letters in WHITELIST:
+        return None
+    if not letters and not re.fullmatch(r"\*{3,}", raw):
+        # Letterless forms must be pure asterisks (Whisper's own censoring).
+        # All-dash runs are em-dash separators in lyrics, not profanity.
+        return None
+    pattern = re.compile("".join("." if c in "*-" else re.escape(c) for c in raw))
+    for tgt in _WILDCARD_TARGETS:
+        if pattern.fullmatch(tgt):
+            return {"matched": tgt, "match_type": "wildcard"}
+    return None
+
 
 def _deelongate(norm: str) -> set[str]:
     """Collapse runs of a repeated char (>=3) to 1 and to 2, e.g.
@@ -158,9 +190,15 @@ def _deelongate(norm: str) -> set[str]:
 
 
 def _style_match(token: str) -> dict | None:
-    """Approximate profanity match (de-elongation + fuzzy) against the stylized
-    roots. Returns {"matched", "match_type"} or None. Additive recall only — the
-    plain exact tier is handled by the caller. Whitelist-protected."""
+    """Approximate profanity match (wildcard + de-elongation + fuzzy) against
+    the stylized roots. Returns {"matched", "match_type"} or None. Additive
+    recall only — the plain exact tier is handled by the caller. Whitelisted."""
+    # Wildcard first: it needs the raw token ('*'/'-' intact), which the
+    # normalization below strips.
+    wildcard_hit = _wildcard_match(token)
+    if wildcard_hit is not None:
+        return wildcard_hit
+
     norm = re.sub(r"[^\w]", "", token).lower()
     if len(norm) < _STYLE_MIN_LEN or norm in WHITELIST:
         return None

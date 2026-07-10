@@ -536,7 +536,9 @@ async def transcribe(req: TranscribeRequest):
         if lyrics_for_vocab:
             profanity_vocab = extract_profanity_vocab(lyrics_for_vocab)
             if profanity_vocab:
-                final_words = flag_with_profanity_vocab(final_words, profanity_vocab)
+                final_words = flag_with_profanity_vocab(
+                    final_words, profanity_vocab, lyrics_text=lyrics_for_vocab,
+                )
 
         return {
             "words": final_words,

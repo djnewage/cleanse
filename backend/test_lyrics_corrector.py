@@ -229,3 +229,47 @@ class TestProfanityVocab:
         ]
         result = flag_with_profanity_vocab(words, set())
         assert result is words
+
+    def test_extracts_censored_spellings_as_real_word(self):
+        # Genius lyrics are often asterisk-censored; the vocab must resolve
+        # them to real roots so fuzzy matching downstream has something to hit.
+        vocab = extract_profanity_vocab("I'm f***ing done with this s*** and them b*tches")
+        assert "fucking" in vocab
+        assert "shit" in vocab
+        assert "bitches" in vocab
+
+    def test_dash_separator_lines_not_extracted(self):
+        assert extract_profanity_vocab("verse one\n----\nverse two") == set()
+
+
+class TestVocabLyricsPresenceGuard:
+    """A transcribed word that appears verbatim in the lyrics is the lyrics'
+    own clean word, never a soft-substitute of the profanity — 'witches' in a
+    song containing both 'witches' and 'bitches' must not be muted."""
+
+    def _word(self, text):
+        return [{"word": text, "start": 1.0, "end": 1.4, "confidence": 0.9, "is_profanity": False}]
+
+    def test_word_in_lyrics_not_flagged(self):
+        for word, vocab, lyrics in [
+            ("witches", {"bitches"}, "the witches brew and the bitches too"),
+            ("hitting", {"shitting"}, "hitting hard, no shitting around"),
+            ("trucking", {"fucking"}, "keep on trucking, keep on fucking"),
+            ("brushes", {"bushes"}, "brushes past the bushes"),
+        ]:
+            result = flag_with_profanity_vocab(self._word(word), vocab, lyrics_text=lyrics)
+            assert result[0]["is_profanity"] is False, f"'{word}' present in lyrics was flagged"
+
+    def test_word_absent_from_lyrics_still_flagged(self):
+        # Soft-substitute recall preserved: Whisper heard "ducking"/"witches"
+        # but the lyrics only contain the profanity — that's a mishearing.
+        for word, vocab, lyrics in [
+            ("ducking", {"fucking"}, "keep on fucking around"),
+            ("witches", {"bitches"}, "and the bitches too"),
+        ]:
+            result = flag_with_profanity_vocab(self._word(word), vocab, lyrics_text=lyrics)
+            assert result[0]["is_profanity"] is True, f"soft-sub '{word}' was NOT flagged"
+
+    def test_no_lyrics_text_keeps_old_behavior(self):
+        result = flag_with_profanity_vocab(self._word("fuckin"), {"fucking"})
+        assert result[0]["is_profanity"] is True

@@ -5,7 +5,7 @@ import sys
 from difflib import SequenceMatcher
 from typing import List, Dict, Optional, Tuple
 from lyrics_fetcher import parse_synced_lyrics
-from profanity_detector import _normalize_word, WHITELIST, scan_token
+from profanity_detector import _normalize_word, _wildcard_match, WHITELIST, scan_token
 
 # Configuration constants
 TIME_WINDOW_SECONDS = 5.0  # Max time drift to consider words in same window
@@ -699,12 +699,26 @@ def extract_profanity_vocab(lyrics_text: str) -> set:
     them in the vocab causes fuzzy-match false positives downstream.
     """
     vocab = set()
-    for word in re.findall(r"[\w']+", lyrics_text):
-        if _is_profanity(word):
+    # Keep '*' and '-' so censored lyric spellings (f***ing — common on Genius)
+    # survive tokenization and reach the wildcard tier.
+    for word in re.findall(r"[\w'*-]+", lyrics_text):
+        hit = scan_token(word)
+        if hit:
             lowered = word.lower()
             if any(v in WHITELIST for v in _normalize_word(lowered)):
                 continue
-            vocab.add(lowered)
+            # A censored spelling enters the vocab as its matched real word
+            # ("f***ing" -> "fucking", "b*tches" -> "bitches") so downstream
+            # fuzzy matching has a real root to compare transcribed words
+            # against. Single-censor-char forms hit the exact tier (leet map)
+            # before the wildcard tier, so resolve those explicitly too.
+            if hit["match_type"] == "wildcard":
+                vocab.add(hit["matched"].lower())
+            elif re.search(r"[*\-]", lowered):
+                resolved = _wildcard_match(lowered)
+                vocab.add(resolved["matched"].lower() if resolved else lowered)
+            else:
+                vocab.add(lowered)
     return vocab
 
 
@@ -712,15 +726,27 @@ def flag_with_profanity_vocab(
     words: list,
     profanity_vocab: set,
     similarity_threshold: float = 0.75,
+    lyrics_text: str | None = None,
 ) -> list:
     """
     Flag transcribed words that fuzzy-match known profanity from lyrics.
 
     Time-agnostic — works for remixes where lyrics ordering doesn't match.
     Only flags words not already marked as profanity.
+
+    When ``lyrics_text`` is given, transcribed words that appear verbatim in
+    the lyrics are never fuzzy-flagged: they're the lyrics' own (clean) word,
+    not a mishearing of the profanity. This is what separates "witches" in a
+    song whose lyrics contain both "witches" and "bitches" (legit — don't mute)
+    from a transcribed "ducking" that appears nowhere in lyrics containing
+    "fucking" (an ASR soft-substitute — mute it).
     """
     if not profanity_vocab:
         return words
+
+    lyrics_words = (
+        set(re.findall(r"[\w']+", lyrics_text.lower())) if lyrics_text else set()
+    )
 
     # SequenceMatcher ratio is permissive on short tokens — "He's" vs "hoes",
     # "toes" vs "hoes", and "holes" vs "hoes" all score 0.75. Require a tighter
@@ -746,6 +772,11 @@ def flag_with_profanity_vocab(
         # Defense in depth: even if a WHITELIST word slipped into the vocab
         # somehow, never flag a transcribed word that itself is whitelisted.
         if any(v in WHITELIST for v in _normalize_word(w["word"])):
+            result.append(w)
+            continue
+
+        # Words the lyrics themselves contain are legit, not soft-substitutes.
+        if re.sub(r"[^\w']", "", w["word"]).lower() in lyrics_words:
             result.append(w)
             continue
 

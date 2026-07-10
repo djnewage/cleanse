@@ -153,6 +153,52 @@ class TestCompoundProfanity:
         assert result[3]["is_profanity"] is False
 
 
+class TestWildcardCensoredTier:
+    """Censored forms ('*'/'-' as single-char wildcards) must be caught: Whisper
+    emits them (censored-subtitle training data), and Genius lyrics passed as
+    initial_prompt are often asterisk-censored. The hyphenated-word NEGATIVES
+    table is the FP spec — exact-length matching keeps ordinary hyphenated
+    words from aligning with any target."""
+
+    # Multi-censor-char forms the exact tier's leet map can't handle (it only
+    # substitutes one char per position). f*ck/sh*t/b*tch are exact-tier.
+    POSITIVES = [
+        "f***", "s***", "n***a", "n****", "f***ing", "f**king", "f***in'",
+        "motherf***er", "f---", "a**", "****", "d**n", "b****", "b*****s",
+    ]
+
+    NEGATIVES = [
+        "t-shirt", "x-ray", "e-mail", "co-op", "hip-hop", "so-called",
+        "twenty-two", "check-in", "mother-in-law", "uh-huh", "na-na", "la-la",
+        "one-two", "k-pop", "v-neck", "u-turn", "drive-in", "pick-up", "re-up",
+        "a-ha", "well-known", "cha-cha", "f-150", "he-ll",
+        "----", "--", "-",  # em-dash separators must not read as wildcards
+    ]
+
+    def test_positives_caught(self):
+        from profanity_detector import scan_token
+        misses = [w for w in self.POSITIVES if scan_token(w) is None]
+        assert not misses, f"censored forms NOT flagged: {misses}"
+
+    def test_no_false_positives(self):
+        from profanity_detector import scan_token
+        fps = [w for w in self.NEGATIVES if scan_token(w) is not None]
+        assert not fps, f"FALSE POSITIVES (hyphenated/innocent tokens flagged): {fps}"
+
+    def test_resolves_to_real_word(self):
+        from profanity_detector import scan_token
+        assert scan_token("f***ing") == {"matched": "fucking", "match_type": "wildcard"}
+        assert scan_token("n***a") == {"matched": "nigga", "match_type": "wildcard"}
+
+    def test_flag_profanity_path(self):
+        result = flag_profanity([
+            {"word": "f***", "start": 0.0, "end": 0.5, "confidence": 0.9},
+            {"word": "hello", "start": 0.5, "end": 1.0, "confidence": 0.9},
+        ])
+        assert result[0]["is_profanity"] is True
+        assert result[1]["is_profanity"] is False
+
+
 class TestJoinedCompoundProfanity:
     """Adjacent pairs whose JOINED form is in the exact list ("blow"+"job" ->
     "blowjob") are flagged even though neither half is profane alone."""
