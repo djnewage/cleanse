@@ -161,10 +161,11 @@ from profanity_detector import flag_profanity
 from audio_processor import censor_audio, censor_audio_vocals_only
 from vocal_separator import separate as separate_vocals
 from device_info import detect_device
-from lyrics_fetcher import extract_metadata, fetch_lyrics, find_lyrics_profanity, parse_synced_lyrics
+from lyrics_fetcher import extract_metadata, fetch_lyrics, parse_synced_lyrics
 from lyrics_corrector import (
     correct_words_with_lyrics, fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics,
-    extract_profanity_vocab, flag_with_profanity_vocab,
+    extract_profanity_vocab, flag_with_profanity_vocab, find_lyrics_profanity,
+    find_plain_lyrics_profanity, normalize_word_timeline,
 )
 
 
@@ -383,6 +384,142 @@ def merge_word_lists(
     return merged
 
 
+# Corrections tolerate mediocre alignment (worst case: a mislabeled word), but
+# INJECTING words/mutes from LRC timestamps requires the timeline to really
+# match. Repetitive songs score >=0.25 even with offset/wrong-version lyrics.
+INJECTOR_ALIGNMENT_THRESHOLD = 0.5
+
+
+def apply_lyrics_pipeline(
+    final_words: list[dict],
+    duration: float,
+    detected_language: str,
+    lyrics: str | None,
+    synced_lyrics: str | None,
+) -> list[dict]:
+    """Post-transcription lyrics pipeline: correction, gap-fill, lyrics-based
+    profanity discovery, and vocab flagging. Module-level so it can be run
+    headless (tests, diagnostics) without the HTTP endpoint."""
+    # Correct misheard words using synced lyrics (fuzzy matching)
+    alignment_score = 0.0
+    if synced_lyrics:
+        final_words, alignment_score = correct_words_with_lyrics(final_words, synced_lyrics)
+
+    # Gate timing-dependent features on alignment quality.
+    # Low alignment (<25%) indicates lyrics don't match the audio
+    # (e.g., remix with reordered/chopped vocals) — skip gap-fill and
+    # lyrics-based profanity discovery that would inject garbage.
+    # Alignment gating only applies to synced lyrics (which have timestamps).
+    # Plain lyrics gap-fill uses its own alignment detection and is always attempted.
+    #
+    # INJECTORS need a higher bar than corrections: correcting a word can at
+    # worst mislabel it, but trusting the lyrics' timestamps to ADD words/mutes
+    # over clean audio needs the timeline to actually line up. Repetitive songs
+    # clear 25% even when the lyrics are offset. In the 25-50% band we fall
+    # back to the anchor-based plain path, which aligns by content, not time.
+    lyrics_aligned = alignment_score >= 0.25
+    lyrics_injection_ok = alignment_score >= INJECTOR_ALIGNMENT_THRESHOLD
+
+    plain_from_synced = ""
+    if synced_lyrics:
+        plain_from_synced = "\n".join(
+            line["text"] for line in parse_synced_lyrics(synced_lyrics)
+        )
+
+    if synced_lyrics and lyrics_injection_ok:
+        pre_count = len(final_words)
+        final_words = fill_gaps_with_lyrics(
+            final_words, synced_lyrics, audio_duration=duration
+        )
+        if len(final_words) == pre_count and plain_from_synced.strip():
+            # Synced gap-fill bailed (typically a remix/edit where the original
+            # lyrics span longer than the audio, tripping its 2x-word safeguard).
+            # Plain gap-fill uses anchor interpolation between matched words,
+            # which adapts to whatever the audio's actual timing is.
+            print(
+                "[Pipeline] Synced gap-fill bailed; falling back to plain gap-fill (anchor-based).",
+                file=sys.stderr,
+            )
+            final_words = fill_gaps_with_plain_lyrics(
+                final_words, plain_from_synced, duration
+            )
+    elif synced_lyrics and lyrics_aligned:
+        # 25-50% band: lyrics text is right but timing is shaky — use the
+        # anchor-based plain path instead of trusting LRC timestamps.
+        print(
+            f"[Pipeline] Moderate lyrics alignment ({alignment_score:.0%}), "
+            f"using anchor-based gap-fill instead of synced timestamps",
+            file=sys.stderr,
+        )
+        if plain_from_synced.strip():
+            final_words = fill_gaps_with_plain_lyrics(
+                final_words, plain_from_synced, duration
+            )
+    elif not synced_lyrics and lyrics:
+        # Fallback: use plain lyrics (no timestamps) with sequence alignment
+        final_words = fill_gaps_with_plain_lyrics(
+            final_words, lyrics, duration
+        )
+    elif synced_lyrics and not lyrics_aligned:
+        print(
+            f"[Pipeline] Poor lyrics alignment ({alignment_score:.0%}), "
+            f"skipping gap-fill and lyrics profanity discovery",
+            file=sys.stderr,
+        )
+
+    # Re-flag profanity on all words (corrected words may now be profane,
+    # gap-filled words haven't been checked yet). Must pass language:
+    # flag_profanity rebuilds is_profanity from scratch, so omitting it
+    # un-flags Spanish compounds that pass 1 already caught.
+    if synced_lyrics or lyrics:
+        final_words = flag_profanity(final_words, language=detected_language)
+
+    # Cross-reference with lyrics to find missed profanities. Synced lyrics use
+    # real timestamps (per-line corroborated); in the moderate-alignment band
+    # and for plain-only lyrics (e.g. Genius), the alignment-based plain
+    # injector places them by content anchors instead.
+    if synced_lyrics and lyrics_injection_ok:
+        lyrics_detections = find_lyrics_profanity(synced_lyrics, final_words)
+        if lyrics_detections:
+            final_words = final_words + lyrics_detections
+            final_words.sort(key=lambda w: w["start"])
+    elif synced_lyrics and lyrics_aligned:
+        if plain_from_synced.strip():
+            plain_detections = find_plain_lyrics_profanity(
+                final_words, plain_from_synced, duration
+            )
+            if plain_detections:
+                final_words = final_words + plain_detections
+                final_words.sort(key=lambda w: w["start"])
+    elif not synced_lyrics and lyrics:
+        plain_detections = find_plain_lyrics_profanity(
+            final_words, lyrics, duration
+        )
+        if plain_detections:
+            final_words = final_words + plain_detections
+            final_words.sort(key=lambda w: w["start"])
+
+    # Time-agnostic profanity vocab check — works even for remixes
+    # where lyrics timing doesn't match. Uses plain lyrics (or synced
+    # lyrics text) to extract profanity vocabulary and fuzzy-match
+    # against transcribed words.
+    lyrics_for_vocab = lyrics or synced_lyrics
+    if lyrics_for_vocab:
+        profanity_vocab = extract_profanity_vocab(lyrics_for_vocab)
+        if profanity_vocab:
+            final_words = flag_with_profanity_vocab(
+                final_words, profanity_vocab, lyrics_text=lyrics_for_vocab,
+            )
+
+    # Last step, after all flags are final: enforce the karaoke timing
+    # invariants (sorted, non-overlapping, positive durations). Running it
+    # earlier would remove the estimated words the injectors use as dedup
+    # anchors, and the profanity-transfer rule needs the final flags.
+    final_words = normalize_word_timeline(final_words, audio_duration=duration)
+
+    return final_words
+
+
 @app.post("/transcribe")
 async def transcribe(req: TranscribeRequest):
     req.path = unquote(req.path)
@@ -459,73 +596,10 @@ async def transcribe(req: TranscribeRequest):
         else:
             final_words = primary_words
 
-        # Correct misheard words using synced lyrics (fuzzy matching)
-        alignment_score = 0.0
-        if req.synced_lyrics:
-            final_words, alignment_score = correct_words_with_lyrics(final_words, req.synced_lyrics)
-
-        # Gate timing-dependent features on alignment quality.
-        # Low alignment (<25%) indicates lyrics don't match the audio
-        # (e.g., remix with reordered/chopped vocals) — skip gap-fill and
-        # lyrics-based profanity discovery that would inject garbage.
-        # Alignment gating only applies to synced lyrics (which have timestamps).
-        # Plain lyrics gap-fill uses its own alignment detection and is always attempted.
-        lyrics_aligned = alignment_score >= 0.25
-
-        if req.synced_lyrics and lyrics_aligned:
-            pre_count = len(final_words)
-            final_words = fill_gaps_with_lyrics(
-                final_words, req.synced_lyrics, audio_duration=result["duration"]
-            )
-            if len(final_words) == pre_count:
-                # Synced gap-fill bailed (typically a remix/edit where the original
-                # lyrics span longer than the audio, tripping its 2x-word safeguard).
-                # Plain gap-fill uses anchor interpolation between matched words,
-                # which adapts to whatever the audio's actual timing is.
-                plain_from_synced = "\n".join(
-                    line["text"] for line in parse_synced_lyrics(req.synced_lyrics)
-                )
-                if plain_from_synced.strip():
-                    print(
-                        "[Pipeline] Synced gap-fill bailed; falling back to plain gap-fill (anchor-based).",
-                        file=sys.stderr,
-                    )
-                    final_words = fill_gaps_with_plain_lyrics(
-                        final_words, plain_from_synced, result["duration"]
-                    )
-        elif not req.synced_lyrics and req.lyrics:
-            # Fallback: use plain lyrics (no timestamps) with sequence alignment
-            final_words = fill_gaps_with_plain_lyrics(
-                final_words, req.lyrics, result["duration"]
-            )
-        elif req.synced_lyrics and not lyrics_aligned:
-            print(
-                f"[Pipeline] Poor lyrics alignment ({alignment_score:.0%}), "
-                f"skipping gap-fill and lyrics profanity discovery",
-                file=sys.stderr,
-            )
-
-        # Re-flag profanity on all words (corrected words may now be profane,
-        # gap-filled words haven't been checked yet)
-        if req.synced_lyrics or req.lyrics:
-            final_words = flag_profanity(final_words)
-
-        # Cross-reference with synced lyrics to find missed profanities
-        if req.synced_lyrics and lyrics_aligned:
-            lyrics_detections = find_lyrics_profanity(req.synced_lyrics, final_words)
-            if lyrics_detections:
-                final_words = final_words + lyrics_detections
-                final_words.sort(key=lambda w: w["start"])
-
-        # Time-agnostic profanity vocab check — works even for remixes
-        # where lyrics timing doesn't match. Uses plain lyrics (or synced
-        # lyrics text) to extract profanity vocabulary and fuzzy-match
-        # against transcribed words.
-        lyrics_for_vocab = req.lyrics or req.synced_lyrics
-        if lyrics_for_vocab:
-            profanity_vocab = extract_profanity_vocab(lyrics_for_vocab)
-            if profanity_vocab:
-                final_words = flag_with_profanity_vocab(final_words, profanity_vocab)
+        final_words = apply_lyrics_pipeline(
+            final_words, result["duration"], detected_language,
+            req.lyrics, req.synced_lyrics,
+        )
 
         return {
             "words": final_words,

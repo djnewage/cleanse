@@ -15,6 +15,11 @@ from pydub.utils import mediainfo_json
 PADDING_BEFORE_MS = 200
 PADDING_AFTER_MS = 250
 
+# Extra padding for words with estimated (lyrics-derived) timestamps. Additive,
+# NOT multiplicative: the old 3x/2x multiplier made injected words within one
+# lyric line chain into contiguous blanket mutes over whole sections.
+ESTIMATED_PAD_EXTRA_MS = 100
+
 # Crossfade duration for smooth transitions at censor boundaries
 CROSSFADE_MS = 30
 
@@ -221,6 +226,64 @@ def _export(audio: AudioSegment, output_path: str, source_path: str | None = Non
     return output_path
 
 
+def _build_censor_regions(
+    words: list[dict],
+    audio_len_ms: int,
+    padding_before_ms: int,
+    padding_after_ms: int,
+) -> list[dict]:
+    """Compute padded censor intervals per word and merge overlapping/touching
+    regions of the same censor_type. Returns regions sorted by start:
+    [{"start_ms", "end_ms", "censor_type", "words": [str, ...]}].
+
+    Merging keeps crossfaded splices from stacking on the same samples, and
+    the coverage log makes over-muting regressions visible.
+    """
+    intervals = []
+    for w in sorted(words, key=lambda x: x["start"]):
+        extra = ESTIMATED_PAD_EXTRA_MS if w.get("detection_source", "") in ("lyrics", "lyrics_gap") else 0
+        start_ms = max(0, int(w["start"] * 1000) - padding_before_ms - extra)
+        end_ms = min(audio_len_ms, int(w["end"] * 1000) + padding_after_ms + extra)
+        if end_ms - start_ms <= 0:
+            continue
+        intervals.append({
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "censor_type": w.get("censor_type", "mute"),
+            "words": [w.get("word", "?")],
+        })
+
+    regions: list[dict] = []
+    for iv in intervals:
+        prev = regions[-1] if regions else None
+        if prev and iv["start_ms"] <= prev["end_ms"] and iv["censor_type"] == prev["censor_type"]:
+            prev["end_ms"] = max(prev["end_ms"], iv["end_ms"])
+            prev["words"].extend(iv["words"])
+        elif prev and iv["start_ms"] < prev["end_ms"]:
+            # Different censor_type overlapping: trim the later region's start.
+            iv["start_ms"] = prev["end_ms"]
+            if iv["end_ms"] - iv["start_ms"] > 0:
+                regions.append(iv)
+        else:
+            regions.append(iv)
+
+    total_ms = sum(r["end_ms"] - r["start_ms"] for r in regions)
+    if regions and audio_len_ms > 0:
+        pct = 100.0 * total_ms / audio_len_ms
+        print(
+            f"[AudioProcessor] {len(regions)} censor regions covering "
+            f"{total_ms / 1000:.1f}s ({pct:.1f}% of track)",
+            file=sys.stderr,
+        )
+        if pct > 20.0:
+            print(
+                f"[AudioProcessor] WARNING: censoring {pct:.1f}% of the track — "
+                f"likely mispositioned lyrics-derived detections",
+                file=sys.stderr,
+            )
+    return regions
+
+
 def censor_audio(
     input_path: str,
     words: list[dict],
@@ -245,27 +308,10 @@ def censor_audio(
     """
     audio = AudioSegment.from_file(input_path)
 
-    # Sort by timestamp for deterministic processing order
-    words = sorted(words, key=lambda w: w["start"])
-
-    for w in words:
-        # Use wider padding for words with estimated timestamps (lyrics-sourced)
-        source = w.get("detection_source", "")
-        if source in ("lyrics", "lyrics_gap"):
-            actual_before = padding_before_ms * 3
-            actual_after = padding_after_ms * 2
-        else:
-            actual_before = padding_before_ms
-            actual_after = padding_after_ms
-
-        start_ms = max(0, int(w["start"] * 1000) - actual_before)
-        end_ms = min(len(audio), int(w["end"] * 1000) + actual_after)
-        if end_ms - start_ms <= 0:
-            continue
-
-        censor_type = w.get("censor_type", "mute")
-        replacement = _make_replacement(audio, start_ms, end_ms, censor_type)
-        audio = _splice_with_crossfade(audio, start_ms, end_ms, replacement, crossfade_ms)
+    regions = _build_censor_regions(words, len(audio), padding_before_ms, padding_after_ms)
+    for r in regions:
+        replacement = _make_replacement(audio, r["start_ms"], r["end_ms"], r["censor_type"])
+        audio = _splice_with_crossfade(audio, r["start_ms"], r["end_ms"], replacement, crossfade_ms)
 
     return _export(audio, output_path, source_path=input_path)
 
@@ -301,43 +347,25 @@ def censor_audio_vocals_only(
     vocals = AudioSegment.from_file(vocals_path)
     accompaniment = AudioSegment.from_file(accompaniment_path)
 
-    # Sort by timestamp for deterministic processing order
-    words = sorted(words, key=lambda w: w["start"])
-
-    for w in words:
-        # Use wider padding for words with estimated timestamps (lyrics-sourced)
-        source = w.get("detection_source", "")
-        if source in ("lyrics", "lyrics_gap"):
-            actual_before = padding_before_ms * 3
-            actual_after = padding_after_ms * 2
-        else:
-            actual_before = padding_before_ms
-            actual_after = padding_after_ms
-
-        start_ms = max(0, int(w["start"] * 1000) - actual_before)
-        end_ms = min(len(vocals), int(w["end"] * 1000) + actual_after)
-        if end_ms - start_ms <= 0:
-            continue
-
-        censor_type = w.get("censor_type", "mute")
+    regions = _build_censor_regions(words, len(vocals), padding_before_ms, padding_after_ms)
+    for r in regions:
+        start_ms, end_ms = r["start_ms"], r["end_ms"]
 
         # Check vocal level to detect demucs leakage
         vocal_level = vocals[start_ms:end_ms].dBFS
         is_leaked = vocal_level < VOCAL_SILENCE_THRESHOLD
 
         print(
-            f"[AudioProcessor] Word '{w.get('word', '?')}' "
-            f"time={w.get('start', 0):.2f}-{w.get('end', 0):.2f}s "
-            f"padded={start_ms}-{end_ms}ms "
-            f"censor={censor_type} "
-            f"vocal_dBFS={vocal_level:.1f} "
-            f"source={w.get('detection_source', 'unknown')}"
+            f"[AudioProcessor] Region {start_ms}-{end_ms}ms "
+            f"words={' '.join(r['words'])} "
+            f"censor={r['censor_type']} "
+            f"vocal_dBFS={vocal_level:.1f}"
             f"{'  -> BANDREJECT' if is_leaked else ''}",
             file=sys.stderr,
         )
 
         # Censor vocals (always)
-        replacement = _make_replacement(vocals, start_ms, end_ms, censor_type)
+        replacement = _make_replacement(vocals, start_ms, end_ms, r["censor_type"])
         vocals = _splice_with_crossfade(vocals, start_ms, end_ms, replacement, crossfade_ms)
 
         # If vocals are silent, the word leaked into the accompaniment.

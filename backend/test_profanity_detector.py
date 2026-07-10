@@ -153,6 +153,126 @@ class TestCompoundProfanity:
         assert result[3]["is_profanity"] is False
 
 
+class TestWildcardCensoredTier:
+    """Censored forms ('*'/'-' as single-char wildcards) must be caught: Whisper
+    emits them (censored-subtitle training data), and Genius lyrics passed as
+    initial_prompt are often asterisk-censored. The hyphenated-word NEGATIVES
+    table is the FP spec — exact-length matching keeps ordinary hyphenated
+    words from aligning with any target."""
+
+    # Multi-censor-char forms the exact tier's leet map can't handle (it only
+    # substitutes one char per position). f*ck/sh*t/b*tch are exact-tier.
+    POSITIVES = [
+        "f***", "s***", "n***a", "n****", "f***ing", "f**king", "f***in'",
+        "motherf***er", "f---", "a**", "****", "d**n", "b****", "b*****s",
+    ]
+
+    NEGATIVES = [
+        "t-shirt", "x-ray", "e-mail", "co-op", "hip-hop", "so-called",
+        "twenty-two", "check-in", "mother-in-law", "uh-huh", "na-na", "la-la",
+        "one-two", "k-pop", "v-neck", "u-turn", "drive-in", "pick-up", "re-up",
+        "a-ha", "well-known", "cha-cha", "f-150", "he-ll",
+        "----", "--", "-",  # em-dash separators must not read as wildcards
+    ]
+
+    def test_positives_caught(self):
+        from profanity_detector import scan_token
+        misses = [w for w in self.POSITIVES if scan_token(w) is None]
+        assert not misses, f"censored forms NOT flagged: {misses}"
+
+    def test_no_false_positives(self):
+        from profanity_detector import scan_token
+        fps = [w for w in self.NEGATIVES if scan_token(w) is not None]
+        assert not fps, f"FALSE POSITIVES (hyphenated/innocent tokens flagged): {fps}"
+
+    def test_resolves_to_real_word(self):
+        from profanity_detector import scan_token
+        assert scan_token("f***ing") == {"matched": "fucking", "match_type": "wildcard"}
+        assert scan_token("n***a") == {"matched": "nigga", "match_type": "wildcard"}
+
+    def test_flag_profanity_path(self):
+        result = flag_profanity([
+            {"word": "f***", "start": 0.0, "end": 0.5, "confidence": 0.9},
+            {"word": "hello", "start": 0.5, "end": 1.0, "confidence": 0.9},
+        ])
+        assert result[0]["is_profanity"] is True
+        assert result[1]["is_profanity"] is False
+
+
+class TestJoinedCompoundProfanity:
+    """Adjacent pairs whose JOINED form is in the exact list ("blow"+"job" ->
+    "blowjob") are flagged even though neither half is profane alone."""
+
+    def _words(self, *texts):
+        return [{"word": t, "start": i * 0.5, "end": (i + 1) * 0.5, "confidence": 0.9} for i, t in enumerate(texts)]
+
+    def _check_both(self, w1, w2):
+        result = flag_profanity(self._words(w1, w2))
+        assert result[0]["is_profanity"] is True, f"'{w1} {w2}': first half not flagged"
+        assert result[1]["is_profanity"] is True, f"'{w1} {w2}': second half not flagged"
+
+    def test_blow_job(self):
+        self._check_both("blow", "job")
+
+    def test_hand_job(self):
+        self._check_both("hand", "job")
+
+    def test_rim_job(self):
+        self._check_both("rim", "job")
+
+    def test_deep_throat(self):
+        self._check_both("deep", "throat")
+
+    def test_cum_shot(self):
+        self._check_both("cum", "shot")
+
+    def test_jerk_off(self):
+        self._check_both("jerk", "off")
+
+    def test_innocent_joins_not_flagged(self):
+        # Negatives table: everyday pairs must never assemble into a hit.
+        for w1, w2 in [
+            ("class", "act"), ("grass", "hopper"), ("pass", "word"),
+            ("hand", "some"), ("kick", "off"), ("mass", "ive"),
+            ("but", "ton"), ("back", "side"), ("count", "down"),
+        ]:
+            result = flag_profanity(self._words(w1, w2))
+            assert result[0]["is_profanity"] is False, f"FP: '{w1} {w2}' flagged {w1}"
+            assert result[1]["is_profanity"] is False, f"FP: '{w1} {w2}' flagged {w2}"
+
+    def test_short_tokens_cannot_assemble(self):
+        # min-length guard: "s"+"hit" must not join into "shit"
+        result = flag_profanity(self._words("s", "hit"))
+        assert result[0]["is_profanity"] is False
+        assert result[1]["is_profanity"] is False
+
+
+class TestGappedCompoundProfanity:
+    """Compound halves separated by one filler word ("hijo DE puta") flag all
+    three tokens so the mute is contiguous."""
+
+    def _words(self, *texts):
+        return [{"word": t, "start": i * 0.5, "end": (i + 1) * 0.5, "confidence": 0.9} for i, t in enumerate(texts)]
+
+    def test_hijo_de_puta(self):
+        result = flag_profanity(self._words("hijo", "de", "puta"), language="es")
+        assert [w["is_profanity"] for w in result] == [True, True, True]
+
+    def test_cara_de_verga(self):
+        result = flag_profanity(self._words("cara", "de", "verga"), language="es")
+        assert [w["is_profanity"] for w in result] == [True, True, True]
+
+    def test_innocent_gapped_phrase_not_flagged(self):
+        result = flag_profanity(self._words("hijo", "de", "dios"), language="es")
+        assert [w["is_profanity"] for w in result] == [False, False, False]
+
+    def test_gap_requires_filler_word(self):
+        # Non-filler middle word must not bridge the compound
+        result = flag_profanity(self._words("hijo", "grande", "puta"), language="es")
+        assert result[0]["is_profanity"] is False
+        assert result[1]["is_profanity"] is False
+
+
 class TestSpanishProfanity:
     """Verify Spanish profanity words are detected."""
 
@@ -272,3 +392,57 @@ class TestSlangWords:
 
     def test_puchi(self):
         self._check("puchi")
+
+
+class TestStyleRecallLayer:
+    """Fuzzy/de-elongation recall layer (scan_token). The NEGATIVES table is the
+    spec for the gates — zero false positives is the bar. Metaphone was rejected
+    because its vowel-dropping collides with common words (shot/beach/count)."""
+
+    from profanity_detector import scan_token
+
+    # Stylized / elongated spellings that SHOULD be caught beyond the exact list.
+    # fucc/fucck/bytch/shiet score under the fuzzy ratio-90 floor, so they live
+    # in custom_profanity.txt (exact tier) instead of loosening the threshold.
+    POSITIVES = ["biiitch", "pusssy", "fuuuck", "shiiit", "niggaaa", "fuuck", "shiit",
+                 "biitch", "biatchhh", "fucc", "fucck", "bytch", "shiet"]
+
+    # Common words that MUST NEVER be flagged. Two collision families:
+    # (a) vowel-drop / single-edit neighbors of profanity roots (shot, count, shirt);
+    # (b) natural doubled-letter words that de-elongation collapses (good, moon, grass).
+    NEGATIVES = [
+        # (a) edit-distance / vowel-drop neighbors
+        "shot", "sheet", "shoot", "shoots", "beach", "batch", "fake", "folk",
+        "cant", "can't", "shirt", "glass", "count", "ship", "class", "hash",
+        "peach", "fact", "sheep", "duck", "sick", "sit", "chic", "clock", "rich",
+        "which", "beech", "snitch", "ditch", "pitch", "witch", "assassin",
+        "assess", "grass", "bass", "pass", "cocktail", "title", "shut", "chat",
+        # (b) doubled-letter words exercised by the runs-of-2 de-elongation
+        "good", "moon", "soon", "balloon", "coffee", "success", "cool", "look",
+        "book", "feel", "see", "off", "egg", "ball", "small", "still", "happy",
+        "butter", "dinner", "mirror", "yellow", "cookie", "raccoon", "cocoon",
+    ]
+
+    def _flagged(self, word):
+        from profanity_detector import flag_profanity
+        w = [{"word": word, "start": 0.0, "end": 0.5, "confidence": 0.9}]
+        return flag_profanity(w)[0]["is_profanity"]
+
+    def test_positives_caught(self):
+        for w in self.POSITIVES:
+            assert self._flagged(w) is True, f"stylized '{w}' was NOT flagged"
+
+    def test_no_false_positives(self):
+        fps = [w for w in self.NEGATIVES if self._flagged(w)]
+        assert not fps, f"FALSE POSITIVES (clean words flagged as profanity): {fps}"
+
+    def test_deelongation_routes_through_exact(self):
+        from profanity_detector import scan_token
+        assert scan_token("fuuuck")["match_type"] == "deelongate"
+        assert scan_token("biiitch")["match_type"] == "deelongate"
+
+    def test_whitelist_still_wins(self):
+        # whitelisted words never match, even with elongation
+        from profanity_detector import scan_token
+        assert scan_token("god") is None
+        assert scan_token("hellll") is None  # -> hell (whitelisted)

@@ -97,7 +97,8 @@ export function useQueueProcessor({
                   lyrics: {
                     plain: result.plain_lyrics,
                     synced: result.synced_lyrics,
-                    source: (result.lyrics_source as 'genius' | 'lrclib' | null) ?? null
+                    source: (result.lyrics_source as 'genius' | 'lrclib' | null) ?? null,
+                    durationMismatch: Boolean(result.duration_mismatch)
                   }
                 })
                 logLyricsFetched()

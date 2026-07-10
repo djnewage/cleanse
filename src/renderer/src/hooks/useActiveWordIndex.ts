@@ -4,8 +4,10 @@ import type { TranscribedWord } from '../types'
 /**
  * Binary search to find the word whose [start, end) interval contains `time`.
  * Returns the index, or -1 if no word spans the given time.
+ *
+ * Exported for unit testing.
  */
-function findActiveWord(words: TranscribedWord[], time: number): number {
+export function findActiveWord(words: TranscribedWord[], time: number): number {
   if (words.length === 0 || time < 0) return -1
 
   let lo = 0

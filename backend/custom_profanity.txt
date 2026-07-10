@@ -47,3 +47,8 @@ shyt
 fck
 effin
 dayum
+# Stylized spellings under the fuzzy tier ratio-90 floor (see scan_token)
+fucc
+fucck
+bytch
+shiet

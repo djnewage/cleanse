@@ -3,6 +3,8 @@
 import re
 import unicodedata
 from pathlib import Path
+
+from rapidfuzz import fuzz
 from better_profanity import profanity
 
 # Load the default word list (916 words)
@@ -112,6 +114,123 @@ COMPOUND_PROFANITY_ES = {
     ("concha", "madre"), ("conche", "madre"),
 }
 
+# Filler words allowed between compound halves: "hijo DE puta", "cara DE verga".
+# The filler is flagged too so the resulting mute is contiguous.
+COMPOUND_GAP_WORDS = {"de", "of", "a", "la", "tu"}
+
+
+# ---------------------------------------------------------------------------
+# Fuzzy + phonetic recall layer (stylized spellings + ASR soft-substitutes).
+#
+# The EXACT tier (better-profanity + custom lists) already covers most stylized
+# spellings (shyt, biatch, azz, fck...). These extra tiers chase the long tail,
+# at real false-positive risk: metaphone drops vowels, so a bare key match
+# collides with everyday words (shot/sheet->shit, beach/batch->bitch,
+# fake->fuck, can't->cunt). So phonetic requires metaphone-equality AND a
+# secondary edit-distance guard, which rejects those real words (they differ by
+# enough edits) while keeping near-identical stylings. Thresholds are tuned by
+# the negatives table in test_profanity_detector.py — that table is the spec.
+# ---------------------------------------------------------------------------
+
+# Small, high-value root set. Fuzzy against the full 916-word list would be pure
+# noise; these are the roots that actually get misheard/transposed by ASR.
+_STYLE_TARGETS: tuple[str, ...] = (
+    "fuck", "fucker", "fuckers", "fucking", "fuckin", "motherfucker", "motherfucking",
+    "shit", "bullshit", "bitch", "bitches",
+    "nigga", "niggas", "nigger", "niggers",
+    "cunt", "pussy", "whore", "faggot", "asshole",
+)
+_FUZZY_MIN = 90          # fuzzy-tier ratio floor (test-table tuned)
+_STYLE_MIN_LEN = 4       # never approximate-match very short tokens
+
+# Wildcard tier matches censored forms (f***, sh-t) rather than mishearings, so
+# it can safely cover more roots than the fuzzy tier without FP risk.
+_WILDCARD_TARGETS: tuple[str, ...] = _STYLE_TARGETS + (
+    "ass", "dick", "dicks", "cock", "damn", "dammit", "goddamn",
+    "bastard", "slut", "sluts", "hoes",
+)
+_WILDCARD_MIN_LEN = 3    # a** / f-- need 3; anything shorter is noise
+
+
+def _wildcard_match(token: str) -> dict | None:
+    """Censored-form tier: '*' and '-' act as single-char wildcards, so
+    f*** -> fuck, n***a -> nigga, f**king -> fucking, f--- -> fuck. Whisper
+    emits these (censored-subtitle training data) — and Genius lyrics passed as
+    initial_prompt are often asterisk-censored, biasing it further. Exact-length
+    matching only: every wildcard stands for exactly one character, so ordinary
+    hyphenated words (t-shirt, check-in) can't align with any target."""
+    raw = re.sub(r"[^\w*\-]", "", token).lower()
+    if len(raw) < _WILDCARD_MIN_LEN or not re.search(r"[*\-]", raw):
+        return None
+    letters = re.sub(r"[*\-]", "", raw)
+    if letters in WHITELIST:
+        return None
+    if not letters and not re.fullmatch(r"\*{3,}", raw):
+        # Letterless forms must be pure asterisks (Whisper's own censoring).
+        # All-dash runs are em-dash separators in lyrics, not profanity.
+        return None
+    pattern = re.compile("".join("." if c in "*-" else re.escape(c) for c in raw))
+    for tgt in _WILDCARD_TARGETS:
+        if pattern.fullmatch(tgt):
+            return {"matched": tgt, "match_type": "wildcard"}
+    return None
+
+
+def _deelongate(norm: str) -> set[str]:
+    """Collapse runs of a repeated char (>=3) to 1 and to 2, e.g.
+    'biiitch'->{'bitch','biitch'}, 'pusssy'->{'pusy','pussy'}. Catches elongated
+    stylings ('fuuuck', 'shiii') with near-zero FP risk — real words almost never
+    have 3+ repeated letters. The collapsed forms are checked by the EXACT list."""
+    out = {
+        re.sub(r"(.)\1+", r"\1", norm),          # any run (>=2) -> 1  (fuuck->fuck)
+        re.sub(r"(.)\1{2,}", r"\1", norm),       # run (>=3)  -> 1     (niggaaa->nigga)
+        re.sub(r"(.)\1{2,}", r"\1\1", norm),     # run (>=3)  -> 2     (pusssy->pussy)
+    }
+    return {v for v in out if v and v != norm}
+
+
+def _style_match(token: str) -> dict | None:
+    """Approximate profanity match (wildcard + de-elongation + fuzzy) against
+    the stylized roots. Returns {"matched", "match_type"} or None. Additive
+    recall only — the plain exact tier is handled by the caller. Whitelisted."""
+    # Wildcard first: it needs the raw token ('*'/'-' intact), which the
+    # normalization below strips.
+    wildcard_hit = _wildcard_match(token)
+    if wildcard_hit is not None:
+        return wildcard_hit
+
+    norm = re.sub(r"[^\w]", "", token).lower()
+    if len(norm) < _STYLE_MIN_LEN or norm in WHITELIST:
+        return None
+
+    # De-elongation: collapse repeated chars, then check the EXACT list.
+    for collapsed in _deelongate(norm):
+        if collapsed not in WHITELIST and profanity.contains_profanity(collapsed):
+            return {"matched": collapsed, "match_type": "deelongate"}
+
+    # Fuzzy: high-ratio match to a root (catches transpositions/substitutions).
+    # Threshold set by the negatives table so shirt/count/glass stay clean.
+    best_tgt, best = None, 0.0
+    for tgt in _STYLE_TARGETS:
+        r = fuzz.ratio(norm, tgt)
+        if r > best:
+            best, best_tgt = r, tgt
+    if best >= _FUZZY_MIN:
+        return {"matched": best_tgt, "match_type": "fuzzy"}
+    return None
+
+
+def scan_token(token: str, language: str | None = None) -> dict | None:
+    """Tiered profanity match for a single token: exact -> de-elongation -> fuzzy.
+    Returns a hit dict ({"matched", "match_type"}) or None. Whitelisted tokens
+    never match. Used for both ASR words and lyric tokens."""
+    variations = _normalize_word(token)
+    if any(v.lower() in WHITELIST for v in variations):
+        return None
+    if any(profanity.contains_profanity(v) for v in variations):
+        return {"matched": token, "match_type": "exact"}
+    return _style_match(token)
+
 
 def flag_profanity(words: list[dict], language: str | None = None) -> list[dict]:
     """
@@ -141,6 +260,11 @@ def flag_profanity(words: list[dict], language: str | None = None) -> list[dict]
         if is_profane and any(v.lower() in WHITELIST for v in variations):
             is_profane = False
 
+        # Additive recall: stylized spellings / ASR soft-substitutes the exact
+        # tier missed (e.g. "phuck", novel spellings). Gated to avoid FPs.
+        if not is_profane and _style_match(word_text) is not None:
+            is_profane = True
+
         flagged.append({**w, "is_profanity": is_profane})
 
     # Second pass: check adjacent word pairs for compound profanity
@@ -150,8 +274,27 @@ def flag_profanity(words: list[dict], language: str | None = None) -> list[dict]
     for i in range(len(flagged) - 1):
         w1 = re.sub(r'[^\w]', '', flagged[i]["word"]).lower()
         w2 = re.sub(r'[^\w]', '', flagged[i + 1]["word"]).lower()
-        if (w1, w2) in compounds:
+        # Beyond the explicit pair list, also flag pairs whose joined form is in
+        # the exact profanity list ("blow"+"job" -> "blowjob"), where neither
+        # half alone is profane. Min length 3 per half so stray short tokens
+        # can't assemble into a hit ("s"+"hit").
+        joined_hit = (
+            len(w1) >= 3 and len(w2) >= 3
+            and (w1 + w2) not in WHITELIST
+            and profanity.contains_profanity(w1 + w2)
+        )
+        if (w1, w2) in compounds or joined_hit:
             flagged[i]["is_profanity"] = True
             flagged[i + 1]["is_profanity"] = True
+
+    # Third pass: compound halves separated by one filler word ("hijo de puta").
+    for i in range(len(flagged) - 2):
+        w1 = re.sub(r'[^\w]', '', flagged[i]["word"]).lower()
+        mid = re.sub(r'[^\w]', '', flagged[i + 1]["word"]).lower()
+        w3 = re.sub(r'[^\w]', '', flagged[i + 2]["word"]).lower()
+        if mid in COMPOUND_GAP_WORDS and (w1, w3) in compounds:
+            flagged[i]["is_profanity"] = True
+            flagged[i + 1]["is_profanity"] = True
+            flagged[i + 2]["is_profanity"] = True
 
     return flagged

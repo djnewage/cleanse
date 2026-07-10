@@ -1,6 +1,7 @@
 """Transcription module using faster-whisper for word-level timestamps."""
 
 import json
+import re
 import subprocess
 import sys
 import types
@@ -214,6 +215,69 @@ def get_model(turbo: bool = False):
     return _model
 
 
+def collapse_repetition_loops(
+    words: list[dict],
+    min_cycles: int = 4,
+    min_cycle_gap: float = 0.18,
+    max_density: float = 8.0,
+) -> list[dict]:
+    """Collapse Whisper repetition hallucinations — a short phrase repeating
+    CONSECUTIVELY many times, crammed into a region with implausible density
+    (near-zero word durations / overlapping timestamps), e.g. "dope shit dope shit
+    dope shit…" filling an instrumental break.
+
+    Backstop to the temperature-fallback retry: only collapses runs that are both
+    long (>= ``min_cycles`` cycles of a period-1..4 phrase) AND crammed (> ``max_density``
+    words/sec or cycles spaced < ``min_cycle_gap``). Legitimately-spaced repeats (real
+    hooks) are left untouched.
+    """
+    n = len(words)
+    if n < min_cycles * 2:
+        return words
+
+    def norm(i: int) -> str:
+        return re.sub(r"[^\w]", "", words[i]["word"]).lower()
+
+    keep = [True] * n
+    i = 0
+    while i < n:
+        # Longest consecutive repeat of a period-p phrase starting at i.
+        best_p, best_reps = 0, 0
+        for p in range(1, 5):
+            if i + 2 * p > n:
+                break
+            phrase = [norm(i + k) for k in range(p)]
+            if "" in phrase:
+                continue
+            reps, j = 1, i + p
+            while j + p <= n and [norm(j + k) for k in range(p)] == phrase:
+                reps += 1
+                j += p
+            if reps >= min_cycles and reps > best_reps:
+                best_p, best_reps = p, reps
+        if best_p == 0:
+            i += 1
+            continue
+
+        run_start, run_end = i, i + best_p * best_reps
+        span = words[run_end - 1]["end"] - words[run_start]["start"]
+        density = (best_p * best_reps) / max(span, 1e-6)
+        crammed = span <= 0 or density > max_density or (span / best_reps) < min_cycle_gap
+        if crammed:
+            # Keep only cycles whose start advances >= min_cycle_gap; drop the crammed rest.
+            last_kept = None
+            for c in range(best_reps):
+                cyc_start = words[run_start + c * best_p]["start"]
+                if last_kept is None or (cyc_start - last_kept) >= min_cycle_gap:
+                    last_kept = cyc_start
+                else:
+                    for k in range(best_p):
+                        keep[run_start + c * best_p + k] = False
+        i = run_end
+
+    return [w for w, k in zip(words, keep) if k]
+
+
 def transcribe_audio(
     file_path: str,
     turbo: bool = False,
@@ -272,7 +336,12 @@ def transcribe_audio(
         word_timestamps=True,
         language=language,
         initial_prompt=initial_prompt,
-        temperature=0,
+        # Temperature FALLBACK (not a fixed 0): greedy first, but when a segment
+        # trips compression_ratio_threshold / log_prob_threshold — which a Whisper
+        # repetition loop ("dope shit dope shit…") does, since repeated text is highly
+        # compressible — retry it at a higher temperature to break the loop. A fixed
+        # temperature=0 disables this retry and lets the hallucinated loop through.
+        temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
         no_speech_threshold=0.8,
         compression_ratio_threshold=2.8,
         condition_on_previous_text=False,
@@ -298,8 +367,11 @@ def transcribe_audio(
         if segment.words:
             for w in segment.words:
                 text = w.word.strip()
-                # Skip Whisper hallucinations (§, ♪, ♫, etc.) — keep only words with letters/digits
-                if not any(c.isalnum() for c in text):
+                # Skip Whisper hallucinations (§, ♪, ♫, etc.) — keep only words
+                # with letters/digits. Exception: a run of asterisks is Whisper
+                # censoring profanity it heard (censored-subtitle training
+                # data); keep it so the wildcard tier can flag and mute it.
+                if not any(c.isalnum() for c in text) and not re.fullmatch(r"\*{3,}", text):
                     continue
                 words.append(
                     {
@@ -310,6 +382,11 @@ def transcribe_audio(
                     }
                 )
                 last_end = max(last_end, w.end)
+
+    pre_collapse = len(words)
+    words = collapse_repetition_loops(words)
+    if len(words) != pre_collapse:
+        print(f"[Transcribe] Collapsed repetition hallucination: {pre_collapse} -> {len(words)} words", file=sys.stderr)
 
     print(f"[Transcribe] Transcription done in {_time.monotonic() - t2:.1f}s - {len(words)} words", file=sys.stderr)
     _report_progress("complete", round(progress_offset + progress_scale, 1), "Transcription complete!")

@@ -48,14 +48,8 @@ def main():
     print("Loading modules...", flush=True)
     from transcribe import transcribe_audio
     from profanity_detector import flag_profanity
-    from lyrics_fetcher import extract_metadata, fetch_lyrics, parse_synced_lyrics
-    from lyrics_corrector import (
-        correct_words_with_lyrics,
-        fill_gaps_with_lyrics,
-        fill_gaps_with_plain_lyrics,
-        extract_profanity_vocab,
-        flag_with_profanity_vocab,
-    )
+    from lyrics_fetcher import extract_metadata, fetch_lyrics
+    from main import apply_lyrics_pipeline
 
     # ── Step 1: Extract metadata ──
     print("Extracting metadata...", flush=True)
@@ -92,7 +86,7 @@ def main():
     audio_duration = result["duration"]
 
     # ── Step 4: Flag profanity ──
-    words = flag_profanity(raw_words)
+    words = flag_profanity(raw_words, language=detected_language)
 
     # Track stats
     stats = {
@@ -104,50 +98,19 @@ def main():
         "vocab_flags": 0,
     }
 
-    # ── Step 5: Lyrics correction ──
-    alignment_score = 0.0
-    if synced_lyrics:
-        words, alignment_score = correct_words_with_lyrics(words, synced_lyrics)
-        stats["alignment_score"] = alignment_score
-        stats["corrections"] = sum(1 for w in words if w.get("detection_source") == "lyrics_corrected")
-
-    lyrics_aligned = alignment_score >= 0.25
-
-    # ── Step 6: Gap filling ──
-    pre_gap_count = len(words)
-    if synced_lyrics and lyrics_aligned:
-        words = fill_gaps_with_lyrics(words, synced_lyrics, audio_duration=audio_duration)
-        if len(words) == pre_gap_count:
-            # Synced gap-fill bailed (typically a remix/edit where original
-            # lyrics span longer than the audio). Fall back to anchor-based
-            # plain gap-fill using the synced lyrics text.
-            plain_from_synced = "\n".join(
-                line["text"] for line in parse_synced_lyrics(synced_lyrics)
-            )
-            if plain_from_synced.strip():
-                print(
-                    "[Pipeline] Synced gap-fill bailed; falling back to plain gap-fill (anchor-based)."
-                )
-                words = fill_gaps_with_plain_lyrics(
-                    words, plain_from_synced, audio_duration
-                )
-    elif not synced_lyrics and plain_lyrics:
-        words = fill_gaps_with_plain_lyrics(words, plain_lyrics, audio_duration)
-    stats["gap_fills"] = len(words) - pre_gap_count
-
-    # ── Step 7: Re-flag profanity ──
-    if synced_lyrics or plain_lyrics:
-        words = flag_profanity(words)
-
-    # ── Step 8: Vocab-based flagging ──
-    pre_vocab_count = sum(1 for w in words if w.get("is_profanity"))
-    lyrics_for_vocab = plain_lyrics or synced_lyrics
-    profanity_vocab = set()
-    if lyrics_for_vocab:
-        profanity_vocab = extract_profanity_vocab(lyrics_for_vocab)
-        if profanity_vocab:
-            words = flag_with_profanity_vocab(words, profanity_vocab)
-    stats["vocab_flags"] = sum(1 for w in words if w.get("is_profanity")) - pre_vocab_count
+    # ── Steps 5-8: the real pipeline ──
+    # Same code path as the /transcribe endpoint — correction, gap-fill,
+    # lyrics profanity discovery, vocab flagging, timeline normalization.
+    pre_pipeline_count = len(words)
+    pre_pipeline_prof = stats["profanity_after_flag"]
+    words = apply_lyrics_pipeline(
+        words, audio_duration, detected_language, plain_lyrics, synced_lyrics
+    )
+    stats["corrections"] = sum(1 for w in words if "original_word" in w)
+    stats["gap_fills"] = sum(1 for w in words if w.get("detection_source") == "lyrics_gap")
+    stats["vocab_flags"] = max(
+        0, sum(1 for w in words if w.get("is_profanity")) - pre_pipeline_prof
+    )
 
     # ── Build report ──
     profane_words = [w for w in words if w.get("is_profanity")]
@@ -184,12 +147,11 @@ def main():
     print(f"  Time:            {transcribe_time:.1f}s")
     print()
 
-    if stats["alignment_score"] is not None:
-        print("── Lyrics Alignment ──")
-        print(f"  Alignment score: {stats['alignment_score']:.0%}")
-        print(f"  Aligned:         {'Yes' if lyrics_aligned else 'No (< 25%, skipping gap-fill)'}")
+    if synced_lyrics or plain_lyrics:
+        print("── Lyrics Pipeline ──")
         print(f"  Corrections:     {stats['corrections']} words corrected")
         print(f"  Gap-fills:       {stats['gap_fills']} words injected")
+        print(f"  Words in/out:    {pre_pipeline_count} -> {len(words)}")
         print()
 
     print("── Profanity Detection ──")
