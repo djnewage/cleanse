@@ -9,17 +9,12 @@ from pathlib import Path
 import requests
 from tinytag import TinyTag
 
+# Importing profanity_detector initializes the shared better-profanity singleton
+# with the default + custom (EN and ES) wordlists. Do NOT call
+# profanity.load_censor_words() here — it resets the singleton to defaults and
+# silently drops the custom words loaded by profanity_detector.
 from better_profanity import profanity
 from profanity_detector import _normalize_word
-
-profanity.load_censor_words()
-
-# Load custom words for music/rap context
-custom_words_file = Path(__file__).parent / "custom_profanity.txt"
-if custom_words_file.exists():
-    with open(custom_words_file, 'r', encoding='utf-8') as f:
-        custom_words = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-        profanity.add_censor_words(custom_words)
 
 LRCLIB_BASE = "https://lrclib.net/api"
 USER_AGENT = "Cleanse Audio Censor App/1.0 (https://github.com/cleanse)"
