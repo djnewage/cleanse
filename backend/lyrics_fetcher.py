@@ -1,8 +1,12 @@
 """Lyrics fetching from LRCLIB, Genius, and audio metadata extraction."""
 
+import hashlib
+import json
 import os
 import re
 import sys
+import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -340,14 +344,55 @@ def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dic
     return None
 
 
+# On-disk cache for fetch_lyrics results. LRCLIB regularly takes 15s+ (and the
+# 20s future can time out entirely), so re-processing a song re-pays the whole
+# fetch. Positive results only — a miss might be filled on LRCLIB/Genius later.
+LYRICS_CACHE_TTL_S = 30 * 24 * 3600
+_LYRICS_CACHE_DIR = os.path.join(tempfile.gettempdir(), "cleanse-lyrics-cache")
+
+
+def _lyrics_cache_path(artist: str, title: str, duration: float | None) -> str:
+    key = f"{artist.lower().strip()}|{title.lower().strip()}|{int(duration) if duration else -1}"
+    return os.path.join(
+        _LYRICS_CACHE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json"
+    )
+
+
+def _lyrics_cache_get(path: str) -> dict | None:
+    try:
+        if time.time() - os.path.getmtime(path) > LYRICS_CACHE_TTL_S:
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _lyrics_cache_put(path: str, result: dict) -> None:
+    try:
+        os.makedirs(_LYRICS_CACHE_DIR, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(result, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        print(f"[Lyrics] Cache write failed: {e}", file=sys.stderr)
+
+
 def fetch_lyrics(artist: str | None, title: str | None, duration: float | None = None) -> dict | None:
-    """Fetch lyrics from Genius and LRCLIB in parallel.
+    """Fetch lyrics from Genius and LRCLIB in parallel, with a 30-day disk cache.
 
     Returns {plain_lyrics, synced_lyrics, lyrics_source} or None.
     Genius plain lyrics preferred over LRCLIB plain; LRCLIB synced always used.
     """
     if not artist or not title:
         return None
+
+    cache_path = _lyrics_cache_path(artist, title, duration)
+    cached = _lyrics_cache_get(cache_path)
+    if cached is not None:
+        print(f"[Lyrics] Cache hit for '{artist} - {title}'", file=sys.stderr)
+        return cached
 
     genius_result = None
     lrclib_result = None
@@ -388,12 +433,14 @@ def fetch_lyrics(artist: str | None, title: str | None, duration: float | None =
         print(f"[Lyrics] No lyrics found after all attempts for '{artist} - {title}'", file=sys.stderr)
         return None
 
-    return {
+    result = {
         "plain_lyrics": plain_lyrics,
         "synced_lyrics": synced_lyrics,
         "lyrics_source": lyrics_source,
         "duration_mismatch": bool(lrclib_result and lrclib_result.get("duration_mismatch")),
     }
+    _lyrics_cache_put(cache_path, result)
+    return result
 
 
 def parse_synced_lyrics(synced_lyrics: str) -> list[dict]:

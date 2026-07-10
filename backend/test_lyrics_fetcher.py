@@ -218,3 +218,53 @@ class TestFetchLrclibDurationMismatch:
         result = lf._fetch_lrclib("A", "B", duration=182.9)
         assert result["synced_lyrics"] == "[00:01.63] alpha"
         assert "duration_mismatch" not in result
+
+
+class TestLyricsCache:
+    def _setup_cache(self, monkeypatch, tmp_path):
+        import lyrics_fetcher as lf
+        monkeypatch.setattr(lf, "_LYRICS_CACHE_DIR", str(tmp_path))
+        return lf
+
+    def test_roundtrip(self, monkeypatch, tmp_path):
+        lf = self._setup_cache(monkeypatch, tmp_path)
+        path = lf._lyrics_cache_path("Artist", "Song", 182.9)
+        result = {"plain_lyrics": "hi", "synced_lyrics": None,
+                  "lyrics_source": "genius", "duration_mismatch": False}
+        lf._lyrics_cache_put(path, result)
+        assert lf._lyrics_cache_get(path) == result
+
+    def test_key_includes_duration(self, monkeypatch, tmp_path):
+        # A different edit of the same song must not share a cache entry.
+        lf = self._setup_cache(monkeypatch, tmp_path)
+        assert lf._lyrics_cache_path("A", "B", 147.0) != lf._lyrics_cache_path("A", "B", 182.9)
+        assert lf._lyrics_cache_path("A", "B", 147.0) == lf._lyrics_cache_path("a", "b ", 147.4)
+
+    def test_expired_entry_ignored(self, monkeypatch, tmp_path):
+        import os
+        lf = self._setup_cache(monkeypatch, tmp_path)
+        path = lf._lyrics_cache_path("Artist", "Song", 100.0)
+        lf._lyrics_cache_put(path, {"plain_lyrics": "hi"})
+        old = __import__("time").time() - lf.LYRICS_CACHE_TTL_S - 60
+        os.utime(path, (old, old))
+        assert lf._lyrics_cache_get(path) is None
+
+    def test_fetch_lyrics_uses_cache_before_network(self, monkeypatch, tmp_path):
+        lf = self._setup_cache(monkeypatch, tmp_path)
+        cached = {"plain_lyrics": "cached!", "synced_lyrics": None,
+                  "lyrics_source": "genius", "duration_mismatch": False}
+        lf._lyrics_cache_put(lf._lyrics_cache_path("Artist", "Song", 100.0), cached)
+
+        def boom(*a, **k):
+            raise AssertionError("network hit despite cache")
+        monkeypatch.setattr(lf, "fetch_genius_lyrics", boom)
+        monkeypatch.setattr(lf, "_fetch_lrclib", boom)
+        assert lf.fetch_lyrics("Artist", "Song", 100.0) == cached
+
+    def test_negative_results_not_cached(self, monkeypatch, tmp_path):
+        lf = self._setup_cache(monkeypatch, tmp_path)
+        monkeypatch.setattr(lf, "fetch_genius_lyrics", lambda *a: None)
+        monkeypatch.setattr(lf, "_fetch_lrclib", lambda *a, **k: None)
+        assert lf.fetch_lyrics("Nobody", "Nothing", 100.0) is None
+        import os
+        assert not os.path.exists(lf._lyrics_cache_path("Nobody", "Nothing", 100.0))
