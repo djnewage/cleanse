@@ -114,6 +114,10 @@ COMPOUND_PROFANITY_ES = {
     ("concha", "madre"), ("conche", "madre"),
 }
 
+# Filler words allowed between compound halves: "hijo DE puta", "cara DE verga".
+# The filler is flagged too so the resulting mute is contiguous.
+COMPOUND_GAP_WORDS = {"de", "of", "a", "la", "tu"}
+
 
 # ---------------------------------------------------------------------------
 # Fuzzy + phonetic recall layer (stylized spellings + ASR soft-substitutes).
@@ -232,8 +236,27 @@ def flag_profanity(words: list[dict], language: str | None = None) -> list[dict]
     for i in range(len(flagged) - 1):
         w1 = re.sub(r'[^\w]', '', flagged[i]["word"]).lower()
         w2 = re.sub(r'[^\w]', '', flagged[i + 1]["word"]).lower()
-        if (w1, w2) in compounds:
+        # Beyond the explicit pair list, also flag pairs whose joined form is in
+        # the exact profanity list ("blow"+"job" -> "blowjob"), where neither
+        # half alone is profane. Min length 3 per half so stray short tokens
+        # can't assemble into a hit ("s"+"hit").
+        joined_hit = (
+            len(w1) >= 3 and len(w2) >= 3
+            and (w1 + w2) not in WHITELIST
+            and profanity.contains_profanity(w1 + w2)
+        )
+        if (w1, w2) in compounds or joined_hit:
             flagged[i]["is_profanity"] = True
             flagged[i + 1]["is_profanity"] = True
+
+    # Third pass: compound halves separated by one filler word ("hijo de puta").
+    for i in range(len(flagged) - 2):
+        w1 = re.sub(r'[^\w]', '', flagged[i]["word"]).lower()
+        mid = re.sub(r'[^\w]', '', flagged[i + 1]["word"]).lower()
+        w3 = re.sub(r'[^\w]', '', flagged[i + 2]["word"]).lower()
+        if mid in COMPOUND_GAP_WORDS and (w1, w3) in compounds:
+            flagged[i]["is_profanity"] = True
+            flagged[i + 1]["is_profanity"] = True
+            flagged[i + 2]["is_profanity"] = True
 
     return flagged

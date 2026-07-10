@@ -153,6 +153,80 @@ class TestCompoundProfanity:
         assert result[3]["is_profanity"] is False
 
 
+class TestJoinedCompoundProfanity:
+    """Adjacent pairs whose JOINED form is in the exact list ("blow"+"job" ->
+    "blowjob") are flagged even though neither half is profane alone."""
+
+    def _words(self, *texts):
+        return [{"word": t, "start": i * 0.5, "end": (i + 1) * 0.5, "confidence": 0.9} for i, t in enumerate(texts)]
+
+    def _check_both(self, w1, w2):
+        result = flag_profanity(self._words(w1, w2))
+        assert result[0]["is_profanity"] is True, f"'{w1} {w2}': first half not flagged"
+        assert result[1]["is_profanity"] is True, f"'{w1} {w2}': second half not flagged"
+
+    def test_blow_job(self):
+        self._check_both("blow", "job")
+
+    def test_hand_job(self):
+        self._check_both("hand", "job")
+
+    def test_rim_job(self):
+        self._check_both("rim", "job")
+
+    def test_deep_throat(self):
+        self._check_both("deep", "throat")
+
+    def test_cum_shot(self):
+        self._check_both("cum", "shot")
+
+    def test_jerk_off(self):
+        self._check_both("jerk", "off")
+
+    def test_innocent_joins_not_flagged(self):
+        # Negatives table: everyday pairs must never assemble into a hit.
+        for w1, w2 in [
+            ("class", "act"), ("grass", "hopper"), ("pass", "word"),
+            ("hand", "some"), ("kick", "off"), ("mass", "ive"),
+            ("but", "ton"), ("back", "side"), ("count", "down"),
+        ]:
+            result = flag_profanity(self._words(w1, w2))
+            assert result[0]["is_profanity"] is False, f"FP: '{w1} {w2}' flagged {w1}"
+            assert result[1]["is_profanity"] is False, f"FP: '{w1} {w2}' flagged {w2}"
+
+    def test_short_tokens_cannot_assemble(self):
+        # min-length guard: "s"+"hit" must not join into "shit"
+        result = flag_profanity(self._words("s", "hit"))
+        assert result[0]["is_profanity"] is False
+        assert result[1]["is_profanity"] is False
+
+
+class TestGappedCompoundProfanity:
+    """Compound halves separated by one filler word ("hijo DE puta") flag all
+    three tokens so the mute is contiguous."""
+
+    def _words(self, *texts):
+        return [{"word": t, "start": i * 0.5, "end": (i + 1) * 0.5, "confidence": 0.9} for i, t in enumerate(texts)]
+
+    def test_hijo_de_puta(self):
+        result = flag_profanity(self._words("hijo", "de", "puta"), language="es")
+        assert [w["is_profanity"] for w in result] == [True, True, True]
+
+    def test_cara_de_verga(self):
+        result = flag_profanity(self._words("cara", "de", "verga"), language="es")
+        assert [w["is_profanity"] for w in result] == [True, True, True]
+
+    def test_innocent_gapped_phrase_not_flagged(self):
+        result = flag_profanity(self._words("hijo", "de", "dios"), language="es")
+        assert [w["is_profanity"] for w in result] == [False, False, False]
+
+    def test_gap_requires_filler_word(self):
+        # Non-filler middle word must not bridge the compound
+        result = flag_profanity(self._words("hijo", "grande", "puta"), language="es")
+        assert result[0]["is_profanity"] is False
+        assert result[1]["is_profanity"] is False
+
+
 class TestSpanishProfanity:
     """Verify Spanish profanity words are detected."""
 
@@ -282,8 +356,10 @@ class TestStyleRecallLayer:
     from profanity_detector import scan_token
 
     # Stylized / elongated spellings that SHOULD be caught beyond the exact list.
+    # fucc/fucck/bytch/shiet score under the fuzzy ratio-90 floor, so they live
+    # in custom_profanity.txt (exact tier) instead of loosening the threshold.
     POSITIVES = ["biiitch", "pusssy", "fuuuck", "shiiit", "niggaaa", "fuuck", "shiit",
-                 "biitch", "biatchhh"]
+                 "biitch", "biatchhh", "fucc", "fucck", "bytch", "shiet"]
 
     # Common words that MUST NEVER be flagged. Two collision families:
     # (a) vowel-drop / single-edit neighbors of profanity roots (shot, count, shirt);
