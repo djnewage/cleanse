@@ -5,7 +5,6 @@ import sys
 from difflib import SequenceMatcher
 from typing import List, Dict, Optional, Tuple
 from lyrics_fetcher import parse_synced_lyrics
-from better_profanity import profanity as _profanity_checker
 from profanity_detector import _normalize_word, WHITELIST, scan_token
 
 # Configuration constants

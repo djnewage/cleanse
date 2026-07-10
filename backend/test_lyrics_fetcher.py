@@ -101,6 +101,24 @@ class TestFindLyricsProfanity:
         result = find_lyrics_profanity(synced, [])
         assert result == []
 
+    def test_whitelisted_words_not_injected(self):
+        # Regression: raw contains_profanity bypassed WHITELIST, injecting
+        # false mutes for everyday words in clean lyric lines.
+        synced = "[00:10.00] oh my god I feel the hell of it\n[00:15.00] she got fat pockets and panty lines"
+        result = find_lyrics_profanity(synced, [
+            {"word": "oh", "start": 10.0, "end": 10.3, "confidence": 0.9, "is_profanity": False},
+        ])
+        assert result == [], f"whitelisted words injected as profanity: {[d['word'] for d in result]}"
+
+    def test_stylized_spelling_injected(self):
+        # Regression: the injector used only the exact tier, missing elongated
+        # spellings that scan_token's de-elongation tier catches.
+        synced = "[00:10.00] fuuuck this whole thing"
+        result = find_lyrics_profanity(synced, [
+            {"word": "yeah", "start": 10.0, "end": 10.3, "confidence": 0.9, "is_profanity": False},
+        ])
+        assert any(d["word"] == "fuuuck" for d in result)
+
 
 class TestCleanSearchTitle:
     def test_simple_remix(self):

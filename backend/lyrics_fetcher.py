@@ -13,8 +13,7 @@ from tinytag import TinyTag
 # with the default + custom (EN and ES) wordlists. Do NOT call
 # profanity.load_censor_words() here — it resets the singleton to defaults and
 # silently drops the custom words loaded by profanity_detector.
-from better_profanity import profanity
-from profanity_detector import _normalize_word
+from profanity_detector import scan_token
 
 LRCLIB_BASE = "https://lrclib.net/api"
 USER_AGENT = "Cleanse Audio Censor App/1.0 (https://github.com/cleanse)"
@@ -417,9 +416,10 @@ def find_lyrics_profanity(
         word_duration = line_duration / num_words
 
         for j, word in enumerate(words_in_line):
-            # Check if any normalized variation of the word is profane
-            variations = _normalize_word(word)
-            if not any(profanity.contains_profanity(v) for v in variations):
+            # Same tiered, whitelist-aware matcher as the ASR path. The old raw
+            # contains_profanity check bypassed WHITELIST (injecting mutes for
+            # god/hell/fat/panty) and missed stylized spellings (fuuuck).
+            if scan_token(word) is None:
                 continue
 
             # Estimate word timestamp: center each word in its slot within the line

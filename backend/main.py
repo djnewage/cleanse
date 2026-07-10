@@ -506,9 +506,11 @@ async def transcribe(req: TranscribeRequest):
             )
 
         # Re-flag profanity on all words (corrected words may now be profane,
-        # gap-filled words haven't been checked yet)
+        # gap-filled words haven't been checked yet). Must pass language:
+        # flag_profanity rebuilds is_profanity from scratch, so omitting it
+        # un-flags Spanish compounds that pass 1 already caught.
         if req.synced_lyrics or req.lyrics:
-            final_words = flag_profanity(final_words)
+            final_words = flag_profanity(final_words, language=detected_language)
 
         # Cross-reference with lyrics to find missed profanities. Synced lyrics use
         # real timestamps; plain-only lyrics (e.g. Genius) use the alignment-based
