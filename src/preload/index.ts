@@ -55,7 +55,7 @@ export interface ElectronAPI {
   selectOutputPath: (defaultName: string) => Promise<string | null>
   selectOutputDirectory: () => Promise<string | null>
   getAudioMetadata: (path: string) => Promise<AudioMetadata>
-  fetchLyrics: (artist: string, title: string, duration?: number) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null; lyrics_source?: string | null }>
+  fetchLyrics: (artist: string, title: string, duration?: number) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null; lyrics_source?: string | null; duration_mismatch?: boolean }>
   transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean) => Promise<TranscriptionResult>
   separateAudio: (path: string, turbo?: boolean) => Promise<SeparationResult>
   createIntroOutroEdit: (args: {

@@ -280,3 +280,71 @@ class TestSpliceWithCrossfade:
         replacement = pydub.AudioSegment.silent(duration=500)
         result = _splice_with_crossfade(audio, 500, 1000, replacement, crossfade_ms=30)
         assert len(result) == 2000
+
+
+class TestBuildCensorRegions:
+    """Padded per-word intervals merge into regions; padding is additive for
+    lyrics-sourced words (the old 3x/2x multiplier chained blanket mutes)."""
+
+    def _w(self, word, start, end, source=None, censor_type="mute"):
+        d = {"word": word, "start": start, "end": end, "censor_type": censor_type}
+        if source:
+            d["detection_source"] = source
+        return d
+
+    def test_isolated_words_stay_separate(self):
+        from audio_processor import _build_censor_regions
+        regions = _build_censor_regions(
+            [self._w("a", 10.0, 10.4), self._w("b", 20.0, 20.4)],
+            audio_len_ms=180_000, padding_before_ms=150, padding_after_ms=100,
+        )
+        assert len(regions) == 2
+        assert regions[0]["start_ms"] == 10_000 - 150
+        assert regions[0]["end_ms"] == 10_400 + 100
+
+    def test_overlapping_padded_words_merge(self):
+        from audio_processor import _build_censor_regions
+        # padded intervals: [9850, 10500] and [10450, 11100] -> one region
+        regions = _build_censor_regions(
+            [self._w("a", 10.0, 10.4), self._w("b", 10.6, 11.0)],
+            audio_len_ms=180_000, padding_before_ms=150, padding_after_ms=100,
+        )
+        assert len(regions) == 1
+        assert regions[0]["words"] == ["a", "b"]
+        assert regions[0]["start_ms"] == 9850
+        assert regions[0]["end_ms"] == 11_100
+
+    def test_lyrics_padding_is_additive_not_multiplicative(self):
+        from audio_processor import _build_censor_regions, ESTIMATED_PAD_EXTRA_MS
+        regions = _build_censor_regions(
+            [self._w("a", 10.0, 10.4, source="lyrics")],
+            audio_len_ms=180_000, padding_before_ms=150, padding_after_ms=100,
+        )
+        assert regions[0]["start_ms"] == 10_000 - 150 - ESTIMATED_PAD_EXTRA_MS
+        assert regions[0]["end_ms"] == 10_400 + 100 + ESTIMATED_PAD_EXTRA_MS
+
+    def test_different_censor_types_not_merged(self):
+        from audio_processor import _build_censor_regions
+        regions = _build_censor_regions(
+            [self._w("a", 10.0, 10.4, censor_type="mute"),
+             self._w("b", 10.5, 10.9, censor_type="beep")],
+            audio_len_ms=180_000, padding_before_ms=150, padding_after_ms=100,
+        )
+        assert len(regions) == 2
+        assert regions[0]["censor_type"] == "mute"
+        assert regions[1]["censor_type"] == "beep"
+        # the later region is trimmed so the same samples aren't spliced twice
+        assert regions[1]["start_ms"] >= regions[0]["end_ms"]
+
+    def test_clamped_to_audio_bounds(self):
+        from audio_processor import _build_censor_regions
+        regions = _build_censor_regions(
+            [self._w("a", 0.05, 0.3), self._w("b", 179.9, 180.5)],
+            audio_len_ms=180_000, padding_before_ms=150, padding_after_ms=100,
+        )
+        assert regions[0]["start_ms"] == 0
+        assert regions[-1]["end_ms"] == 180_000
+
+    def test_empty_words(self):
+        from audio_processor import _build_censor_regions
+        assert _build_censor_regions([], 180_000, 150, 100) == []

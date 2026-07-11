@@ -56,6 +56,10 @@ export interface SongLyrics {
   plain: string | null
   synced: string | null
   source?: 'genius' | 'lrclib' | null
+  /** The only lyrics found were for a different version/edit of the song
+   *  (duration mismatch) — synced timestamps were rejected and processing
+   *  used text-only (plain) alignment. */
+  durationMismatch?: boolean
 }
 
 // Beat grid for the Auto Intro/Outro feature. Mirrors the backend Beatgrid /

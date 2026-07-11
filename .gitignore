@@ -7,6 +7,7 @@ backend/venv/
 backend/venv-x64/
 backend/__pycache__/
 backend/*.pyc
+backend/spikes/
 backend/dist/
 backend/build/
 .env

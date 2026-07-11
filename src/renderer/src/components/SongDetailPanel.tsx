@@ -169,6 +169,14 @@ export default function SongDetailPanel({
                   Synced
                 </span>
               )}
+              {song.lyrics.durationMismatch && (
+                <span
+                  className="ml-2 rounded bg-badge-warning-bg px-2 py-0.5 text-xs text-badge-warning-text"
+                  title="The only lyrics found are for a different version of this song (different length). Synced timestamps were ignored; words were aligned by text instead, so timing may be approximate."
+                >
+                  Version mismatch
+                </span>
+              )}
             </h3>
             <button
               onClick={() => setLyricsExpanded(!lyricsExpanded)}

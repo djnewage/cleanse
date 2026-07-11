@@ -1,29 +1,32 @@
 """Lyrics fetching from LRCLIB, Genius, and audio metadata extraction."""
 
+import hashlib
+import json
 import os
 import re
 import sys
+import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
 from tinytag import TinyTag
 
-from better_profanity import profanity
-from profanity_detector import _normalize_word
-
-profanity.load_censor_words()
-
-# Load custom words for music/rap context
-custom_words_file = Path(__file__).parent / "custom_profanity.txt"
-if custom_words_file.exists():
-    with open(custom_words_file, 'r', encoding='utf-8') as f:
-        custom_words = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-        profanity.add_censor_words(custom_words)
+# NOTE: never call better_profanity's profanity.load_censor_words() from this
+# module — it resets the shared singleton to defaults and silently drops the
+# custom (EN and ES) wordlists that profanity_detector loads at import.
 
 LRCLIB_BASE = "https://lrclib.net/api"
 USER_AGENT = "Cleanse Audio Censor App/1.0 (https://github.com/cleanse)"
 REQUEST_TIMEOUT = (5, 15)  # (connect, read) — LRCLIB search can take ~10s on slow links
+
+# Max |candidate - audio| duration difference to accept a search hit as the
+# same version of the song. LRCLIB's own /get endpoint matches at ±2s; tags
+# and encoders disagree by a couple seconds; distinct versions (radio edit,
+# DJ edit, extended) differ by 10s+. A wrong-version hit means every synced
+# timestamp is offset — worse than no synced lyrics at all.
+LRCLIB_DURATION_TOLERANCE_S = 5.0
 
 # Genius API — lazy-initialized client
 _GENIUS_TOKEN = os.environ.get(
@@ -221,8 +224,50 @@ def _extract_first_artist(artist: str) -> str:
     return first.strip(' -.').strip()
 
 
+def _lrclib_search(params: dict, headers: dict) -> list[dict]:
+    """GET LRCLIB /search; returns [] on any error."""
+    try:
+        resp = requests.get(
+            f"{LRCLIB_BASE}/search",
+            params=params,
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code == 200:
+            return resp.json() or []
+    except Exception as e:
+        print(f"[Lyrics] LRCLIB search failed ({params.get('artist_name', 'title-only')}): {e}", file=sys.stderr)
+    return []
+
+
+def _select_lrclib_result(
+    results: list[dict],
+    duration: float | None,
+    tolerance: float = LRCLIB_DURATION_TOLERANCE_S,
+) -> tuple[dict | None, bool]:
+    """Pick the best LRCLIB search hit. Returns (entry, duration_matched).
+
+    Only entries carrying lyrics qualify. When the audio duration is known,
+    the first entry within ``tolerance`` seconds wins; if none is, the first
+    entry with lyrics is returned flagged as a mismatch so the caller can
+    salvage its text without trusting its timestamps. Unknown audio duration
+    keeps the legacy first-hit behavior.
+    """
+    with_lyrics = [r for r in results if r.get("plainLyrics") or r.get("syncedLyrics")]
+    if not with_lyrics:
+        return None, False
+    if duration is None:
+        return with_lyrics[0], True
+    for r in with_lyrics:
+        rd = r.get("duration")
+        if isinstance(rd, (int, float)) and abs(rd - duration) <= tolerance:
+            return r, True
+    return with_lyrics[0], False
+
+
 def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dict | None:
-    """Fetch lyrics from LRCLIB with progressive fallback. Returns {plain_lyrics, synced_lyrics} or None."""
+    """Fetch lyrics from LRCLIB with progressive fallback. Returns
+    {plain_lyrics, synced_lyrics[, duration_mismatch]} or None."""
     headers = {"User-Agent": USER_AGENT}
 
     # Clean title for search (strip version/edit suffixes)
@@ -251,87 +296,103 @@ def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dic
     except Exception as e:
         print(f"[Lyrics] LRCLIB exact match failed: {e}", file=sys.stderr)
 
-    # STEP 2: Try search with full artist name
-    try:
-        params = {"track_name": clean_title, "artist_name": artist}
-        resp = requests.get(
-            f"{LRCLIB_BASE}/search",
-            params=params,
-            headers=headers,
-            timeout=REQUEST_TIMEOUT,
-        )
-        if resp.status_code == 200:
-            results = resp.json()
-            if results and len(results) > 0:
-                best = results[0]
-                if best.get("plainLyrics") or best.get("syncedLyrics"):
-                    print(f"[Lyrics] Found LRCLIB search match for '{artist} - {title}'", file=sys.stderr)
-                    return {
-                        "plain_lyrics": best.get("plainLyrics"),
-                        "synced_lyrics": best.get("syncedLyrics"),
-                    }
-    except Exception as e:
-        print(f"[Lyrics] LRCLIB search with full artist failed: {e}", file=sys.stderr)
-
-    # STEP 3: Try with first artist only (extract before comma/ampersand)
+    # STEPS 2-4: search fallbacks, duration-verified. A hit whose duration
+    # doesn't match the audio is a different version/edit of the song — its
+    # synced timestamps would misplace every downstream mute (observed: a
+    # 183s DJ edit matched against 147s official-single lyrics).
+    attempts = [("search", {"track_name": clean_title, "artist_name": artist})]
     first_artist = _extract_first_artist(artist)
     if first_artist and first_artist != artist:
-        try:
-            print(f"[Lyrics] Trying first artist only: '{first_artist}'", file=sys.stderr)
-            params = {"track_name": clean_title, "artist_name": first_artist}
-            resp = requests.get(
-                f"{LRCLIB_BASE}/search",
-                params=params,
-                headers=headers,
-                timeout=REQUEST_TIMEOUT,
-            )
-            if resp.status_code == 200:
-                results = resp.json()
-                if results and len(results) > 0:
-                    best = results[0]
-                    if best.get("plainLyrics") or best.get("syncedLyrics"):
-                        print(f"[Lyrics] Found LRCLIB match with first artist: '{first_artist} - {title}'", file=sys.stderr)
-                        return {
-                            "plain_lyrics": best.get("plainLyrics"),
-                            "synced_lyrics": best.get("syncedLyrics"),
-                        }
-        except Exception as e:
-            print(f"[Lyrics] LRCLIB first artist search failed: {e}", file=sys.stderr)
+        attempts.append(("first-artist", {"track_name": clean_title, "artist_name": first_artist}))
+    attempts.append(("title-only", {"track_name": clean_title}))
 
-    # STEP 4: Try title-only search as last resort
-    try:
-        print(f"[Lyrics] Trying LRCLIB title-only search: '{clean_title}'", file=sys.stderr)
-        params = {"track_name": clean_title}  # No artist_name parameter
-        resp = requests.get(
-            f"{LRCLIB_BASE}/search",
-            params=params,
-            headers=headers,
-            timeout=REQUEST_TIMEOUT,
+    mismatch = None  # first duration-mismatched entry, kept as plain-only fallback
+    for label, params in attempts:
+        entry, duration_matched = _select_lrclib_result(
+            _lrclib_search(params, headers), duration
         )
-        if resp.status_code == 200:
-            results = resp.json()
-            if results and len(results) > 0:
-                best = results[0]
-                if best.get("plainLyrics") or best.get("syncedLyrics"):
-                    print(f"[Lyrics] Found LRCLIB title-only match (ambiguous): '{title}' (matched artist: {best.get('artistName')})", file=sys.stderr)
-                    return {
-                        "plain_lyrics": best.get("plainLyrics"),
-                        "synced_lyrics": best.get("syncedLyrics"),
-                    }
-    except Exception as e:
-        print(f"[Lyrics] LRCLIB title-only search failed: {e}", file=sys.stderr)
+        if entry and duration_matched:
+            print(f"[Lyrics] Found LRCLIB {label} match for '{artist} - {title}'", file=sys.stderr)
+            return {
+                "plain_lyrics": entry.get("plainLyrics"),
+                "synced_lyrics": entry.get("syncedLyrics"),
+            }
+        if entry and mismatch is None:
+            mismatch = (label, entry)
+
+    if mismatch:
+        label, entry = mismatch
+        print(
+            f"[Lyrics] LRCLIB {label} match for '{artist} - {title}' is a different "
+            f"version ({entry.get('duration')}s vs audio {duration:.0f}s) — "
+            f"dropping synced timestamps, keeping plain lyrics",
+            file=sys.stderr,
+        )
+        plain = entry.get("plainLyrics")
+        if not plain and entry.get("syncedLyrics"):
+            # Same-song lyrics text is still useful (the plain-lyrics pipeline
+            # aligns by content, not time) — strip the wrong timestamps.
+            plain = "\n".join(
+                line["text"] for line in parse_synced_lyrics(entry["syncedLyrics"])
+            )
+        return {
+            "plain_lyrics": plain,
+            "synced_lyrics": None,
+            "duration_mismatch": True,
+        }
 
     return None
 
 
+# On-disk cache for fetch_lyrics results. LRCLIB regularly takes 15s+ (and the
+# 20s future can time out entirely), so re-processing a song re-pays the whole
+# fetch. Positive results only — a miss might be filled on LRCLIB/Genius later.
+LYRICS_CACHE_TTL_S = 30 * 24 * 3600
+_LYRICS_CACHE_DIR = os.path.join(tempfile.gettempdir(), "cleanse-lyrics-cache")
+
+
+def _lyrics_cache_path(artist: str, title: str, duration: float | None) -> str:
+    key = f"{artist.lower().strip()}|{title.lower().strip()}|{int(duration) if duration else -1}"
+    return os.path.join(
+        _LYRICS_CACHE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json"
+    )
+
+
+def _lyrics_cache_get(path: str) -> dict | None:
+    try:
+        if time.time() - os.path.getmtime(path) > LYRICS_CACHE_TTL_S:
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _lyrics_cache_put(path: str, result: dict) -> None:
+    try:
+        os.makedirs(_LYRICS_CACHE_DIR, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(result, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        print(f"[Lyrics] Cache write failed: {e}", file=sys.stderr)
+
+
 def fetch_lyrics(artist: str | None, title: str | None, duration: float | None = None) -> dict | None:
-    """Fetch lyrics from Genius and LRCLIB in parallel.
+    """Fetch lyrics from Genius and LRCLIB in parallel, with a 30-day disk cache.
 
     Returns {plain_lyrics, synced_lyrics, lyrics_source} or None.
     Genius plain lyrics preferred over LRCLIB plain; LRCLIB synced always used.
     """
     if not artist or not title:
         return None
+
+    cache_path = _lyrics_cache_path(artist, title, duration)
+    cached = _lyrics_cache_get(cache_path)
+    if cached is not None:
+        print(f"[Lyrics] Cache hit for '{artist} - {title}'", file=sys.stderr)
+        return cached
 
     genius_result = None
     lrclib_result = None
@@ -372,11 +433,14 @@ def fetch_lyrics(artist: str | None, title: str | None, duration: float | None =
         print(f"[Lyrics] No lyrics found after all attempts for '{artist} - {title}'", file=sys.stderr)
         return None
 
-    return {
+    result = {
         "plain_lyrics": plain_lyrics,
         "synced_lyrics": synced_lyrics,
         "lyrics_source": lyrics_source,
+        "duration_mismatch": bool(lrclib_result and lrclib_result.get("duration_mismatch")),
     }
+    _lyrics_cache_put(cache_path, result)
+    return result
 
 
 def parse_synced_lyrics(synced_lyrics: str) -> list[dict]:
@@ -394,61 +458,7 @@ def parse_synced_lyrics(synced_lyrics: str) -> list[dict]:
     return lines
 
 
-def find_lyrics_profanity(
-    synced_lyrics: str,
-    transcribed_words: list[dict],
-    overlap_threshold: float = 0.75,
-) -> list[dict]:
-    """Find profanities in synced lyrics that weren't detected by transcription."""
-    lines = parse_synced_lyrics(synced_lyrics)
-    if not lines:
-        return []
-
-    new_detections = []
-
-    # Skip lyrics lines before the first transcribed word (instrumental intro)
-    first_word_start = transcribed_words[0]["start"] if transcribed_words else 0.0
-
-    for i, line in enumerate(lines):
-        if line["time"] < first_word_start - 1.0:
-            continue
-
-        # Determine line duration (time to next line, capped at 5s)
-        next_time = lines[i + 1]["time"] if i + 1 < len(lines) else line["time"] + 5.0
-        line_duration = min(next_time - line["time"], 5.0)
-
-        words_in_line = line["text"].split()
-        num_words = max(len(words_in_line), 1)
-        word_duration = line_duration / num_words
-
-        for j, word in enumerate(words_in_line):
-            # Check if any normalized variation of the word is profane
-            variations = _normalize_word(word)
-            if not any(profanity.contains_profanity(v) for v in variations):
-                continue
-
-            # Estimate word timestamp: center each word in its slot within the line
-            estimated_start = line["time"] + j * word_duration
-            estimated_end = estimated_start + min(word_duration, 0.35)
-
-            # Check if any transcribed profanity exists near this timestamp
-            already_detected = any(
-                abs(tw["start"] - estimated_start) < overlap_threshold
-                and tw.get("is_profanity")
-                for tw in transcribed_words
-            )
-
-            if not already_detected:
-                # Clean the word for display (remove punctuation)
-                clean_word = re.sub(r"[^\w'*@$]", "", word)
-                if clean_word:
-                    new_detections.append({
-                        "word": clean_word,
-                        "start": round(estimated_start, 3),
-                        "end": round(estimated_end, 3),
-                        "confidence": 0.5,
-                        "is_profanity": True,
-                        "detection_source": "lyrics",
-                    })
-
-    return new_detections
+# find_lyrics_profanity moved to lyrics_corrector.py: it now requires per-line
+# corroboration against the transcript (_compute_word_similarity), and
+# lyrics_corrector already imports from this module — the reverse import would
+# be circular.

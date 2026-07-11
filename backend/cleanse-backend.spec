@@ -47,6 +47,8 @@ hidden_imports += [
     'pydantic.deprecated',
     'pydantic.deprecated.decorator',
     'better_profanity',
+    'rapidfuzz',
+    'rapidfuzz.fuzz',
     'multipart',
     'python_multipart',
     'ctranslate2',
