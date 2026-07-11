@@ -234,3 +234,126 @@ class TestIO:
         assert sr == SR
         assert back.shape == audio.shape
         assert np.max(np.abs(back - audio)) < 1e-3  # 16-bit quantization tolerance
+
+
+class TestRegularizeGrid:
+    """Constant-tempo refit of madmom's 100fps-quantized downbeats."""
+
+    def _jittered_grid(self, bpm=142.0, n_bars=100, jitter_ms=10, seed=7):
+        rng = np.random.default_rng(seed)
+        spb = (60.0 / bpm) * 4 * SR
+        true = np.arange(n_bars + 1) * spb + 1000
+        jit = rng.integers(-jitter_ms, jitter_ms + 1, size=len(true)) * SR // 1000
+        db = np.round(true + jit).astype(int)
+        return Beatgrid(bpm=round(bpm, 2), sample_rate=SR,
+                        downbeats_samples=db.tolist()), true
+
+    def test_recovers_steady_grid_from_jitter(self):
+        from intro_outro import regularize_grid
+        grid, true = self._jittered_grid()
+        reg = regularize_grid(grid)
+        err = np.abs(np.asarray(reg.downbeats_samples) - true)
+        # jitter was ±10ms (441 samples); the fit should land within ~2ms
+        assert float(err.max()) < 0.002 * SR, f"max err {err.max()/SR*1000:.1f}ms"
+        bars = np.diff(reg.downbeats_samples)
+        assert bars.max() - bars.min() <= 1  # constant stride (±1 rounding)
+
+    def test_bpm_precision_improves(self):
+        from intro_outro import regularize_grid
+        grid, _ = self._jittered_grid(bpm=142.0)
+        reg = regularize_grid(grid)
+        assert abs(reg.bpm - 142.0) < 0.1
+
+    def test_rebuilds_beats(self):
+        from intro_outro import regularize_grid
+        grid, _ = self._jittered_grid()
+        reg = regularize_grid(grid)
+        assert len(reg.beats_samples) >= 4 * (len(reg.downbeats_samples) - 1)
+        beat_d = np.diff(reg.beats_samples)
+        assert beat_d.max() - beat_d.min() <= 1
+
+    def test_unsteady_tempo_left_alone(self):
+        from intro_outro import regularize_grid
+        # accelerating tempo — residuals blow past the steady-tempo gate
+        db = np.cumsum(np.linspace(80000, 60000, 40)).astype(int).tolist()
+        grid = Beatgrid(bpm=130, sample_rate=SR, downbeats_samples=db)
+        assert regularize_grid(grid).downbeats_samples == db
+
+    def test_too_few_downbeats_left_alone(self):
+        from intro_outro import regularize_grid
+        grid, _ = _grid(120, 4)
+        assert regularize_grid(grid).downbeats_samples == grid.downbeats_samples
+
+    def test_outlier_downbeat_rejected(self):
+        from intro_outro import regularize_grid
+        grid, true = self._jittered_grid()
+        db = list(grid.downbeats_samples)
+        db[50] += SR  # one wildly mis-tracked bar (+1s)
+        grid.downbeats_samples = db
+        reg = regularize_grid(grid)
+        err = abs(reg.downbeats_samples[50] - true[50])
+        assert err < 0.005 * SR  # fit ignored the outlier
+
+
+class TestSnapDownbeatsToTransients:
+    def _click_stem(self, positions, n, click_len=64):
+        x = np.zeros((n, 2), dtype=np.float32)
+        for p in positions:
+            x[p:p + click_len] = 0.9
+        return x
+
+    def test_snaps_to_nearby_click(self):
+        from intro_outro import snap_downbeats_to_transients
+        spb = int((60.0 / 140) * 4 * SR)
+        true = [1000 + i * spb for i in range(8)]
+        stem = self._click_stem(true, true[-1] + spb)
+        # grid is off by 8ms (353 samples) — madmom-scale error
+        grid = Beatgrid(bpm=140, sample_rate=SR,
+                        downbeats_samples=[t + 353 for t in true])
+        snapped = snap_downbeats_to_transients(grid, stem)
+        err = np.abs(np.asarray(snapped.downbeats_samples) - np.asarray(true))
+        assert float(err.max()) <= 32, f"max err {err.max()} samples"
+
+    def test_no_transient_leaves_downbeat_alone(self):
+        from intro_outro import snap_downbeats_to_transients
+        grid, spb = _grid(140, 8)
+        stem = np.zeros((spb * 9, 2), dtype=np.float32)  # silence: nothing to snap to
+        snapped = snap_downbeats_to_transients(grid, stem)
+        assert snapped.downbeats_samples == grid.downbeats_samples
+
+    def test_far_transient_not_grabbed(self):
+        from intro_outro import snap_downbeats_to_transients
+        spb = int((60.0 / 140) * 4 * SR)
+        # single click 200ms after the downbeat — outside the ±25ms window
+        stem = self._click_stem([10000 + int(0.2 * SR)], spb * 3)
+        grid = Beatgrid(bpm=140, sample_rate=SR, downbeats_samples=[10000, 10000 + spb])
+        snapped = snap_downbeats_to_transients(grid, stem)
+        assert snapped.downbeats_samples == [10000, 10000 + spb]
+
+
+class TestPickOutroPoint:
+    def test_ends_after_last_strong_bar(self):
+        from intro_outro import pick_outro_point
+        grid, spb = _grid(120, 20)
+        original = _sine_stem(spb * 20)
+        original[spb * 15:] *= 0.02  # last 5 bars = fade-out
+        idx = pick_outro_point(original, grid)
+        assert idx == 15  # body ends right after bar 14 (the last strong one)
+
+    def test_no_fade_uses_last_downbeat(self):
+        from intro_outro import pick_outro_point
+        grid, spb = _grid(120, 20)
+        original = _sine_stem(spb * 20)
+        assert pick_outro_point(original, grid) == len(grid.downbeats_samples) - 1
+
+
+class TestPeakSafety:
+    def test_assembled_edit_never_exceeds_ceiling(self):
+        grid, spb = _grid(140, 24)
+        n = spb * 24
+        # hot original (mp3 intersample overshoot) + hot drums+bass loop stem
+        original = _sine_stem(n) * 1.8
+        stem = _sine_stem(n, freq=55.0) * 1.6
+        res = assemble_edit(original, stem, grid, loop_source_idx=0, loop_bars=2,
+                            intro_bars=8, outro_bars=8, outro_idx=16)
+        assert float(np.abs(res.audio).max()) <= 0.99 + 1e-4

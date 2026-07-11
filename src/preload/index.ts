@@ -47,6 +47,7 @@ export interface IntroOutroResult {
   grid: BeatGrid
   stem_paths: Record<string, string>
   loop_source_idx: number
+  drop_idx: number
 }
 
 export interface ElectronAPI {
@@ -66,6 +67,9 @@ export interface ElectronAPI {
     stems?: string[]
     outputFormat?: 'wav' | 'aiff' | 'flac'
     outputPath?: string
+    introBuild?: boolean
+    loopSourceIdx?: number
+    dropIdx?: number
     grid?: BeatGrid
     stemPaths?: Record<string, string>
   }) => Promise<IntroOutroResult>
@@ -186,6 +190,9 @@ const electronAPI: ElectronAPI = {
     stems?: string[]
     outputFormat?: 'wav' | 'aiff' | 'flac'
     outputPath?: string
+    introBuild?: boolean
+    loopSourceIdx?: number
+    dropIdx?: number
     grid?: BeatGrid
     stemPaths?: Record<string, string>
   }) => ipcRenderer.invoke('intro-outro', args),

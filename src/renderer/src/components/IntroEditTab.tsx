@@ -36,13 +36,19 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
   const [outroBars, setOutroBars] = useState(16)
   const [stemMode, setStemMode] = useState<StemMode>('drums')
   const [outputFormat, setOutputFormat] = useState<OutputFormat>('flac')
+  const [introBuild, setIntroBuild] = useState(true)
   const [isGenerating, setIsGenerating] = useState(false)
   const [progress, setProgress] = useState<SeparationProgress | null>(null)
   const [result, setResult] = useState<IntroEditResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [genCount, setGenCount] = useState(0)
 
-  const handleGenerate = async (opts?: { grid?: BeatGrid; stemPaths?: Record<string, string> }) => {
+  const handleGenerate = async (opts?: {
+    grid?: BeatGrid
+    stemPaths?: Record<string, string>
+    loopSourceIdx?: number
+    dropIdx?: number
+  }) => {
     setIsGenerating(true)
     setError(null)
     const unsub = window.electronAPI.onIntroOutroProgress(setProgress)
@@ -54,6 +60,9 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
         loopBars: 4,
         stems: stemsForMode(stemMode),
         outputFormat,
+        introBuild,
+        loopSourceIdx: opts?.loopSourceIdx,
+        dropIdx: opts?.dropIdx,
         grid: opts?.grid,
         stemPaths: opts?.stemPaths
       })
@@ -61,7 +70,8 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
         outputPath: r.output_path,
         grid: r.grid,
         stemPaths: r.stem_paths,
-        loopSourceIdx: r.loop_source_idx
+        loopSourceIdx: r.loop_source_idx,
+        dropIdx: r.drop_idx
       })
       setGenCount((c) => c + 1)
     } catch (err) {
@@ -73,15 +83,20 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
     }
   }
 
-  // Regenerate reusing cached grid + stems. The backend re-separates only if a
-  // newly-requested stem (e.g. bass) is missing from stemPaths.
+  // Regenerate reusing cached grid + stems + chosen bars. The backend
+  // re-separates only if a newly-requested stem (e.g. bass) is missing.
   const handleRegenerate = (): void => {
     if (!result) return
-    void handleGenerate({ grid: result.grid, stemPaths: result.stemPaths })
+    void handleGenerate({
+      grid: result.grid,
+      stemPaths: result.stemPaths,
+      loopSourceIdx: result.loopSourceIdx,
+      dropIdx: result.dropIdx
+    })
   }
 
-  // Phase-nudge the whole grid by ±1 beat (or ±1 bar) to fix an off-by-one "1",
-  // then regenerate fast.
+  // Phase-nudge the whole grid by ±1 beat to fix an off-by-one "1", then
+  // regenerate fast. The backend re-snaps the nudged grid to drum transients.
   const handleNudge = (beats: number): void => {
     if (!result) return
     const { grid } = result
@@ -93,7 +108,37 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
       downbeats_samples: grid.downbeats_samples.map(shift),
       beats_samples: grid.beats_samples.map(shift)
     }
-    void handleGenerate({ grid: nudged, stemPaths: result.stemPaths })
+    void handleGenerate({
+      grid: nudged,
+      stemPaths: result.stemPaths,
+      loopSourceIdx: result.loopSourceIdx,
+      dropIdx: result.dropIdx
+    })
+  }
+
+  // Move which bar the loop phrase is sampled from (auto-pick is only a default;
+  // a fill or vocal chop in the chosen bars makes an ugly loop).
+  const handleLoopBarNudge = (bars: number): void => {
+    if (!result) return
+    const next = Math.max(0, result.loopSourceIdx + bars)
+    void handleGenerate({
+      grid: result.grid,
+      stemPaths: result.stemPaths,
+      loopSourceIdx: next,
+      // keep the drop following the loop bar unless the user moved it apart
+      dropIdx: result.dropIdx === result.loopSourceIdx ? next : result.dropIdx
+    })
+  }
+
+  // Move where the original track enters (the drop), independent of the loop.
+  const handleDropNudge = (bars: number): void => {
+    if (!result) return
+    void handleGenerate({
+      grid: result.grid,
+      stemPaths: result.stemPaths,
+      loopSourceIdx: result.loopSourceIdx,
+      dropIdx: Math.max(0, result.dropIdx + bars)
+    })
   }
 
   const handleReveal = (): void => {
@@ -170,6 +215,29 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
           </div>
         </div>
 
+        {/* Buildup treatment */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-text-tertiary" title="Filter sweep + snare roll rising into the drop. Off = clean dry loop for beatmatching.">
+            Build-up:
+          </span>
+          <div className="flex rounded-md overflow-hidden border border-border-strong">
+            <button
+              onClick={() => setIntroBuild(true)}
+              disabled={isGenerating}
+              className={segBtn(introBuild)}
+            >
+              On
+            </button>
+            <button
+              onClick={() => setIntroBuild(false)}
+              disabled={isGenerating}
+              className={segBtn(!introBuild)}
+            >
+              Off
+            </button>
+          </div>
+        </div>
+
         {/* Output format */}
         <div className="flex items-center gap-2">
           <span className="text-xs text-text-tertiary">Format:</span>
@@ -239,6 +307,28 @@ export default function IntroEditTab({ song }: IntroEditTabProps): React.JSX.Ele
               </button>
               <button onClick={() => handleNudge(1)} disabled={isGenerating} className={segBtn(false)}>
                 +1 beat
+              </button>
+            </div>
+            <span className="text-xs text-text-tertiary" title="Which bar the loop phrase is sampled from — move it off a fill or vocal chop.">
+              Loop bar {result.loopSourceIdx + 1}:
+            </span>
+            <div className="flex rounded-md overflow-hidden border border-border-strong">
+              <button onClick={() => handleLoopBarNudge(-1)} disabled={isGenerating || result.loopSourceIdx === 0} className={segBtn(false)}>
+                −1
+              </button>
+              <button onClick={() => handleLoopBarNudge(1)} disabled={isGenerating} className={segBtn(false)}>
+                +1
+              </button>
+            </div>
+            <span className="text-xs text-text-tertiary" title="Which bar of the original the track enters on after the intro loop.">
+              Drop bar {result.dropIdx + 1}:
+            </span>
+            <div className="flex rounded-md overflow-hidden border border-border-strong">
+              <button onClick={() => handleDropNudge(-1)} disabled={isGenerating || result.dropIdx === 0} className={segBtn(false)}>
+                −1
+              </button>
+              <button onClick={() => handleDropNudge(1)} disabled={isGenerating} className={segBtn(false)}>
+                +1
               </button>
             </div>
             <button

@@ -312,6 +312,9 @@ ipcMain.handle(
       stems?: string[]
       outputFormat?: 'wav' | 'aiff' | 'flac'
       outputPath?: string
+      introBuild?: boolean
+      loopSourceIdx?: number
+      dropIdx?: number
       grid?: unknown
       stemPaths?: Record<string, string>
     }
@@ -327,6 +330,7 @@ ipcMain.handle(
         grid: unknown
         stem_paths: Record<string, string>
         loop_source_idx: number
+        drop_idx: number
       }>('/intro-outro', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -338,6 +342,9 @@ ipcMain.handle(
           stems: args.stems ?? ['drums'],
           output_format: args.outputFormat ?? 'aiff',
           output_path: args.outputPath,
+          intro_build: args.introBuild ?? true,
+          loop_source_idx: args.loopSourceIdx,
+          drop_idx: args.dropIdx,
           grid: args.grid,
           stem_paths: args.stemPaths
         })

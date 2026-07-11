@@ -131,6 +131,99 @@ def render_edit(
     return output_path
 
 
+def regularize_grid(grid: Beatgrid) -> Beatgrid:
+    """Least-squares constant-tempo refit of the detected downbeats.
+
+    madmom reports on a 100 fps lattice, so raw downbeats carry ±10 ms bar-to-bar
+    jitter (measured: 1.62-1.71 s bars on a steady 142 BPM track). A loop cut
+    between two jittered downbeats has the wrong length and audibly drifts over a
+    16-bar intro. v1 scope is steady-tempo 4/4, so the right model is a straight
+    line: downbeat[k] ~= phase + k * bar_len, fit with one outlier-rejection pass.
+    Also yields a sub-millisecond BPM (the raw one is quantized: 142.86 = 60/0.42).
+
+    Returns the original grid untouched if too few downbeats or the residuals say
+    the tempo genuinely isn't steady (out of v1 scope — don't fake a grid).
+    """
+    db = np.asarray(grid.downbeats_samples, dtype=np.float64)
+    if len(db) < 8:
+        return grid
+    k = np.arange(len(db), dtype=np.float64)
+    bar_len, phase = np.polyfit(k, db, 1)
+    resid = db - (phase + bar_len * k)
+    # One robust pass: refit without outliers (a few mis-tracked bars shouldn't skew).
+    mad = float(np.median(np.abs(resid))) or 1.0
+    keep = np.abs(resid) <= 5 * mad
+    if keep.sum() >= 8:
+        bar_len, phase = np.polyfit(k[keep], db[keep], 1)
+        resid = db - (phase + bar_len * k)
+    if bar_len <= 0 or float(np.median(np.abs(resid))) > 0.03 * bar_len:
+        return grid  # not steady tempo; keep the detected grid as-is
+    new_db = np.maximum(np.round(phase + bar_len * k), 0).astype(int)
+    beat_len = bar_len / 4.0
+    new_beats = np.maximum(
+        np.round(phase + beat_len * np.arange(len(db) * 4)), 0
+    ).astype(int)
+    return Beatgrid(
+        bpm=round(60.0 * grid.sample_rate / beat_len, 2),
+        sample_rate=grid.sample_rate,
+        downbeats_samples=new_db.tolist(),
+        beats_samples=new_beats.tolist(),
+        source=grid.source,
+    )
+
+
+def snap_downbeats_to_transients(
+    grid: Beatgrid,
+    stem: np.ndarray,
+    window_ms: float = 25.0,
+    min_rise_ratio: float = 3.0,
+    min_votes: int = 4,
+) -> Beatgrid:
+    """Phase-align the grid to the actual drum transients: shift ALL downbeats by
+    the MEDIAN offset between each downbeat and the nearest onset within
+    ±``window_ms`` (the spec's transient-snap requirement, applied globally).
+
+    Phase-only on purpose. Snapping each downbeat independently lets two bars
+    disagree (a hat grabbed here, a kick there), which corrupts loop lengths —
+    measured 97 ms of drift over a 16-bar intro, worse than the 10 ms model
+    error it was meant to fix. Modern productions are grid-quantized, so one
+    global phase correction aligns every bar; downbeats with no clear onset
+    (breakdowns, silence) simply don't vote. Fewer than ``min_votes`` clear
+    onsets → grid returned unchanged.
+    """
+    if not len(stem) or not grid.downbeats_samples:
+        return grid
+    sr = grid.sample_rate
+    mono = np.abs(stem).mean(axis=1) if stem.ndim == 2 else np.abs(stem)
+    w = max(1, int(sr * 0.003))
+    env = np.convolve(mono.astype(np.float64) ** 2, np.ones(w) / w, mode="same")
+    rise = np.maximum(np.diff(env, prepend=env[:1]), 0.0)
+    W = max(1, int(sr * window_ms / 1000.0))
+
+    deltas = []
+    for d in grid.downbeats_samples:
+        a, b = max(d - W, 0), min(d + W, len(rise))
+        if b - a < 2:
+            continue
+        seg = rise[a:b]
+        peak = int(np.argmax(seg))
+        floor = float(np.median(seg)) + 1e-12
+        if seg[peak] >= min_rise_ratio * floor:
+            deltas.append((a + peak) - d)
+    if len(deltas) < min_votes:
+        return grid
+    shift = int(round(float(np.median(deltas))))
+    if shift == 0:
+        return grid
+    return Beatgrid(
+        bpm=grid.bpm,
+        sample_rate=sr,
+        downbeats_samples=[max(0, d + shift) for d in grid.downbeats_samples],
+        beats_samples=[max(0, b + shift) for b in grid.beats_samples],
+        source=grid.source,
+    )
+
+
 def _bar_rms(stem: np.ndarray, downbeats: list[int]) -> np.ndarray:
     """RMS of each bar (between consecutive downbeats), averaged across channels."""
     out = []
@@ -156,10 +249,36 @@ def pick_loop_source(
     # "full energy" = at/above the energy_quantile of all bars (ignoring silent bars)
     nonzero = bar_rms[bar_rms > 0]
     threshold = float(np.quantile(nonzero, energy_quantile)) if len(nonzero) else 0.0
+    # EVERY bar of the window must clear the threshold (a mean can hide a weak
+    # bar mid-window — e.g. a half-bar build — which would make an ugly loop).
     for i in range(len(bar_rms) - loop_bars + 1):
-        if float(np.mean(bar_rms[i:i + loop_bars])) >= threshold:
+        if float(np.min(bar_rms[i:i + loop_bars])) >= threshold:
             return i
     return 0
+
+
+def pick_outro_point(original: np.ndarray, grid: Beatgrid, min_ratio: float = 0.35) -> int:
+    """Pick the downbeat where the body should END and the beat outro take over:
+    right after the last 'strong' bar of the ORIGINAL audio.
+
+    The naive default (last downbeat minus outro length) lands mid-fade on most
+    commercial tracks — a full-volume beat loop slamming in after the song has
+    already gone quiet (measured: body RMS 0.067 vs 0.44 mid-song). Riding out
+    of the last full-energy bar is what a DJ outro actually wants.
+    """
+    db = grid.downbeats_samples
+    if len(db) < 2:
+        return max(len(db) - 1, 0)
+    bar_rms = _bar_rms(original, db)
+    nonzero = bar_rms[bar_rms > 0]
+    if not len(nonzero):
+        return len(db) - 1
+    threshold = min_ratio * float(np.quantile(nonzero, 0.8))
+    strong = np.nonzero(bar_rms >= threshold)[0]
+    if not len(strong):
+        return len(db) - 1
+    # body ends on the downbeat AFTER the last strong bar
+    return min(int(strong[-1]) + 1, len(db) - 1)
 
 
 def _equal_power_ramps(n: int) -> tuple[np.ndarray, np.ndarray]:
@@ -313,8 +432,8 @@ def _snare_build(
     if build_bars <= 0 or n == 0 or loop_source_idx >= len(db):
         return intro
     beat_len = (
-        grid.beats_samples[1] - grid.beats_samples[0]
-        if len(grid.beats_samples) >= 2
+        int(round(float(np.median(np.diff(grid.beats_samples)))))
+        if len(grid.beats_samples) >= 3
         else int(round(sr * 60.0 / grid.bpm))
     )
     bar_len = beat_len * 4
@@ -447,8 +566,14 @@ def assemble_edit(
 
     if outro_bars > 0:
         outro = build_beat_loop(loop_stem, grid, loop_source_idx, loop_bars, outro_bars, crossfade_ms)
+        outro = _limit_peak(outro)               # drums+bass sum can exceed 1.0
         outro_sample = max(len(audio) - c, 0)
         audio = _crossfade_join(audio, outro, c)
+
+    # Final safety: MP3/AAC decodes routinely overshoot 1.0 (intersample peaks —
+    # measured 1.077 on a real body), and write_wav would hard-clip ~20k samples.
+    # A single scalar trim preserves all relative levels and kills the clipping.
+    audio = _limit_peak(audio)
 
     return EditResult(audio=audio.astype(np.float32), sample_rate=sr,
                       drop_sample=drop_sample, outro_sample=outro_sample)

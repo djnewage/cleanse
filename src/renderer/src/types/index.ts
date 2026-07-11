@@ -77,6 +77,7 @@ export interface IntroEditResult {
   grid: BeatGrid
   stemPaths: Record<string, string>
   loopSourceIdx: number
+  dropIdx: number
 }
 
 // Batch Processing Types
