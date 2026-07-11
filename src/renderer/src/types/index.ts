@@ -62,6 +62,24 @@ export interface SongLyrics {
   durationMismatch?: boolean
 }
 
+// Beat grid for the Auto Intro/Outro feature. Mirrors the backend Beatgrid /
+// preload BeatGrid shape; kept here so the renderer needn't import from preload.
+export interface BeatGrid {
+  bpm: number
+  sample_rate: number
+  downbeats_samples: number[]
+  beats_samples: number[]
+  source: string
+}
+
+export interface IntroEditResult {
+  outputPath: string
+  grid: BeatGrid
+  stemPaths: Record<string, string>
+  loopSourceIdx: number
+  dropIdx: number
+}
+
 // Batch Processing Types
 export type SongStatus = 'pending' | 'fetching_lyrics' | 'separating' | 'transcribing' | 'transcribing_vocals' | 'ready' | 'exporting' | 'completed' | 'error'
 

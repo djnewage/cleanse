@@ -34,6 +34,22 @@ export interface AudioMetadata {
   duration: number | null
 }
 
+export interface BeatGrid {
+  bpm: number
+  sample_rate: number
+  downbeats_samples: number[]
+  beats_samples: number[]
+  source: string
+}
+
+export interface IntroOutroResult {
+  output_path: string
+  grid: BeatGrid
+  stem_paths: Record<string, string>
+  loop_source_idx: number
+  drop_idx: number
+}
+
 export interface ElectronAPI {
   selectAudioFile: () => Promise<string | null>
   selectAudioFiles: () => Promise<string[]>
@@ -43,6 +59,21 @@ export interface ElectronAPI {
   fetchLyrics: (artist: string, title: string, duration?: number) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null; lyrics_source?: string | null; duration_mismatch?: boolean }>
   transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean) => Promise<TranscriptionResult>
   separateAudio: (path: string, turbo?: boolean) => Promise<SeparationResult>
+  createIntroOutroEdit: (args: {
+    filePath: string
+    introBars?: number
+    outroBars?: number
+    loopBars?: number
+    stems?: string[]
+    outputFormat?: 'wav' | 'aiff' | 'flac'
+    outputPath?: string
+    introBuild?: boolean
+    loopSourceIdx?: number
+    dropIdx?: number
+    grid?: BeatGrid
+    stemPaths?: Record<string, string>
+  }) => Promise<IntroOutroResult>
+  onIntroOutroProgress: (callback: (progress: SeparationProgress) => void) => () => void
   previewAudio: (args: {
     filePath: string
     censorWords: CensorWord[]
@@ -151,6 +182,21 @@ const electronAPI: ElectronAPI = {
   separateAudio: (path: string, turbo?: boolean) =>
     ipcRenderer.invoke('separate-audio', path, turbo ?? false),
 
+  createIntroOutroEdit: (args: {
+    filePath: string
+    introBars?: number
+    outroBars?: number
+    loopBars?: number
+    stems?: string[]
+    outputFormat?: 'wav' | 'aiff' | 'flac'
+    outputPath?: string
+    introBuild?: boolean
+    loopSourceIdx?: number
+    dropIdx?: number
+    grid?: BeatGrid
+    stemPaths?: Record<string, string>
+  }) => ipcRenderer.invoke('intro-outro', args),
+
   previewAudio: (args: {
     filePath: string
     censorWords: CensorWord[]
@@ -227,6 +273,16 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('separation-progress', handler)
     return () => {
       ipcRenderer.removeListener('separation-progress', handler)
+    }
+  },
+
+  onIntroOutroProgress: (callback: (progress: SeparationProgress) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: SeparationProgress): void => {
+      callback(progress)
+    }
+    ipcRenderer.on('intro-outro-progress', handler)
+    return () => {
+      ipcRenderer.removeListener('intro-outro-progress', handler)
     }
   },
 

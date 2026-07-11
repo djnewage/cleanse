@@ -1,12 +1,16 @@
 """Tests for lyrics_fetcher: _extract_first_artist, parse_synced_lyrics, find_lyrics_profanity."""
 
-# Heavy deps are stubbed in conftest.py.
-# tinytag and requests need stubbing here (lightweight but not always installed).
+# Heavy deps are stubbed in conftest.py. tinytag/requests are stubbed ONLY if
+# absent — unconditional sys.modules stubs leak into other test files in the
+# same pytest process and break tests that need the real package.
 import sys
 from unittest.mock import MagicMock
 
-sys.modules.setdefault("tinytag", MagicMock())
-sys.modules.setdefault("requests", MagicMock())
+for _mod in ("tinytag", "requests"):
+    try:
+        __import__(_mod)
+    except ImportError:
+        sys.modules.setdefault(_mod, MagicMock())
 
 from lyrics_fetcher import _extract_first_artist, _clean_search_title, parse_synced_lyrics  # noqa: E402
 

@@ -301,6 +301,67 @@ ipcMain.handle('separate-audio', async (_event, filePath: string, turbo: boolean
 })
 
 ipcMain.handle(
+  'intro-outro',
+  async (
+    _event,
+    args: {
+      filePath: string
+      introBars?: number
+      outroBars?: number
+      loopBars?: number
+      stems?: string[]
+      outputFormat?: 'wav' | 'aiff' | 'flac'
+      outputPath?: string
+      introBuild?: boolean
+      loopSourceIdx?: number
+      dropIdx?: number
+      grid?: unknown
+      stemPaths?: Record<string, string>
+    }
+  ) => {
+    await ensureFileExists(args.filePath)
+    try {
+      setProgressCallback((data) => {
+        sendToMain('intro-outro-progress', data)
+      })
+
+      const result = await fetchBackendStreaming<{
+        output_path: string
+        grid: unknown
+        stem_paths: Record<string, string>
+        loop_source_idx: number
+        drop_idx: number
+      }>('/intro-outro', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: args.filePath,
+          intro_bars: args.introBars ?? 16,
+          outro_bars: args.outroBars ?? 16,
+          loop_bars: args.loopBars ?? 2,
+          stems: args.stems ?? ['drums'],
+          output_format: args.outputFormat ?? 'aiff',
+          output_path: args.outputPath,
+          intro_build: args.introBuild ?? true,
+          loop_source_idx: args.loopSourceIdx,
+          drop_idx: args.dropIdx,
+          grid: args.grid,
+          stem_paths: args.stemPaths
+        })
+      })
+
+      return result
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const cause = err instanceof Error && err.cause ? ` [cause: ${err.cause}]` : ''
+      throw new Error(`Intro/outro error: ${await describeBackendError(msg + cause)}`)
+    } finally {
+      setProgressCallback(null)
+    }
+  }
+)
+
+ipcMain.handle(
   'preview-audio',
   async (
     _event,

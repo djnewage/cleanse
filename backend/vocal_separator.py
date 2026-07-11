@@ -10,6 +10,10 @@ import numpy as np
 # Load model once at module level (cached after first download)
 _model = None
 
+# htdemucs source order. Used to optionally emit individual stems (e.g. drums /
+# bass for the auto intro/outro feature) in addition to vocals + accompaniment.
+_STEM_INDEX = {"drums": 0, "bass": 1, "other": 2, "vocals": 3}
+
 
 def _decode_audio_ffmpeg(file_path: str, sampling_rate: int, channels: int = 2) -> np.ndarray:
     """Decode any audio file to float32 PCM [channels, samples] via ffmpeg.
@@ -136,7 +140,12 @@ def _get_model():
     return _model
 
 
-def separate(input_path: str, output_dir: str, turbo: bool = False) -> dict:
+def separate(
+    input_path: str,
+    output_dir: str,
+    turbo: bool = False,
+    extra_stems: "list[str] | tuple[str, ...] | None" = None,
+) -> dict:
     """
     Separate an audio file into vocals and accompaniment.
 
@@ -144,10 +153,23 @@ def separate(input_path: str, output_dir: str, turbo: bool = False) -> dict:
         input_path: Path to the input audio file
         output_dir: Directory to save the separated tracks
         turbo: If True, use GPU acceleration when available
+        extra_stems: Optional individual htdemucs stems to ALSO write out
+            (any of "drums", "bass", "other", "vocals"). Used by the auto
+            intro/outro feature, which needs the drums (and optionally bass)
+            stem on its own. Additive — the vocals/accompaniment outputs and
+            return keys are unchanged when this is None.
 
     Returns:
-        {"vocals_path": str, "accompaniment_path": str}
+        {"vocals_path": str, "accompaniment_path": str, ...} plus a
+        "{stem}_path" key for each requested extra stem.
     """
+    extra_stems = tuple(extra_stems or ())
+    unknown = [s for s in extra_stems if s not in _STEM_INDEX]
+    if unknown:
+        raise ValueError(
+            f"Unknown stem(s) {unknown}; valid stems are {sorted(_STEM_INDEX)}"
+        )
+
     import torch
     import tqdm as tqdm_module
     from demucs.apply import apply_model
@@ -199,6 +221,15 @@ def separate(input_path: str, output_dir: str, turbo: bool = False) -> dict:
     _write_wav(vocals_path, vocals, sr)
     _write_wav(accompaniment_path, accompaniment, sr)
 
+    result = {"vocals_path": vocals_path, "accompaniment_path": accompaniment_path}
+
+    # Additionally emit any requested individual stems (e.g. drums/bass for the
+    # auto intro/outro loop), reusing the single separation pass we just ran.
+    for stem in extra_stems:
+        stem_path = os.path.join(output_dir, f"{base}_{stem}.wav")
+        _write_wav(stem_path, sources[0, _STEM_INDEX[stem]], sr)
+        result[f"{stem}_path"] = stem_path
+
     _report_progress("complete", 100, "Separation complete!")
 
-    return {"vocals_path": vocals_path, "accompaniment_path": accompaniment_path}
+    return result

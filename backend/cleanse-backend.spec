@@ -23,6 +23,12 @@ datas += collect_data_files('better_profanity')
 datas += collect_data_files('pydub')
 datas += collect_data_files('uvicorn')
 datas += collect_data_files('imageio_ffmpeg')
+# madmom ships its RNN/HMM model files as package data — without them the
+# downbeat detector (auto intro/outro feature) dies at runtime in the bundle.
+# NOTE: madmom isn't in requirements.txt (its build needs `pip install cython
+# wheel` first, then `pip install --no-build-isolation madmom`); it must be
+# present in the build venv for these collects to succeed.
+datas += collect_data_files('madmom')
 
 # Hidden imports that PyInstaller's static analysis misses
 hidden_imports = []
@@ -34,6 +40,8 @@ hidden_imports += collect_submodules('torchaudio')
 hidden_imports += collect_submodules('pydub')
 hidden_imports += collect_submodules('numpy')
 hidden_imports += collect_submodules('scipy')
+hidden_imports += collect_submodules('madmom')
+hidden_imports += ['mido']  # madmom runtime dep imported lazily
 hidden_imports += [
     'fastapi',
     'fastapi.middleware',

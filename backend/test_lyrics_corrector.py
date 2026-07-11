@@ -1,12 +1,18 @@
 """Tests for lyrics_corrector: word similarity, correction decisions, and gap-filling."""
 
-# Heavy deps are stubbed in conftest.py.
-# tinytag and requests need stubbing (imported by lyrics_fetcher at module level).
+# Heavy deps are stubbed in conftest.py. tinytag/requests (imported by
+# lyrics_fetcher at module level) are stubbed ONLY if absent — sys.modules
+# stubs leak into every other test file in the same pytest process, and an
+# unconditional stub breaks tests that need the real package (render_edit's
+# TinyTag title lookup in test_intro_outro).
 import sys
 from unittest.mock import MagicMock
 
-sys.modules.setdefault("tinytag", MagicMock())
-sys.modules.setdefault("requests", MagicMock())
+for _mod in ("tinytag", "requests"):
+    try:
+        __import__(_mod)
+    except ImportError:
+        sys.modules.setdefault(_mod, MagicMock())
 
 from lyrics_corrector import (  # noqa: E402
     _compute_word_similarity,

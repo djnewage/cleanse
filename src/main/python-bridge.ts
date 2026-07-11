@@ -137,7 +137,10 @@ export async function startPythonBackend(): Promise<number> {
       if (!trimmed) continue
       try {
         const parsed = JSON.parse(trimmed)
-        if (parsed.type === 'separation-progress' && progressCallback) {
+        if (
+          (parsed.type === 'separation-progress' || parsed.type === 'intro-outro-progress') &&
+          progressCallback
+        ) {
           progressCallback({
             step: parsed.step,
             progress: parsed.progress,

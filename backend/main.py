@@ -272,6 +272,25 @@ class SeparateRequest(BaseModel):
     turbo: bool = False
 
 
+class IntroOutroRequest(BaseModel):
+    path: str
+    intro_bars: int = 16
+    outro_bars: int = 16
+    loop_bars: int = 2
+    stems: list[str] = ["drums"]  # ["drums"] or ["drums", "bass"]
+    output_format: Literal["wav", "aiff", "flac"] = "aiff"
+    output_path: str | None = None
+    # Buildup treatment (filter sweep + snare roll) on the intro. Off = clean dry loop.
+    intro_build: bool = True
+    # Manual bar overrides from the UI nudges (None = auto-pick).
+    loop_source_idx: int | None = None
+    drop_idx: int | None = None
+    # For fast "nudge + regenerate": pass back the grid (with nudged downbeats) and
+    # the stem paths from a previous response to skip detection + separation.
+    grid: dict | None = None
+    stem_paths: dict | None = None
+
+
 class CensorRequest(BaseModel):
     path: str
     words: list[CensorWord]
@@ -622,6 +641,32 @@ async def separate(req: SeparateRequest):
     output_dir = os.path.join(tempfile.gettempdir(), "cleanse-separated")
     return StreamingResponse(
         _streaming_heartbeat_wrapper(separate_vocals, req.path, output_dir, turbo=req.turbo),
+        media_type="application/x-ndjson",
+    )
+
+
+@app.post("/intro-outro")
+async def intro_outro(req: IntroOutroRequest):
+    req.path = unquote(req.path)
+    if not os.path.isfile(req.path):
+        raise HTTPException(status_code=400, detail=f"File not found: {req.path}")
+
+    output_path = unquote(req.output_path) if req.output_path else None
+    if not output_path:
+        base = os.path.splitext(req.path)[0]
+        output_path = f"{base} (Intro Edit).{req.output_format}"
+
+    from intro_outro_service import build_intro_outro_edit
+
+    return StreamingResponse(
+        _streaming_heartbeat_wrapper(
+            build_intro_outro_edit, req.path, output_path,
+            intro_bars=req.intro_bars, outro_bars=req.outro_bars,
+            loop_bars=req.loop_bars, stems=tuple(req.stems),
+            grid=req.grid, stem_paths=req.stem_paths,
+            intro_build=req.intro_build,
+            loop_source_idx=req.loop_source_idx, drop_idx=req.drop_idx,
+        ),
         media_type="application/x-ndjson",
     )
 
