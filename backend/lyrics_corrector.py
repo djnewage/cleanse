@@ -615,49 +615,6 @@ def _tokenize_plain_lyrics(lyrics_text: str) -> List[str]:
     return toks
 
 
-def correct_words_with_plain_lyrics(
-    transcribed_words: List[Dict], plain_lyrics: str
-) -> List[Dict]:
-    """Fix misheard word TEXT from PLAIN (un-timestamped) lyrics.
-
-    The synced corrector (correct_words_with_lyrics) needs timestamps to pair
-    words, so plain-only songs (the common Genius case) previously got no
-    correction at all — mishears like 'the rich of kids' (lyrics: 'the reach
-    of kids') survived into the karaoke. The global DP alignment pairs words
-    by content instead; each aligned pair is corrected under the same
-    confidence/similarity rules as the synced path (_should_correct_word),
-    and the wrong-song quality gate inside the aligner means junk lyrics
-    correct nothing.
-    """
-    if not transcribed_words or not plain_lyrics:
-        return transcribed_words
-
-    toks = _tokenize_plain_lyrics(plain_lyrics)
-    pairs = _align_lyrics_to_transcript(transcribed_words, toks)
-    if not pairs:
-        return transcribed_words
-
-    out = [dict(w) for w in transcribed_words]
-    corrected = 0
-    for li, ti in pairs:
-        tw = out[ti]
-        lyric_word = toks[li]
-        similarity = _compute_word_similarity(tw["word"], lyric_word)
-        if _should_correct_word(tw, lyric_word, similarity, HIGH_CONFIDENCE_THRESHOLD):
-            tw["original_word"] = tw["word"]
-            tw["word"] = lyric_word
-            tw["correction_confidence"] = similarity
-            tw["detection_source"] = "lyrics_corrected"
-            corrected += 1
-
-    if corrected:
-        print(
-            f"[LyricsCorrector] Plain-lyrics correction: fixed {corrected} misheard word(s)",
-            file=sys.stderr,
-        )
-    return out
-
-
 def lyrics_match_transcript(transcribed_words: List[Dict], lyrics_text: str) -> bool:
     """True when the plain lyrics plausibly belong to this recording (see the
     quality gate in _align_lyrics_to_transcript). Used to disable
