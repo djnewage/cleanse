@@ -82,11 +82,15 @@ export function useQueueProcessor({
         let plainLyrics: string | undefined
         let syncedLyrics: string | undefined
 
-        const lyricsPromise = (song.metadata?.artist && song.metadata?.title)
+        // Fetch even without clean tags: the backend derives (artist, title)
+        // candidates from the file name when tags are missing or rip-site
+        // polluted (channel name as artist, "Artist - Title" in the title field).
+        const lyricsPromise = ((song.metadata?.artist && song.metadata?.title) || song.fileName)
           ? window.electronAPI.fetchLyrics(
-              song.metadata.artist,
-              song.metadata.title,
-              song.metadata.duration ?? undefined
+              song.metadata?.artist ?? null,
+              song.metadata?.title ?? null,
+              song.metadata?.duration ?? undefined,
+              song.fileName
             ).then((result) => {
               if (result.plain_lyrics || result.synced_lyrics) {
                 plainLyrics = result.plain_lyrics ?? undefined

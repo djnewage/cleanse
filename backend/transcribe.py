@@ -396,3 +396,177 @@ def transcribe_audio(
         "duration": round(info.duration, 3),
         "language": info.language,
     }
+
+
+# --- Vocal-gap rescan: recover ad-libs the full-pass transcription missed -----
+
+_RESCAN_FRAME_S = 0.05          # RMS envelope hop
+_RESCAN_MIN_REGION_S = 0.35     # ignore shorter energy blips
+_RESCAN_CLOSE_GAP_S = 0.5       # merge energy islands across quiet gaps this short
+_RESCAN_PAD_S = 0.4             # context around each region
+_RESCAN_MAX_REGIONS = 24        # cost cap per song
+_RESCAN_MIN_CONF = 0.3          # drop low-confidence slice words (hallucination guard)
+_RESCAN_ENERGY_RATIO = 0.3      # region RMS vs typical active-vocal RMS
+_RESCAN_MAX_REGION_S = 8.0      # cap slice length: long slices reintroduce the
+                                # dominant-voice attention problem
+_RESCAN_MAX_WORD_S = 2.0        # slice word timestamps occasionally blow out to
+                                # the whole slice; no sung word lasts this long
+
+
+def find_unattributed_vocal_regions(
+    words: list[dict],
+    vocals_audio: np.ndarray,
+    sample_rate: int = 16000,
+) -> list[tuple[float, float]]:
+    """Time regions where the vocals stem has real energy but NO transcribed
+    word covers them — the acoustic signature of a missed ad-lib. Whisper
+    decodes one voice stream: background shouts between (or under) main-vocal
+    phrases routinely never get emitted, in either transcription pass.
+    """
+    n = len(vocals_audio)
+    if n == 0:
+        return []
+    hop = max(1, int(_RESCAN_FRAME_S * sample_rate))
+    n_frames = n // hop
+    if n_frames == 0:
+        return []
+    frames = vocals_audio[: n_frames * hop].reshape(n_frames, hop)
+    rms = np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1))
+
+    # "Active vocal" level = median RMS of frames inside transcribed words.
+    covered = np.zeros(n_frames, dtype=bool)
+    for w in words:
+        a = int(max(w["start"] - 0.15, 0) / _RESCAN_FRAME_S)
+        b = int((w["end"] + 0.15) / _RESCAN_FRAME_S) + 1
+        covered[a:min(b, n_frames)] = True
+    active = rms[covered & (rms > 1e-4)]
+    if not len(active):
+        return []
+    threshold = _RESCAN_ENERGY_RATIO * float(np.median(active))
+
+    hot = (~covered) & (rms >= threshold)
+    regions: list[tuple[float, float]] = []
+    start = None
+    for i, h in enumerate(hot):
+        if h and start is None:
+            start = i
+        elif not h and start is not None:
+            regions.append((start * _RESCAN_FRAME_S, i * _RESCAN_FRAME_S))
+            start = None
+    if start is not None:
+        regions.append((start * _RESCAN_FRAME_S, n_frames * _RESCAN_FRAME_S))
+
+    # Morphological closing: sung phrases have breaths/consonant gaps that dip
+    # under the threshold for 100-400ms (measured mid-'suck my dick': frames at
+    # 0.007 RMS inside an otherwise-hot phrase). Without merging across those,
+    # a real ad-lib fragments into sub-minimum islands and is never rescanned.
+    closed: list[tuple[float, float]] = []
+    for a, b in regions:
+        if closed and a - closed[-1][1] <= _RESCAN_CLOSE_GAP_S:
+            closed[-1] = (closed[-1][0], b)
+        else:
+            closed.append((a, b))
+    regions = [
+        (a, min(b, a + _RESCAN_MAX_REGION_S))
+        for a, b in closed
+        if b - a >= _RESCAN_MIN_REGION_S
+    ]
+    if len(regions) > _RESCAN_MAX_REGIONS:
+        # keep the most energetic ones, restore chronological order
+        def region_energy(r):
+            a, b = int(r[0] / _RESCAN_FRAME_S), int(r[1] / _RESCAN_FRAME_S)
+            return float(np.sum(rms[a:b]))
+        regions = sorted(sorted(regions, key=region_energy, reverse=True)[:_RESCAN_MAX_REGIONS])
+    return regions
+
+
+def rescan_vocal_gaps(
+    words: list[dict],
+    vocals_path: str,
+    language: str | None = None,
+    turbo: bool = False,
+) -> list[dict]:
+    """Transcribe the unattributed-vocal-energy regions of the vocals stem in
+    ISOLATION and return the recovered words (empty list if none).
+
+    Isolated slices are the trick: over a whole track Whisper's attention
+    locks onto the dominant voice and drops overlapping/background ad-libs
+    (measured: 'suck my dick' ad-libs at conf 0.86-1.00 in a vocals-stem pass
+    were still absent from the full-mix pass, and even the vocals pass loses
+    them without a favorable prompt). A 1-3s slice containing only the ad-lib
+    gives Whisper nothing else to attend to.
+
+    Returned words carry detection_source='adlib_rescan' and slice-accurate
+    timestamps; caller flags + merges them.
+    """
+    try:
+        vocals_audio = _decode_audio_ffmpeg(vocals_path, sampling_rate=16000)
+    except Exception as e:
+        print(f"[Transcribe] Vocal-gap rescan skipped (decode failed: {e})", file=sys.stderr)
+        return []
+
+    regions = find_unattributed_vocal_regions(words, vocals_audio)
+    if not regions:
+        return []
+    print(
+        f"[Transcribe] Vocal-gap rescan: {len(regions)} unattributed vocal region(s)",
+        file=sys.stderr,
+    )
+
+    from profanity_detector import scan_token
+
+    def _covered(mid: float) -> bool:
+        return any(w["start"] - 0.1 <= mid <= w["end"] + 0.1 for w in words)
+
+    model = get_model(turbo=turbo)
+    recovered: list[dict] = []
+    for a, b in regions:
+        s = max(a - _RESCAN_PAD_S, 0.0)
+        e = min(b + _RESCAN_PAD_S, len(vocals_audio) / 16000)
+        sl = vocals_audio[int(s * 16000): int(e * 16000)]
+        try:
+            segments, _info = model.transcribe(
+                sl,
+                beam_size=5,
+                word_timestamps=True,
+                language=language,
+                condition_on_previous_text=False,
+                no_speech_threshold=0.9,
+            )
+        except Exception as ex:
+            print(f"[Transcribe] Rescan slice {s:.1f}-{e:.1f}s failed: {ex}", file=sys.stderr)
+            continue
+        slice_words = [
+            {
+                "word": w.word.strip(),
+                "start": round(s + w.start, 3),
+                "end": round(s + w.end, 3),
+                "confidence": round(w.probability, 3),
+                "detection_source": "adlib_rescan",
+            }
+            for seg in segments
+            for w in (seg.words or [])
+            if any(c.isalnum() for c in w.word)
+            and (w.end - w.start) <= _RESCAN_MAX_WORD_S
+        ]
+        # Tiny slices hallucinate repetition loops readily ('-OOF' x5 in 0.6s);
+        # reuse the full-pass collapse with slice-appropriate thresholds.
+        slice_words = collapse_repetition_loops(slice_words, min_cycles=3)
+        for w in slice_words:
+            if w["confidence"] < _RESCAN_MIN_CONF:
+                continue
+            # The pads make slices re-hear words the main pass already has
+            # (the phrase edges). Keep an already-covered word only if it's a
+            # new profanity — the merge/normalize layers reconcile those.
+            mid = (w["start"] + w["end"]) / 2
+            if _covered(mid) and scan_token(w["word"]) is None:
+                continue
+            recovered.append(w)
+
+    if recovered:
+        print(
+            f"[Transcribe] Vocal-gap rescan recovered {len(recovered)} word(s): "
+            f"{' '.join(w['word'] for w in recovered[:20])}",
+            file=sys.stderr,
+        )
+    return recovered

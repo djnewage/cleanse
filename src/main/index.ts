@@ -213,13 +213,15 @@ ipcMain.handle('get-audio-metadata', async (_event, filePath: string) => {
   }
 })
 
-ipcMain.handle('fetch-lyrics', async (_event, artist: string, title: string, duration?: number) => {
+ipcMain.handle(
+  'fetch-lyrics',
+  async (_event, artist: string | null, title: string | null, duration?: number, fileName?: string) => {
   try {
-    console.log(`[Lyrics] Fetching for: "${artist}" - "${title}"`)
+    console.log(`[Lyrics] Fetching for: "${artist}" - "${title}" (file: ${fileName ?? 'n/a'})`)
     const resp = await fetchBackend('/fetch-lyrics', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ artist, title, duration })
+      body: JSON.stringify({ artist, title, duration, file_name: fileName })
     })
     if (!resp.ok) {
       console.log(`[Lyrics] Fetch failed: HTTP ${resp.status}`)

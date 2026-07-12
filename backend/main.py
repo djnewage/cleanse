@@ -156,7 +156,7 @@ from typing import Literal
 
 ExportFormat = Literal["mp3", "wav", "flac"]
 
-from transcribe import transcribe_audio, warmup_model
+from transcribe import rescan_vocal_gaps, transcribe_audio, warmup_model
 from profanity_detector import flag_profanity
 from audio_processor import censor_audio, censor_audio_vocals_only
 from vocal_separator import separate as separate_vocals
@@ -165,7 +165,7 @@ from lyrics_fetcher import extract_metadata, fetch_lyrics, parse_synced_lyrics
 from lyrics_corrector import (
     correct_words_with_lyrics, fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics,
     extract_profanity_vocab, flag_with_profanity_vocab, find_lyrics_profanity,
-    find_plain_lyrics_profanity, normalize_word_timeline,
+    find_plain_lyrics_profanity, lyrics_match_transcript, normalize_word_timeline,
 )
 
 
@@ -304,9 +304,12 @@ async def device_info():
 
 
 class FetchLyricsRequest(BaseModel):
-    artist: str
-    title: str
+    artist: str | None = None
+    title: str | None = None
     duration: float | None = None
+    # Original file name — used to derive (artist, title) candidates when the
+    # tags are missing or rip-site polluted.
+    file_name: str | None = None
 
 
 @app.post("/metadata")
@@ -319,7 +322,7 @@ def metadata(req: MetadataRequest):
 
 @app.post("/fetch-lyrics")
 def fetch_lyrics_endpoint(req: FetchLyricsRequest):
-    result = fetch_lyrics(req.artist, req.title, req.duration)
+    result = fetch_lyrics(req.artist, req.title, req.duration, filename=req.file_name)
     if result is None:
         return {"plain_lyrics": None, "synced_lyrics": None, "lyrics_source": None}
     return result
@@ -505,11 +508,22 @@ def apply_lyrics_pipeline(
     # against transcribed words.
     lyrics_for_vocab = lyrics or synced_lyrics
     if lyrics_for_vocab:
-        profanity_vocab = extract_profanity_vocab(lyrics_for_vocab)
-        if profanity_vocab:
-            final_words = flag_with_profanity_vocab(
-                final_words, profanity_vocab, lyrics_text=lyrics_for_vocab,
-            )
+        # Plain-only lyrics may be a same-title different song (title-collision
+        # fetch); the synced path is already duration- and corroboration-gated.
+        vocab_ok = True
+        if lyrics and not synced_lyrics:
+            vocab_ok = lyrics_match_transcript(final_words, lyrics)
+            if not vocab_ok:
+                print(
+                    "[Pipeline] Skipping vocab flagging: lyrics don't match this recording",
+                    file=sys.stderr,
+                )
+        if vocab_ok:
+            profanity_vocab = extract_profanity_vocab(lyrics_for_vocab)
+            if profanity_vocab:
+                final_words = flag_with_profanity_vocab(
+                    final_words, profanity_vocab, lyrics_text=lyrics_for_vocab,
+                )
 
     # Last step, after all flags are final: enforce the karaoke timing
     # invariants (sorted, non-overlapping, positive durations). Running it
@@ -595,6 +609,20 @@ async def transcribe(req: TranscribeRequest):
             final_words = merge_word_lists(primary_words, secondary_words, import_all=sparse)
         else:
             final_words = primary_words
+
+        # Vocal-gap rescan: transcribe unattributed-vocal-energy slices in
+        # isolation to recover ad-libs both passes missed (Whisper attends to
+        # the dominant voice and drops background shouts). Runs whenever a
+        # vocals stem exists — separation happens even in single-pass mode.
+        if req.vocals_path and os.path.isfile(req.vocals_path):
+            recovered = rescan_vocal_gaps(
+                final_words, req.vocals_path,
+                language=detected_language, turbo=req.turbo,
+            )
+            if recovered:
+                recovered = flag_profanity(recovered, language=detected_language)
+                final_words = final_words + recovered
+                final_words.sort(key=lambda w: w["start"])
 
         final_words = apply_lyrics_pipeline(
             final_words, result["duration"], detected_language,

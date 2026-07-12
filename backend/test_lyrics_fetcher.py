@@ -268,3 +268,152 @@ class TestLyricsCache:
         assert lf.fetch_lyrics("Nobody", "Nothing", 100.0) is None
         import os
         assert not os.path.exists(lf._lyrics_cache_path("Nobody", "Nothing", 100.0))
+
+
+class TestTitleOnlyMismatchRejected:
+    def test_title_only_duration_mismatch_returns_none(self, monkeypatch):
+        # A title-only hit with the wrong duration is likely a DIFFERENT SONG
+        # sharing the title — its lyrics must not be used even as plain text.
+        import lyrics_fetcher as lf
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            class R:
+                status_code = 404
+            if url.endswith("/get"):
+                return R()
+            r = R()
+            r.status_code = 200
+            if params and params.get("artist_name"):
+                r.json = lambda: []  # artist-scoped searches find nothing
+            else:
+                r.json = lambda: [{
+                    "duration": 147.0,  # vs audio 182s
+                    "syncedLyrics": "[00:01.00] wrong song words",
+                    "plainLyrics": "wrong song words",
+                }]
+            return r
+
+        monkeypatch.setattr(lf.requests, "get", fake_get)
+        assert lf._fetch_lrclib("Dookie Bros", "S.M.D.", duration=181.7) is None
+
+    def test_artist_scoped_mismatch_still_kept_as_plain(self, monkeypatch):
+        # Artist matched -> mismatch is plausibly the same song, different edit.
+        import lyrics_fetcher as lf
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            class R:
+                status_code = 404
+            if url.endswith("/get"):
+                return R()
+            r = R()
+            r.status_code = 200
+            if params and params.get("artist_name"):
+                r.json = lambda: [{
+                    "duration": 147.0,
+                    "syncedLyrics": "[00:01.00] same song other edit",
+                    "plainLyrics": "same song other edit",
+                }]
+            else:
+                r.json = lambda: []
+            return r
+
+        monkeypatch.setattr(lf.requests, "get", fake_get)
+        result = lf._fetch_lrclib("Ken Carson", "The Acronym", duration=182.9)
+        assert result["duration_mismatch"] is True
+        assert result["plain_lyrics"] == "same song other edit"
+        assert result["synced_lyrics"] is None
+
+
+class TestMetadataCandidates:
+    """(artist, title) interpretations for rip-site polluted metadata."""
+
+    CHIEF_KEEF_FILE = "Chief Keef - Whos Concerned - Glo Radio _ - SoundLoadMate.com.mp3"
+
+    def test_rip_site_tags_yield_embedded_candidate(self):
+        # The real case: channel as artist, 'Artist - Title' in the title field.
+        from lyrics_fetcher import _metadata_candidates
+        cands = _metadata_candidates("Glo Radio ®", "Chief Keef - Whos Concerned",
+                                     self.CHIEF_KEEF_FILE)
+        assert ("Chief Keef", "Whos Concerned") in cands
+        # tags-as-is (junk-cleaned) still tried first
+        assert cands[0] == ("Glo Radio", "Chief Keef - Whos Concerned")
+        # junk never appears in any candidate
+        flat = " ".join(a + " " + t for a, t in cands).lower()
+        assert "soundloadmate" not in flat and "®" not in flat
+
+    def test_filename_only_when_tags_missing(self):
+        from lyrics_fetcher import _metadata_candidates
+        cands = _metadata_candidates(None, None, self.CHIEF_KEEF_FILE)
+        assert cands == [("Chief Keef", "Whos Concerned")]
+
+    def test_well_tagged_file_single_candidate(self):
+        from lyrics_fetcher import _metadata_candidates
+        cands = _metadata_candidates("Ken Carson", "The Acronym", "05 the acronym.mp3")
+        assert cands[0] == ("Ken Carson", "The Acronym")
+        # swapped-tags fallback is allowed, but the primary must be unchanged
+        assert len(cands) <= 2
+
+    def test_track_number_filename_no_bogus_candidate(self):
+        from lyrics_fetcher import _metadata_candidates
+        cands = _metadata_candidates("Dookie Bros", "S.M.D.", "05 - S.M.D..mp3")
+        # '05' is junk-filtered -> only one filename segment -> no filename candidate
+        assert all(a != "05" for a, _ in cands)
+        assert cands[0] == ("Dookie Bros", "S.M.D.")
+
+    def test_no_inputs_no_candidates(self):
+        from lyrics_fetcher import _metadata_candidates
+        assert _metadata_candidates(None, None, None) == []
+
+    def test_official_video_junk_stripped(self):
+        from lyrics_fetcher import _metadata_candidates
+        cands = _metadata_candidates(
+            None, None, "Drake - God's Plan (Official Music Video) [HD].mp3"
+        )
+        assert cands and cands[0][0] == "Drake"
+        assert "official" not in cands[0][1].lower()
+        assert cands[0][1].startswith("God's Plan")
+
+
+class TestFetchLyricsCandidateLoop:
+    def test_second_candidate_wins(self, monkeypatch, tmp_path):
+        import lyrics_fetcher as lf
+        monkeypatch.setattr(lf, "_LYRICS_CACHE_DIR", str(tmp_path))
+        calls = []
+
+        def fake_round(artist, title, duration):
+            calls.append((artist, title))
+            if artist == "Chief Keef":
+                return {"plain_lyrics": "real lyrics", "synced_lyrics": None,
+                        "lyrics_source": "genius", "duration_mismatch": False}
+            return None
+
+        monkeypatch.setattr(lf, "_fetch_lyrics_round", fake_round)
+        result = lf.fetch_lyrics(
+            "Glo Radio ®", "Chief Keef - Whos Concerned", 202.77,
+            filename="Chief Keef - Whos Concerned - Glo Radio _ - SoundLoadMate.com.mp3",
+        )
+        assert result["plain_lyrics"] == "real lyrics"
+        assert calls[0] == ("Glo Radio", "Chief Keef - Whos Concerned")
+        assert ("Chief Keef", "Whos Concerned") in calls
+
+    def test_result_cached_under_original_inputs(self, monkeypatch, tmp_path):
+        import lyrics_fetcher as lf
+        monkeypatch.setattr(lf, "_LYRICS_CACHE_DIR", str(tmp_path))
+        hits = {"n": 0}
+
+        def fake_round(artist, title, duration):
+            hits["n"] += 1
+            return {"plain_lyrics": "x", "synced_lyrics": None,
+                    "lyrics_source": "genius", "duration_mismatch": False}
+
+        monkeypatch.setattr(lf, "_fetch_lyrics_round", fake_round)
+        args = ("A ®", "B - C", 100.0)
+        lf.fetch_lyrics(*args, filename="B - C - x.com.mp3")
+        lf.fetch_lyrics(*args, filename="B - C - x.com.mp3")
+        assert hits["n"] == 1  # second call served from cache
+
+    def test_all_candidates_fail_returns_none(self, monkeypatch, tmp_path):
+        import lyrics_fetcher as lf
+        monkeypatch.setattr(lf, "_LYRICS_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(lf, "_fetch_lyrics_round", lambda *a: None)
+        assert lf.fetch_lyrics("A", "B", 100.0) is None

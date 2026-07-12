@@ -65,7 +65,7 @@ function WordItemInner({
 
   const effectiveType = word.censor_type ?? defaultCensorType
   const hasOverride = word.censor_type !== undefined
-  const isAdlib = word.detection_source === 'adlib'
+  const isAdlib = word.detection_source === 'adlib' || word.detection_source === 'adlib_rescan'
   const isManual = word.detection_source === 'manual'
 
   // Determine styling based on playback status
