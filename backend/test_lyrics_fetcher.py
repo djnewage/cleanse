@@ -268,3 +268,57 @@ class TestLyricsCache:
         assert lf.fetch_lyrics("Nobody", "Nothing", 100.0) is None
         import os
         assert not os.path.exists(lf._lyrics_cache_path("Nobody", "Nothing", 100.0))
+
+
+class TestTitleOnlyMismatchRejected:
+    def test_title_only_duration_mismatch_returns_none(self, monkeypatch):
+        # A title-only hit with the wrong duration is likely a DIFFERENT SONG
+        # sharing the title — its lyrics must not be used even as plain text.
+        import lyrics_fetcher as lf
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            class R:
+                status_code = 404
+            if url.endswith("/get"):
+                return R()
+            r = R()
+            r.status_code = 200
+            if params and params.get("artist_name"):
+                r.json = lambda: []  # artist-scoped searches find nothing
+            else:
+                r.json = lambda: [{
+                    "duration": 147.0,  # vs audio 182s
+                    "syncedLyrics": "[00:01.00] wrong song words",
+                    "plainLyrics": "wrong song words",
+                }]
+            return r
+
+        monkeypatch.setattr(lf.requests, "get", fake_get)
+        assert lf._fetch_lrclib("Dookie Bros", "S.M.D.", duration=181.7) is None
+
+    def test_artist_scoped_mismatch_still_kept_as_plain(self, monkeypatch):
+        # Artist matched -> mismatch is plausibly the same song, different edit.
+        import lyrics_fetcher as lf
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            class R:
+                status_code = 404
+            if url.endswith("/get"):
+                return R()
+            r = R()
+            r.status_code = 200
+            if params and params.get("artist_name"):
+                r.json = lambda: [{
+                    "duration": 147.0,
+                    "syncedLyrics": "[00:01.00] same song other edit",
+                    "plainLyrics": "same song other edit",
+                }]
+            else:
+                r.json = lambda: []
+            return r
+
+        monkeypatch.setattr(lf.requests, "get", fake_get)
+        result = lf._fetch_lrclib("Ken Carson", "The Acronym", duration=182.9)
+        assert result["duration_mismatch"] is True
+        assert result["plain_lyrics"] == "same song other edit"
+        assert result["synced_lyrics"] is None

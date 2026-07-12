@@ -300,14 +300,19 @@ def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dic
     # doesn't match the audio is a different version/edit of the song — its
     # synced timestamps would misplace every downstream mute (observed: a
     # 183s DJ edit matched against 147s official-single lyrics).
-    attempts = [("search", {"track_name": clean_title, "artist_name": artist})]
+    # A duration-mismatched hit is only trustworthy as "same song, different
+    # edit" when the ARTIST matched. A title-only hit with the wrong duration
+    # is more likely a different song sharing the title (measured: a punk
+    # song's lyrics fetched for a rap track both called 'S.M.D.') — using its
+    # text pollutes the karaoke and the profanity vocab.
+    attempts = [("search", {"track_name": clean_title, "artist_name": artist}, True)]
     first_artist = _extract_first_artist(artist)
     if first_artist and first_artist != artist:
-        attempts.append(("first-artist", {"track_name": clean_title, "artist_name": first_artist}))
-    attempts.append(("title-only", {"track_name": clean_title}))
+        attempts.append(("first-artist", {"track_name": clean_title, "artist_name": first_artist}, True))
+    attempts.append(("title-only", {"track_name": clean_title}, False))
 
     mismatch = None  # first duration-mismatched entry, kept as plain-only fallback
-    for label, params in attempts:
+    for label, params, allow_mismatch in attempts:
         entry, duration_matched = _select_lrclib_result(
             _lrclib_search(params, headers), duration
         )
@@ -317,7 +322,7 @@ def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dic
                 "plain_lyrics": entry.get("plainLyrics"),
                 "synced_lyrics": entry.get("syncedLyrics"),
             }
-        if entry and mismatch is None:
+        if entry and allow_mismatch and mismatch is None:
             mismatch = (label, entry)
 
     if mismatch:

@@ -495,43 +495,136 @@ def fill_gaps_with_lyrics(
     return result
 
 
-def _find_lyrics_alignment_start(
+def _align_lyrics_to_transcript(
     transcribed_words: List[Dict],
     lyrics_tokens: List[str],
-    window_size: int = 5,
-) -> Optional[int]:
+    min_sim: float = 0.6,
+    min_pairs: int = 8,
+) -> List[tuple]:
+    """Globally align lyric tokens to transcribed words. Returns monotonic
+    ``(lyrics_idx, trans_idx)`` pairs, ascending in both.
+
+    Weighted-LCS dynamic program over the FULL transcript x lyrics: every
+    matched pair earns ``sim - 0.55`` (only pairs with sim >= ``min_sim``
+    qualify), insertions/deletions are free, and the maximum-profit monotonic
+    matching wins. This replaces the old anchor+forward-greedy scheme, which
+    probed the transcript's first words for a single start anchor — and died
+    (or mis-anchored) whenever a track opens with DJ-edit intro chatter or the
+    very ad-lib chorus Whisper mishears; everything before the anchor was
+    unrecoverable. Global alignment has no anchor to get wrong: unmatched
+    transcript prefixes (edit intros), unmatched lyric blocks (misheard
+    choruses/ad-libs), and repeated chorus lines all land where the overall
+    alignment says they belong.
+
+    Quality gate: the lyrics must actually BE this song. A title-collision
+    fetch (measured: punk song lyrics matched against a rap track sharing the
+    title 'S.M.D.') still aligns 60+ coincidental function words ('the', 'I',
+    'you') — enough pairs to look plausible, but injecting from it pollutes
+    the karaoke with a different song's words. Content-word agreement
+    separates cleanly: strong pairs (len>=4, sim>=0.75) covered 64% of content
+    tokens for correct lyrics vs 14% for the wrong song. Below
+    ``min_content_frac`` the alignment is rejected outright.
     """
-    Find the position in lyrics where the transcription begins.
+    T, L = len(transcribed_words), len(lyrics_tokens)
+    if not T or not L:
+        return []
+    min_content_frac = 0.25
 
-    Slides a window of transcribed words across the lyrics tokens,
-    computing average word similarity at each position. Returns the
-    lyrics index with the best match, or None if no good alignment found.
-    """
-    if not transcribed_words or not lyrics_tokens:
-        return None
+    # Similarity is memoized per word-pair: song vocabulary repeats heavily, so
+    # unique pairs are a small fraction of the T*L grid.
+    words = [tw["word"] for tw in transcribed_words]
+    sim_cache: dict = {}
 
-    actual_window = min(window_size, len(transcribed_words))
-    trans_window = [tw["word"] for tw in transcribed_words[:actual_window]]
+    def sim(t_idx: int, l_idx: int) -> float:
+        key = (words[t_idx].lower(), lyrics_tokens[l_idx].lower())
+        s = sim_cache.get(key)
+        if s is None:
+            s = _compute_word_similarity(words[t_idx], lyrics_tokens[l_idx])
+            sim_cache[key] = s
+        return s
 
-    if len(lyrics_tokens) < actual_window:
-        return 0
+    # DP over (lyrics x transcript). dp rows are reused; directions kept for
+    # backtracking: 0 = skip lyric (up), 1 = skip transcript (left), 2 = pair.
+    prev = [0.0] * (T + 1)
+    cur = [0.0] * (T + 1)
+    dirs = [bytearray(T + 1) for _ in range(L + 1)]
+    for i in range(1, L + 1):
+        row_dirs = dirs[i]
+        for j in range(1, T + 1):
+            best = prev[j]          # skip this lyric token
+            d = 0
+            if cur[j - 1] > best:   # skip this transcript word
+                best = cur[j - 1]
+                d = 1
+            s = sim(j - 1, i - 1)
+            if s >= min_sim:
+                paired = prev[j - 1] + (s - 0.55)
+                if paired > best:
+                    best = paired
+                    d = 2
+            cur[j] = best
+            row_dirs[j] = d
+        prev, cur = cur, prev
 
-    best_pos = None
-    best_score = 0.0
+    # Backtrack
+    pairs: List[tuple] = []
+    i, j = L, T
+    while i > 0 and j > 0:
+        d = dirs[i][j]
+        if d == 2:
+            pairs.append((i - 1, j - 1))
+            i -= 1
+            j -= 1
+        elif d == 1:
+            j -= 1
+        else:
+            i -= 1
+    pairs.reverse()
 
-    for pos in range(len(lyrics_tokens) - actual_window + 1):
-        lyrics_window = lyrics_tokens[pos : pos + actual_window]
-        total_sim = sum(
-            _compute_word_similarity(tw, lw)
-            for tw, lw in zip(trans_window, lyrics_window)
+    # Scale the pair floor down for tiny inputs (unit fixtures, short hooks).
+    floor = min(min_pairs, max(1, min(L, T) // 2))
+    if len(pairs) < floor:
+        return []
+
+    # Content-word agreement gate (only meaningful with enough content tokens).
+    content = [i for i, t in enumerate(lyrics_tokens) if len(t) >= 4]
+    if len(content) >= 20:
+        strong = sum(
+            1 for li, ti in pairs
+            if len(lyrics_tokens[li]) >= 4 and sim(ti, li) >= 0.75
         )
-        avg_sim = total_sim / actual_window
+        frac = strong / len(content)
+        if frac < min_content_frac:
+            print(
+                f"[LyricsCorrector] Lyrics rejected: only {strong}/{len(content)} "
+                f"content words align ({frac:.0%} < {min_content_frac:.0%}) — "
+                f"likely a different song with the same title",
+                file=sys.stderr,
+            )
+            return []
+    return pairs
 
-        if avg_sim > best_score:
-            best_score = avg_sim
-            best_pos = pos
 
-    return best_pos if best_score >= 0.4 else None
+def _tokenize_plain_lyrics(lyrics_text: str) -> List[str]:
+    toks: List[str] = []
+    for line in lyrics_text.strip().split("\n"):
+        for word in line.split():
+            clean = re.sub(r"^[^\w'*@$]+|[^\w'*@$]+$", "", word)
+            if clean:
+                toks.append(clean)
+    return toks
+
+
+def lyrics_match_transcript(transcribed_words: List[Dict], lyrics_text: str) -> bool:
+    """True when the plain lyrics plausibly belong to this recording (see the
+    quality gate in _align_lyrics_to_transcript). Used to disable
+    lyrics-derived flagging (e.g. the vocab channel) when a title-collision
+    fetch returned a different song's lyrics."""
+    if not lyrics_text or not transcribed_words:
+        return False
+    return bool(
+        _align_lyrics_to_transcript(transcribed_words, _tokenize_plain_lyrics(lyrics_text))
+    )
 
 
 def fill_gaps_with_plain_lyrics(
@@ -570,37 +663,13 @@ def fill_gaps_with_plain_lyrics(
     if not lyrics_tokens:
         return transcribed_words
 
-    # Step 1: Find where transcription starts in the lyrics
-    alignment_start = _find_lyrics_alignment_start(transcribed_words, lyrics_tokens)
-    if alignment_start is None:
-        print(
-            f"[LyricsCorrector] Plain gap-fill: no alignment start found "
-            f"(lyrics_tokens={len(lyrics_tokens)}, trans={len(transcribed_words)})",
-            file=sys.stderr,
-        )
-        return transcribed_words
-
-    # Step 2: Greedy forward alignment from the start position
-    alignment = []  # (lyrics_idx, trans_idx) pairs
-    lyrics_ptr = alignment_start
-
-    for t_idx, tw in enumerate(transcribed_words):
-        best_idx = None
-        best_sim = 0.0
-        # Look ahead up to 20 lyrics words for a match
-        for l_idx in range(lyrics_ptr, min(lyrics_ptr + 20, len(lyrics_tokens))):
-            sim = _compute_word_similarity(tw["word"], lyrics_tokens[l_idx])
-            if sim > best_sim and sim >= 0.6:
-                best_sim = sim
-                best_idx = l_idx
-
-        if best_idx is not None:
-            alignment.append((best_idx, t_idx))
-            lyrics_ptr = best_idx + 1
-
+    # Steps 1+2: global lyrics<->transcript alignment (whole song at once — no
+    # start anchor to get wrong on DJ-edit intros or misheard opening choruses).
+    alignment = _align_lyrics_to_transcript(transcribed_words, lyrics_tokens)
     if not alignment:
         print(
-            f"[LyricsCorrector] Plain gap-fill: alignment empty (start={alignment_start})",
+            f"[LyricsCorrector] Plain gap-fill: no usable alignment "
+            f"(lyrics_tokens={len(lyrics_tokens)}, trans={len(transcribed_words)})",
             file=sys.stderr,
         )
         return transcribed_words
@@ -680,7 +749,7 @@ def fill_gaps_with_plain_lyrics(
 
     print(
         f"[LyricsCorrector] Plain-lyrics gap-filled {len(new_words)} words "
-        f"(aligned at lyrics position {alignment_start})"
+        f"({len(alignment)} aligned pairs over {len(lyrics_tokens)} lyric tokens)"
     )
 
     result = list(transcribed_words) + new_words
@@ -859,21 +928,8 @@ def find_plain_lyrics_profanity(
     if not prof_tokens:
         return []
 
-    # Greedy forward alignment lyrics -> transcript (mirrors fill_gaps_with_plain_lyrics).
-    start = _find_lyrics_alignment_start(transcribed_words, lyrics_tokens)
-    if start is None:
-        return []
-    alignment: List[tuple] = []  # (lyrics_idx, trans_idx)
-    ptr = start
-    for t_idx, tw in enumerate(transcribed_words):
-        best_idx, best_sim = None, 0.0
-        for l_idx in range(ptr, min(ptr + 20, len(lyrics_tokens))):
-            sim = _compute_word_similarity(tw["word"], lyrics_tokens[l_idx])
-            if sim > best_sim and sim >= 0.6:
-                best_sim, best_idx = sim, l_idx
-        if best_idx is not None:
-            alignment.append((best_idx, t_idx))
-            ptr = best_idx + 1
+    # Global lyrics<->transcript alignment (same DP as fill_gaps_with_plain_lyrics).
+    alignment = _align_lyrics_to_transcript(transcribed_words, lyrics_tokens)
     if not alignment:
         return []
     matched = {a[0]: a[1] for a in alignment}

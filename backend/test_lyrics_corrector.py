@@ -571,3 +571,74 @@ class TestFindLyricsProfanity:
             {"word": "singing", "start": 11.0, "end": 11.3, "confidence": 0.9, "is_profanity": False},
         ])
         assert result == []
+
+
+class TestAlignLyricsToTranscript:
+    """Global lyrics<->transcript alignment (replaces the fragile single
+    start-anchor scheme)."""
+
+    def _words(self, texts, t0=10.0):
+        return [{"word": t, "start": t0 + i * 0.5, "end": t0 + i * 0.5 + 0.4,
+                 "confidence": 0.9, "is_profanity": False} for i, t in enumerate(texts)]
+
+    VERSE = ("walking down the street tonight with nothing left to lose "
+             "counting every heartbeat like a message in the news").split()
+
+    def test_survives_dj_intro_prefix(self):
+        # The killer case: transcript opens with edit-intro chatter that appears
+        # nowhere in the lyrics; the old anchor probe of the first 5 words died.
+        from lyrics_corrector import _align_lyrics_to_transcript
+        intro = "ayo this goes out to all my listeners alabazian alabazian".split()
+        words = self._words(intro + self.VERSE)
+        pairs = _align_lyrics_to_transcript(words, list(self.VERSE))
+        assert len(pairs) >= len(self.VERSE) - 2
+        # every pair maps the right transcript region (post-intro)
+        assert all(ti >= len(intro) for _, ti in pairs)
+
+    def test_unheard_lyric_block_is_skipped_not_fatal(self):
+        # Whisper misses the chorus entirely; the verses around it still align.
+        from lyrics_corrector import _align_lyrics_to_transcript
+        chorus = "suck my dick suck my dick suck my dick".split()
+        lyrics = list(self.VERSE) + chorus + list(self.VERSE)
+        words = self._words(list(self.VERSE) + list(self.VERSE))
+        pairs = _align_lyrics_to_transcript(words, lyrics)
+        matched_lyrics = {li for li, _ in pairs}
+        # chorus tokens unmatched, both verses covered
+        chorus_range = set(range(len(self.VERSE), len(self.VERSE) + len(chorus)))
+        assert not (matched_lyrics & chorus_range)
+        assert len(matched_lyrics) >= 1.5 * len(self.VERSE)
+
+    def test_monotonic(self):
+        from lyrics_corrector import _align_lyrics_to_transcript
+        words = self._words(list(self.VERSE) * 2)
+        pairs = _align_lyrics_to_transcript(words, list(self.VERSE) * 2)
+        for (l1, t1), (l2, t2) in zip(pairs, pairs[1:]):
+            assert l2 > l1 and t2 > t1
+
+    def test_wrong_song_rejected(self):
+        # Same-title different song: only coincidental function words align.
+        from lyrics_corrector import _align_lyrics_to_transcript
+        wrong = ("you don't like the clothes i wear i shave my head or grow my hair "
+                 "what makes you look over here what are you queer "
+                 "skins and bangers joining fight as one those who persecute "
+                 "battle til they have won tired of being pressured").split()
+        rap = ("and if you hate that i don't spit out money and all the stuff i get "
+               "and if you're angry that your girl wanna hunt me because she loves my music "
+               "and if what i'm saying offends you once i'm done this track "
+               "junkie and y'all done bumped my tape").split()
+        pairs = _align_lyrics_to_transcript(self._words(rap), wrong)
+        assert pairs == [], f"wrong-song lyrics aligned: {len(pairs)} pairs"
+
+
+class TestLyricsMatchTranscript:
+    def test_matching_lyrics_pass(self):
+        from lyrics_corrector import lyrics_match_transcript
+        verse = TestAlignLyricsToTranscript.VERSE
+        words = [{"word": t, "start": i * 0.5, "end": i * 0.5 + 0.4,
+                  "confidence": 0.9, "is_profanity": False} for i, t in enumerate(verse * 2)]
+        assert lyrics_match_transcript(words, " ".join(verse * 2)) is True
+
+    def test_empty_inputs_fail(self):
+        from lyrics_corrector import lyrics_match_transcript
+        assert lyrics_match_transcript([], "some lyrics here") is False
+        assert lyrics_match_transcript([{"word": "hi", "start": 0, "end": 1}], "") is False
