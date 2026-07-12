@@ -356,8 +356,13 @@ LYRICS_CACHE_TTL_S = 30 * 24 * 3600
 _LYRICS_CACHE_DIR = os.path.join(tempfile.gettempdir(), "cleanse-lyrics-cache")
 
 
-def _lyrics_cache_path(artist: str, title: str, duration: float | None) -> str:
-    key = f"{artist.lower().strip()}|{title.lower().strip()}|{int(duration) if duration else -1}"
+def _lyrics_cache_path(
+    artist: str | None, title: str | None, duration: float | None, filename: str | None = None
+) -> str:
+    key = (
+        f"{(artist or '').lower().strip()}|{(title or '').lower().strip()}"
+        f"|{int(duration) if duration else -1}|{(filename or '').lower().strip()}"
+    )
     return os.path.join(
         _LYRICS_CACHE_DIR, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json"
     )
@@ -384,21 +389,90 @@ def _lyrics_cache_put(path: str, result: dict) -> None:
         print(f"[Lyrics] Cache write failed: {e}", file=sys.stderr)
 
 
-def fetch_lyrics(artist: str | None, title: str | None, duration: float | None = None) -> dict | None:
-    """Fetch lyrics from Genius and LRCLIB in parallel, with a 30-day disk cache.
+# Junk that streaming-rip sites embed in tags/filenames. A domain token, a
+# quality marker, or an ®/™ mark is never part of a real artist or title.
+_JUNK_TOKEN_RE = re.compile(
+    r"""
+    \b\S+\.(?:com|net|org|io|cc|co|me|to|xyz)\b   # site domains (SoundLoadMate.com)
+    | [®™©]
+    | \bofficial\s+(?:music\s+)?(?:video|audio|visualizer)\b
+    | \blyrics?\s*(?:video)?\b
+    | \b(?:hd|hq|4k|320\s*kbps|128\s*kbps|mp3|flac)\b
+    | \bfree\s+download\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 
-    Returns {plain_lyrics, synced_lyrics, lyrics_source} or None.
-    Genius plain lyrics preferred over LRCLIB plain; LRCLIB synced always used.
+
+def _strip_junk(text: str) -> str:
+    """Remove rip-site pollution from a tag/filename fragment."""
+    cleaned = _JUNK_TOKEN_RE.sub(" ", text)
+    cleaned = cleaned.replace("_", " ")
+    # NOTE: '.' is deliberately not stripped — titles like "S.M.D." keep it.
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -–—|")
+    return cleaned.strip()
+
+
+def _split_segments(text: str) -> list[str]:
+    """Split 'A - B - C' style strings into cleaned, non-junk segments."""
+    segments = []
+    for seg in re.split(r"\s+[-–—]\s+", text):
+        seg = _strip_junk(seg)
+        if not seg:
+            continue
+        if re.fullmatch(r"\d{1,3}", seg):   # bare track numbers ("05")
+            continue
+        segments.append(seg)
+    return segments
+
+
+def _metadata_candidates(
+    artist: str | None, title: str | None, filename: str | None = None
+) -> list[tuple[str, str]]:
+    """Plausible (artist, title) interpretations of dirty metadata, best first.
+
+    Streaming-rip files routinely carry the ripping channel as the artist and
+    the real 'Artist - Title' crammed into the title field (measured:
+    artist='Glo Radio ®', title='Chief Keef - Whos Concerned'), or no tags at
+    all with everything in the filename. Search each interpretation — the
+    validation layers (Genius artist match, LRCLIB duration gates, and the
+    post-transcription content-quality gate) reject wrong guesses, so trying
+    more interpretations only adds recall.
     """
-    if not artist or not title:
-        return None
+    candidates: list[tuple[str, str]] = []
 
-    cache_path = _lyrics_cache_path(artist, title, duration)
-    cached = _lyrics_cache_get(cache_path)
-    if cached is not None:
-        print(f"[Lyrics] Cache hit for '{artist} - {title}'", file=sys.stderr)
-        return cached
+    def add(a: str | None, t: str | None) -> None:
+        a, t = _strip_junk(a or ""), _strip_junk(t or "")
+        if a and t and (a.lower(), t.lower()) not in [
+            (x.lower(), y.lower()) for x, y in candidates
+        ]:
+            candidates.append((a, t))
 
+    # 1. Tags as-is — correct for well-tagged libraries.
+    add(artist, title)
+
+    # 2. Real artist+title crammed into the title field.
+    if title and re.search(r"\s+[-–—]\s+", title):
+        segs = _split_segments(title)
+        if len(segs) >= 2:
+            add(segs[0], segs[1])
+
+    # 3. Filename-derived.
+    if filename:
+        base = os.path.splitext(os.path.basename(filename))[0]
+        segs = _split_segments(base)
+        if len(segs) >= 2:
+            add(segs[0], segs[1])
+
+    # 4. Swapped tag fields (least likely; validation-protected).
+    if artist and title and not re.search(r"\s+[-–—]\s+", f"{artist}{title}"):
+        add(title, artist)
+
+    return candidates[:4]
+
+
+def _fetch_lyrics_round(artist: str, title: str, duration: float | None) -> dict | None:
+    """One Genius+LRCLIB parallel fetch for a single (artist, title) guess."""
     genius_result = None
     lrclib_result = None
 
@@ -435,17 +509,58 @@ def fetch_lyrics(artist: str | None, title: str | None, duration: float | None =
         lyrics_source = "lrclib"
 
     if not plain_lyrics and not synced_lyrics:
-        print(f"[Lyrics] No lyrics found after all attempts for '{artist} - {title}'", file=sys.stderr)
         return None
 
-    result = {
+    return {
         "plain_lyrics": plain_lyrics,
         "synced_lyrics": synced_lyrics,
         "lyrics_source": lyrics_source,
         "duration_mismatch": bool(lrclib_result and lrclib_result.get("duration_mismatch")),
     }
-    _lyrics_cache_put(cache_path, result)
-    return result
+
+
+def fetch_lyrics(
+    artist: str | None,
+    title: str | None,
+    duration: float | None = None,
+    filename: str | None = None,
+) -> dict | None:
+    """Fetch lyrics from Genius and LRCLIB in parallel, with a 30-day disk cache.
+
+    Tries each plausible (artist, title) interpretation of the metadata (see
+    _metadata_candidates) until one yields lyrics — dirty rip-site tags no
+    longer kill the fetch. Returns {plain_lyrics, synced_lyrics, lyrics_source}
+    or None. Genius plain lyrics preferred over LRCLIB plain; LRCLIB synced
+    always used.
+    """
+    candidates = _metadata_candidates(artist, title, filename)
+    if not candidates:
+        return None
+
+    cache_path = _lyrics_cache_path(artist, title, duration, filename)
+    cached = _lyrics_cache_get(cache_path)
+    if cached is not None:
+        print(f"[Lyrics] Cache hit for '{artist} - {title}'", file=sys.stderr)
+        return cached
+
+    if len(candidates) > 1:
+        print(
+            f"[Lyrics] Trying {len(candidates)} metadata interpretations: "
+            + "; ".join(f"'{a} - {t}'" for a, t in candidates),
+            file=sys.stderr,
+        )
+
+    for cand_artist, cand_title in candidates:
+        result = _fetch_lyrics_round(cand_artist, cand_title, duration)
+        if result is not None:
+            _lyrics_cache_put(cache_path, result)
+            return result
+
+    print(
+        f"[Lyrics] No lyrics found after all attempts for '{artist} - {title}'",
+        file=sys.stderr,
+    )
+    return None
 
 
 def parse_synced_lyrics(synced_lyrics: str) -> list[dict]:

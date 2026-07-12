@@ -40,7 +40,7 @@ export interface ElectronAPI {
   selectOutputPath: (defaultName: string) => Promise<string | null>
   selectOutputDirectory: () => Promise<string | null>
   getAudioMetadata: (path: string) => Promise<AudioMetadata>
-  fetchLyrics: (artist: string, title: string, duration?: number) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null; lyrics_source?: string | null; duration_mismatch?: boolean }>
+  fetchLyrics: (artist: string | null, title: string | null, duration?: number, fileName?: string) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null; lyrics_source?: string | null; duration_mismatch?: boolean }>
   transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean) => Promise<TranscriptionResult>
   separateAudio: (path: string, turbo?: boolean) => Promise<SeparationResult>
   previewAudio: (args: {
@@ -102,7 +102,7 @@ export interface TranscribedWord {
   end: number
   confidence: number
   is_profanity: boolean
-  detection_source?: 'primary' | 'vocals' | 'adlib' | 'lyrics' | 'lyrics_gap' | 'lyrics_corrected' | 'manual' | 'custom'
+  detection_source?: 'primary' | 'vocals' | 'adlib' | 'adlib_rescan' | 'lyrics' | 'lyrics_gap' | 'lyrics_corrected' | 'manual' | 'custom'
 }
 
 export interface CensorWord {
@@ -142,8 +142,8 @@ const electronAPI: ElectronAPI = {
 
   getAudioMetadata: (path: string) => ipcRenderer.invoke('get-audio-metadata', path),
 
-  fetchLyrics: (artist: string, title: string, duration?: number) =>
-    ipcRenderer.invoke('fetch-lyrics', artist, title, duration),
+  fetchLyrics: (artist: string | null, title: string | null, duration?: number, fileName?: string) =>
+    ipcRenderer.invoke('fetch-lyrics', artist, title, duration, fileName),
 
   transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean) =>
     ipcRenderer.invoke('transcribe-file', path, turbo ?? false, vocalsPath, lyrics, syncedLyrics, dualPass ?? true),

@@ -304,9 +304,12 @@ async def device_info():
 
 
 class FetchLyricsRequest(BaseModel):
-    artist: str
-    title: str
+    artist: str | None = None
+    title: str | None = None
     duration: float | None = None
+    # Original file name — used to derive (artist, title) candidates when the
+    # tags are missing or rip-site polluted.
+    file_name: str | None = None
 
 
 @app.post("/metadata")
@@ -319,7 +322,7 @@ def metadata(req: MetadataRequest):
 
 @app.post("/fetch-lyrics")
 def fetch_lyrics_endpoint(req: FetchLyricsRequest):
-    result = fetch_lyrics(req.artist, req.title, req.duration)
+    result = fetch_lyrics(req.artist, req.title, req.duration, filename=req.file_name)
     if result is None:
         return {"plain_lyrics": None, "synced_lyrics": None, "lyrics_source": None}
     return result
