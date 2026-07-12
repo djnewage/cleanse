@@ -163,7 +163,8 @@ from vocal_separator import separate as separate_vocals
 from device_info import detect_device
 from lyrics_fetcher import extract_metadata, fetch_lyrics, parse_synced_lyrics
 from lyrics_corrector import (
-    correct_words_with_lyrics, fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics,
+    correct_words_with_lyrics, correct_words_with_plain_lyrics,
+    fill_gaps_with_lyrics, fill_gaps_with_plain_lyrics,
     extract_profanity_vocab, flag_with_profanity_vocab, find_lyrics_profanity,
     find_plain_lyrics_profanity, lyrics_match_transcript, normalize_word_timeline,
 )
@@ -459,7 +460,9 @@ def apply_lyrics_pipeline(
                 final_words, plain_from_synced, duration
             )
     elif not synced_lyrics and lyrics:
-        # Fallback: use plain lyrics (no timestamps) with sequence alignment
+        # Plain-only lyrics: fix misheard word text first (the synced corrector
+        # can't run without timestamps), then fill gaps by content alignment.
+        final_words = correct_words_with_plain_lyrics(final_words, lyrics)
         final_words = fill_gaps_with_plain_lyrics(
             final_words, lyrics, duration
         )
