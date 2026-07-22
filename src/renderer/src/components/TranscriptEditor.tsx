@@ -237,7 +237,7 @@ export default function TranscriptEditor({
       </p>
 
       <p className="text-xs text-warning-text bg-warning-bg border border-warning-border rounded px-3 py-2 mt-1">
-        <strong>Note:</strong> AI transcription may not be 100% accurate and can miss profanities.
+        <strong>Note:</strong> Automatic transcription may not be 100% accurate and can miss profanities.
         Please review the transcript carefully and use &quot;Add Censor&quot; to manually flag any missed words.
       </p>
 

@@ -145,7 +145,7 @@ def download_model_with_progress():
         pass  # Not cached, need to download
 
     print(f"[Transcribe] Downloading model: {repo_id}", file=sys.stderr)
-    _report_download_progress("downloading", 0, "Downloading AI model...")
+    _report_download_progress("downloading", 0, "Downloading audio engine...")
 
     # Use a custom tqdm class to report progress
     from tqdm import tqdm as _tqdm
@@ -158,7 +158,7 @@ def download_model_with_progress():
                 size_mb = round(self.total / 1024 / 1024)
                 _report_download_progress(
                     "downloading", pct,
-                    f"Downloading AI model ({size_mb} MB)..."
+                    f"Downloading audio engine ({size_mb} MB)..."
                 )
 
     huggingface_hub.snapshot_download(repo_id, tqdm_class=ProgressTqdm)
