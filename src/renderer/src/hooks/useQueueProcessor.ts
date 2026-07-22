@@ -81,6 +81,10 @@ export function useQueueProcessor({
         // Lyrics fetch is network I/O while separation is CPU/GPU — no conflict
         let plainLyrics: string | undefined
         let syncedLyrics: string | undefined
+        // Lyrics found via a guessed metadata interpretation (dirty tags /
+        // filename) must not bias Whisper's initial prompt — a wrong-song
+        // guess degrades the transcription itself.
+        let lyricsFromTags = true
 
         // Fetch even without clean tags: the backend derives (artist, title)
         // candidates from the file name when tags are missing or rip-site
@@ -95,6 +99,7 @@ export function useQueueProcessor({
               if (result.plain_lyrics || result.synced_lyrics) {
                 plainLyrics = result.plain_lyrics ?? undefined
                 syncedLyrics = result.synced_lyrics ?? undefined
+                lyricsFromTags = result.from_tag_metadata !== false
                 dispatch({
                   type: 'SET_SONG_LYRICS',
                   id: songId,
@@ -135,7 +140,8 @@ export function useQueueProcessor({
           separationResult.vocals_path,
           plainLyrics,
           syncedLyrics,
-          dualPassEnabled
+          dualPassEnabled,
+          lyricsFromTags
         )
 
         // Check if cancelled before applying results

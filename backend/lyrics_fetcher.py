@@ -265,9 +265,20 @@ def _select_lrclib_result(
     return with_lyrics[0], False
 
 
-def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dict | None:
+def _fetch_lrclib(
+    artist: str, title: str, duration: float | None = None,
+    allow_title_only: bool = True,
+) -> dict | None:
     """Fetch lyrics from LRCLIB with progressive fallback. Returns
-    {plain_lyrics, synced_lyrics[, duration_mismatch]} or None."""
+    {plain_lyrics, synced_lyrics[, duration_mismatch]} or None.
+
+    ``allow_title_only=False`` disables the title-only search step. Title-only
+    ignores the artist entirely, so it must not run for guessed metadata
+    interpretations: a swapped-tags guess turned the artist name into a
+    "title", and a title-only search returned a different song by the same
+    artist whose duration matched the audio by coincidence (measured: a 226s
+    mashup fetched 230s 'Hypnotize' synced lyrics, which then poisoned the
+    transcription prompt and word corrections)."""
     headers = {"User-Agent": USER_AGENT}
 
     # Clean title for search (strip version/edit suffixes)
@@ -309,7 +320,8 @@ def _fetch_lrclib(artist: str, title: str, duration: float | None = None) -> dic
     first_artist = _extract_first_artist(artist)
     if first_artist and first_artist != artist:
         attempts.append(("first-artist", {"track_name": clean_title, "artist_name": first_artist}, True))
-    attempts.append(("title-only", {"track_name": clean_title}, False))
+    if allow_title_only:
+        attempts.append(("title-only", {"track_name": clean_title}, False))
 
     mismatch = None  # first duration-mismatched entry, kept as plain-only fallback
     for label, params, allow_mismatch in attempts:
@@ -359,8 +371,10 @@ _LYRICS_CACHE_DIR = os.path.join(tempfile.gettempdir(), "cleanse-lyrics-cache")
 def _lyrics_cache_path(
     artist: str | None, title: str | None, duration: float | None, filename: str | None = None
 ) -> str:
+    # v2: invalidates entries cached before the title-only/fallback-candidate
+    # restriction — those can hold a coincidentally-duration-matched wrong song.
     key = (
-        f"{(artist or '').lower().strip()}|{(title or '').lower().strip()}"
+        f"v2|{(artist or '').lower().strip()}|{(title or '').lower().strip()}"
         f"|{int(duration) if duration else -1}|{(filename or '').lower().strip()}"
     )
     return os.path.join(
@@ -471,14 +485,19 @@ def _metadata_candidates(
     return candidates[:4]
 
 
-def _fetch_lyrics_round(artist: str, title: str, duration: float | None) -> dict | None:
+def _fetch_lyrics_round(
+    artist: str, title: str, duration: float | None,
+    allow_title_only: bool = True,
+) -> dict | None:
     """One Genius+LRCLIB parallel fetch for a single (artist, title) guess."""
     genius_result = None
     lrclib_result = None
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         genius_future = executor.submit(fetch_genius_lyrics, artist, title)
-        lrclib_future = executor.submit(_fetch_lrclib, artist, title, duration)
+        lrclib_future = executor.submit(
+            _fetch_lrclib, artist, title, duration, allow_title_only
+        )
 
         try:
             genius_result = genius_future.result(timeout=20)
@@ -550,9 +569,18 @@ def fetch_lyrics(
             file=sys.stderr,
         )
 
-    for cand_artist, cand_title in candidates:
-        result = _fetch_lyrics_round(cand_artist, cand_title, duration)
+    for idx, (cand_artist, cand_title) in enumerate(candidates):
+        # Title-only search only for the tags-as-is interpretation; guessed
+        # interpretations must corroborate the artist (see _fetch_lrclib).
+        result = _fetch_lyrics_round(
+            cand_artist, cand_title, duration, allow_title_only=(idx == 0)
+        )
         if result is not None:
+            # Lyrics from a guessed interpretation are validated downstream
+            # (content-word gate) but must not bias the transcription itself:
+            # the caller only uses them as Whisper's initial_prompt when this
+            # flag is True.
+            result["from_tag_metadata"] = idx == 0
             _lyrics_cache_put(cache_path, result)
             return result
 

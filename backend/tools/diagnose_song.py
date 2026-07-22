@@ -75,17 +75,27 @@ def main() -> None:
     print(f"metadata: {meta}")
 
     synced = plain = None
-    if not args.no_lyrics and meta.get("artist") and meta.get("title"):
-        lyr = fetch_lyrics(meta["artist"], meta["title"], meta["duration"]) or {}
+    from_tags = True
+    if not args.no_lyrics:
+        lyr = fetch_lyrics(
+            meta.get("artist"), meta.get("title"), meta.get("duration"),
+            filename=os.path.basename(args.audio_file),
+        ) or {}
         synced = lyr.get("synced_lyrics")
         plain = lyr.get("plain_lyrics")
+        from_tags = lyr.get("from_tag_metadata", True)
         print(
             f"lyrics: source={lyr.get('lyrics_source')} "
             f"synced={'yes' if synced else 'no'} plain={'yes' if plain else 'no'} "
-            f"duration_mismatch={lyr.get('duration_mismatch', False)}"
+            f"duration_mismatch={lyr.get('duration_mismatch', False)} "
+            f"from_tag_metadata={from_tags}"
         )
 
-    result = transcribe_audio(args.audio_file, turbo=not args.no_turbo, initial_prompt=plain)
+    # Mirrors the app: guessed-metadata lyrics never bias the transcription.
+    result = transcribe_audio(
+        args.audio_file, turbo=not args.no_turbo,
+        initial_prompt=plain if from_tags else None,
+    )
     duration, lang = result["duration"], result["language"]
     print(f"transcribed: {len(result['words'])} words, duration={duration:.1f}s, lang={lang}")
 

@@ -40,8 +40,8 @@ export interface ElectronAPI {
   selectOutputPath: (defaultName: string) => Promise<string | null>
   selectOutputDirectory: () => Promise<string | null>
   getAudioMetadata: (path: string) => Promise<AudioMetadata>
-  fetchLyrics: (artist: string | null, title: string | null, duration?: number, fileName?: string) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null; lyrics_source?: string | null; duration_mismatch?: boolean }>
-  transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean) => Promise<TranscriptionResult>
+  fetchLyrics: (artist: string | null, title: string | null, duration?: number, fileName?: string) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null; lyrics_source?: string | null; duration_mismatch?: boolean; from_tag_metadata?: boolean }>
+  transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean, lyricsFromTags?: boolean) => Promise<TranscriptionResult>
   separateAudio: (path: string, turbo?: boolean) => Promise<SeparationResult>
   previewAudio: (args: {
     filePath: string
@@ -145,8 +145,8 @@ const electronAPI: ElectronAPI = {
   fetchLyrics: (artist: string | null, title: string | null, duration?: number, fileName?: string) =>
     ipcRenderer.invoke('fetch-lyrics', artist, title, duration, fileName),
 
-  transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean) =>
-    ipcRenderer.invoke('transcribe-file', path, turbo ?? false, vocalsPath, lyrics, syncedLyrics, dualPass ?? true),
+  transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean, lyricsFromTags?: boolean) =>
+    ipcRenderer.invoke('transcribe-file', path, turbo ?? false, vocalsPath, lyrics, syncedLyrics, dualPass ?? true, lyricsFromTags ?? true),
 
   separateAudio: (path: string, turbo?: boolean) =>
     ipcRenderer.invoke('separate-audio', path, turbo ?? false),

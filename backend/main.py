@@ -257,6 +257,11 @@ class TranscribeRequest(BaseModel):
     vocals_path: str | None = None
     lyrics: str | None = None
     synced_lyrics: str | None = None
+    # False when the lyrics came from a guessed metadata interpretation
+    # (fetch_lyrics from_tag_metadata) — such lyrics may be a different song,
+    # so they are excluded from Whisper's initial_prompt: a wrong prompt
+    # degrades the transcription itself, which no downstream gate can undo.
+    lyrics_from_tags: bool = True
 
 
 class CensorWord(BaseModel):
@@ -403,6 +408,25 @@ def apply_lyrics_pipeline(
     """Post-transcription lyrics pipeline: correction, gap-fill, lyrics-based
     profanity discovery, and vocab flagging. Module-level so it can be run
     headless (tests, diagnostics) without the HTTP endpoint."""
+    # Wrong-song guard, BEFORE any correction touches the words: synced lyrics
+    # were previously trusted on duration alone, but duration coincidences
+    # happen (measured: a 226s Biggie mashup fetched 230s 'Hypnotize' via a
+    # swapped-tags title-only search, and its "corrections" rewrote real words
+    # — including un-flagging profanity). The content-word gate separates a
+    # right-song/shaky-timing fetch (which still aligns by content) from a
+    # different song (which doesn't).
+    if synced_lyrics:
+        synced_text = "\n".join(
+            line["text"] for line in parse_synced_lyrics(synced_lyrics)
+        )
+        if not lyrics_match_transcript(final_words, synced_text):
+            print(
+                "[Pipeline] Synced lyrics rejected: content doesn't match this "
+                "recording — ignoring them entirely",
+                file=sys.stderr,
+            )
+            synced_lyrics = None
+
     # Correct misheard words using synced lyrics (fuzzy matching)
     alignment_score = 0.0
     if synced_lyrics:
@@ -509,7 +533,8 @@ def apply_lyrics_pipeline(
     lyrics_for_vocab = lyrics or synced_lyrics
     if lyrics_for_vocab:
         # Plain-only lyrics may be a same-title different song (title-collision
-        # fetch); the synced path is already duration- and corroboration-gated.
+        # fetch); the synced path already passed the content-word gate at the
+        # top of this pipeline.
         vocab_ok = True
         if lyrics and not synced_lyrics:
             vocab_ok = lyrics_match_transcript(final_words, lyrics)
@@ -566,14 +591,22 @@ async def transcribe(req: TranscribeRequest):
         return words
 
     def _do_transcribe():
+        prompt_lyrics = req.lyrics if req.lyrics_from_tags else None
+        if req.lyrics and not req.lyrics_from_tags:
+            print(
+                "[Transcribe] Lyrics came from guessed metadata — not using as "
+                "initial_prompt (they still feed the post-transcription pipeline)",
+                file=sys.stderr,
+            )
+
         # Pass 1: Transcribe the full mix
         if dual_pass:
             result = transcribe_audio(
-                req.path, turbo=req.turbo, initial_prompt=req.lyrics,
+                req.path, turbo=req.turbo, initial_prompt=prompt_lyrics,
                 progress_offset=0, progress_scale=45,
             )
         else:
-            result = transcribe_audio(req.path, turbo=req.turbo, initial_prompt=req.lyrics)
+            result = transcribe_audio(req.path, turbo=req.turbo, initial_prompt=prompt_lyrics)
 
         detected_language = result["language"]
         primary_words = flag_profanity(result["words"], language=detected_language)
@@ -585,7 +618,7 @@ async def transcribe(req: TranscribeRequest):
                 req.vocals_path,
                 turbo=req.turbo,
                 language=detected_language,
-                initial_prompt=req.lyrics,
+                initial_prompt=prompt_lyrics,
                 progress_offset=50,
                 progress_scale=45,
                 sensitive_mode=True,
