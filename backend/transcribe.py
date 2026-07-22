@@ -145,7 +145,7 @@ def download_model_with_progress():
         pass  # Not cached, need to download
 
     print(f"[Transcribe] Downloading model: {repo_id}", file=sys.stderr)
-    _report_download_progress("downloading", 0, "Downloading AI model...")
+    _report_download_progress("downloading", 0, "Downloading audio engine...")
 
     # Use a custom tqdm class to report progress
     from tqdm import tqdm as _tqdm
@@ -158,7 +158,7 @@ def download_model_with_progress():
                 size_mb = round(self.total / 1024 / 1024)
                 _report_download_progress(
                     "downloading", pct,
-                    f"Downloading AI model ({size_mb} MB)..."
+                    f"Downloading audio engine ({size_mb} MB)..."
                 )
 
     huggingface_hub.snapshot_download(repo_id, tqdm_class=ProgressTqdm)
@@ -389,7 +389,16 @@ def transcribe_audio(
         print(f"[Transcribe] Collapsed repetition hallucination: {pre_collapse} -> {len(words)} words", file=sys.stderr)
 
     print(f"[Transcribe] Transcription done in {_time.monotonic() - t2:.1f}s - {len(words)} words", file=sys.stderr)
-    _report_progress("complete", round(progress_offset + progress_scale, 1), "Transcription complete!")
+    if progress_scale >= 100:
+        _report_progress("complete", 100.0, "Transcription complete!")
+    else:
+        # Partial-range pass (dual-pass leg or capped single pass): the
+        # endpoint still has rescan/echo/lyrics stages to run — it owns the
+        # "complete" message.
+        _report_progress(
+            "transcribing", round(progress_offset + progress_scale, 1),
+            "Transcribing audio...",
+        )
 
     return {
         "words": words,
@@ -406,11 +415,84 @@ _RESCAN_CLOSE_GAP_S = 0.5       # merge energy islands across quiet gaps this sh
 _RESCAN_PAD_S = 0.4             # context around each region
 _RESCAN_MAX_REGIONS = 24        # cost cap per song
 _RESCAN_MIN_CONF = 0.3          # drop low-confidence slice words (hallucination guard)
+_RESCAN_MIN_CONF_PROFANE = 0.15  # profanity floor; dual-pass vocals filter precedent
 _RESCAN_ENERGY_RATIO = 0.3      # region RMS vs typical active-vocal RMS
 _RESCAN_MAX_REGION_S = 8.0      # cap slice length: long slices reintroduce the
                                 # dominant-voice attention problem
-_RESCAN_MAX_WORD_S = 2.0        # slice word timestamps occasionally blow out to
-                                # the whole slice; no sung word lasts this long
+MAX_SUNG_WORD_S = 2.0           # word timestamps occasionally blow out across
+                                # audio Whisper didn't transcribe (whole rescan
+                                # slices, background ad-lib sections); no sung
+                                # word lasts this long
+
+
+def clamp_stretched_words(
+    words: list[dict], max_word_s: float = MAX_SUNG_WORD_S
+) -> list[dict]:
+    """Cap absurd word durations from Whisper timestamp blowout (a word's end
+    stretched across audio it didn't transcribe, e.g. background ad-libs —
+    measured: 'and' spanning 5.3s over a repeated ad-lib chorus). Frees the
+    tail so find_unattributed_vocal_regions can see the energy under it, and
+    stops the karaoke highlight stalling on one word for seconds.
+
+    Profanity-flagged words are exempt: the mute extends to the word's end,
+    and shrinking a mute is the one thing this pipeline must never do.
+
+    Returns a new list; input dicts are not mutated.
+    """
+    clamped: list[dict] = []
+    examples: list[str] = []
+    for w in words:
+        if w["end"] - w["start"] > max_word_s and not w.get("is_profanity"):
+            new_w = {**w, "end": round(w["start"] + max_word_s, 3)}
+            if len(examples) < 5:
+                examples.append(
+                    f"'{w['word']}' {w['start']:.2f}-{w['end']:.2f} -> {new_w['end']:.2f}"
+                )
+            clamped.append(new_w)
+        else:
+            clamped.append(w)
+    if examples:
+        n = sum(1 for a, b in zip(words, clamped) if a is not b)
+        print(
+            f"[Transcribe] Clamped {n} stretched word(s): {', '.join(examples)}",
+            file=sys.stderr,
+        )
+    return clamped
+
+
+def compute_vocal_rms_envelope(
+    words: list[dict],
+    vocals_audio: np.ndarray,
+    sample_rate: int = 16000,
+) -> tuple[np.ndarray, np.ndarray, float] | None:
+    """Per-frame RMS envelope of the vocals stem at ``_RESCAN_FRAME_S`` hop.
+
+    Returns ``(rms, covered, threshold)`` where ``covered`` marks frames
+    inside transcribed words (±0.15s) and ``threshold`` is the
+    active-vocal level (``_RESCAN_ENERGY_RATIO`` × median covered RMS), or
+    None when the audio is empty or no covered frames carry energy.
+    """
+    n = len(vocals_audio)
+    if n == 0:
+        return None
+    hop = max(1, int(_RESCAN_FRAME_S * sample_rate))
+    n_frames = n // hop
+    if n_frames == 0:
+        return None
+    frames = vocals_audio[: n_frames * hop].reshape(n_frames, hop)
+    rms = np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1))
+
+    # "Active vocal" level = median RMS of frames inside transcribed words.
+    covered = np.zeros(n_frames, dtype=bool)
+    for w in words:
+        a = int(max(w["start"] - 0.15, 0) / _RESCAN_FRAME_S)
+        b = int((w["end"] + 0.15) / _RESCAN_FRAME_S) + 1
+        covered[a:min(b, n_frames)] = True
+    active = rms[covered & (rms > 1e-4)]
+    if not len(active):
+        return None
+    threshold = _RESCAN_ENERGY_RATIO * float(np.median(active))
+    return rms, covered, threshold
 
 
 def find_unattributed_vocal_regions(
@@ -423,26 +505,11 @@ def find_unattributed_vocal_regions(
     decodes one voice stream: background shouts between (or under) main-vocal
     phrases routinely never get emitted, in either transcription pass.
     """
-    n = len(vocals_audio)
-    if n == 0:
+    envelope = compute_vocal_rms_envelope(words, vocals_audio, sample_rate)
+    if envelope is None:
         return []
-    hop = max(1, int(_RESCAN_FRAME_S * sample_rate))
-    n_frames = n // hop
-    if n_frames == 0:
-        return []
-    frames = vocals_audio[: n_frames * hop].reshape(n_frames, hop)
-    rms = np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1))
-
-    # "Active vocal" level = median RMS of frames inside transcribed words.
-    covered = np.zeros(n_frames, dtype=bool)
-    for w in words:
-        a = int(max(w["start"] - 0.15, 0) / _RESCAN_FRAME_S)
-        b = int((w["end"] + 0.15) / _RESCAN_FRAME_S) + 1
-        covered[a:min(b, n_frames)] = True
-    active = rms[covered & (rms > 1e-4)]
-    if not len(active):
-        return []
-    threshold = _RESCAN_ENERGY_RATIO * float(np.median(active))
+    rms, covered, threshold = envelope
+    n_frames = len(rms)
 
     hot = (~covered) & (rms >= threshold)
     regions: list[tuple[float, float]] = []
@@ -466,11 +533,18 @@ def find_unattributed_vocal_regions(
             closed[-1] = (closed[-1][0], b)
         else:
             closed.append((a, b))
-    regions = [
-        (a, min(b, a + _RESCAN_MAX_REGION_S))
-        for a, b in closed
-        if b - a >= _RESCAN_MIN_REGION_S
-    ]
+    # Split over-long regions into equal chunks instead of truncating: a
+    # missed outro can be 30s+ of continuous vocals, and dropping everything
+    # past the first slice silently loses its profanity. Equal chunks keep
+    # every slice under the cap (long slices reintroduce the dominant-voice
+    # attention problem) without discarding the tail.
+    regions = []
+    for a, b in closed:
+        if b - a < _RESCAN_MIN_REGION_S:
+            continue
+        n = max(1, int(np.ceil((b - a) / _RESCAN_MAX_REGION_S)))
+        step = (b - a) / n
+        regions.extend((a + i * step, a + (i + 1) * step) for i in range(n))
     if len(regions) > _RESCAN_MAX_REGIONS:
         # keep the most energetic ones, restore chronological order
         def region_energy(r):
@@ -478,6 +552,22 @@ def find_unattributed_vocal_regions(
             return float(np.sum(rms[a:b]))
         regions = sorted(sorted(regions, key=region_energy, reverse=True)[:_RESCAN_MAX_REGIONS])
     return regions
+
+
+def _rescan_conf_floor(word_text: str, language: str | None = None) -> float:
+    """Confidence floor for a rescan-recovered slice word.
+
+    Profanity gets the dual-pass vocals floor (0.15, matching main.py's
+    secondary-pass filter) instead of 0.3: faint background ad-libs decode at
+    low confidence, the token already matched the tiered detector, and the
+    slice already had unattributed vocal energy + repetition-loop collapse —
+    a rare false hit mutes ~0.5s of untranscribable vocals, while a miss
+    leaves profanity audible.
+    """
+    from profanity_detector import scan_token
+    if scan_token(word_text, language) is not None:
+        return _RESCAN_MIN_CONF_PROFANE
+    return _RESCAN_MIN_CONF
 
 
 def rescan_vocal_gaps(
@@ -547,19 +637,19 @@ def rescan_vocal_gaps(
             for seg in segments
             for w in (seg.words or [])
             if any(c.isalnum() for c in w.word)
-            and (w.end - w.start) <= _RESCAN_MAX_WORD_S
+            and (w.end - w.start) <= MAX_SUNG_WORD_S
         ]
         # Tiny slices hallucinate repetition loops readily ('-OOF' x5 in 0.6s);
         # reuse the full-pass collapse with slice-appropriate thresholds.
         slice_words = collapse_repetition_loops(slice_words, min_cycles=3)
         for w in slice_words:
-            if w["confidence"] < _RESCAN_MIN_CONF:
+            if w["confidence"] < _rescan_conf_floor(w["word"], language):
                 continue
             # The pads make slices re-hear words the main pass already has
             # (the phrase edges). Keep an already-covered word only if it's a
             # new profanity — the merge/normalize layers reconcile those.
             mid = (w["start"] + w["end"]) / 2
-            if _covered(mid) and scan_token(w["word"]) is None:
+            if _covered(mid) and scan_token(w["word"], language) is None:
                 continue
             recovered.append(w)
 

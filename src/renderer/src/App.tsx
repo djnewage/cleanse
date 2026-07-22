@@ -658,7 +658,7 @@ function MainApp(): React.JSX.Element {
     if (modelStatus !== 'waiting') return
 
     setModelStatus('downloading')
-    setModelDownloadMessage('Checking AI model...')
+    setModelDownloadMessage('Checking audio engine...')
 
     const unsubProgress = window.electronAPI.onModelDownloadProgress((progress) => {
       setModelDownloadProgress(progress.progress)
@@ -1301,7 +1301,7 @@ function MainApp(): React.JSX.Element {
         {state.backendReady && modelStatus !== 'ready' && (
           <div className="bg-surface/50 border border-border-strong rounded-xl p-6 text-center">
             <p className="text-sm font-medium text-text-secondary mb-2">
-              {modelDownloadMessage || 'Preparing AI model...'}
+              {modelDownloadMessage || 'Preparing audio engine...'}
             </p>
             {modelStatus === 'downloading' && modelDownloadProgress > 0 && (
               <div className="w-full bg-muted rounded-full h-2 mb-2">

@@ -13,7 +13,8 @@ Usage:
 
 Notes:
   * Single-pass only (no demucs vocal separation) — dual-pass in the app can
-    add vocals-sourced detections this report won't show.
+    add vocals-sourced detections this report won't show. Pass --vocals with
+    an existing demucs stem to also run the app's ad-lib vocal-gap rescan.
   * Mute regions use the app's default padding (150ms before / 100ms after).
 """
 
@@ -57,6 +58,10 @@ def main() -> None:
     parser.add_argument("audio_file", help="Path to the audio file")
     parser.add_argument("--no-turbo", action="store_true", help="Full beam search (slower)")
     parser.add_argument("--no-lyrics", action="store_true", help="Skip lyrics fetching")
+    parser.add_argument(
+        "--vocals", metavar="PATH",
+        help="Vocals stem WAV (demucs output); enables the ad-lib vocal-gap rescan",
+    )
     parser.add_argument("--json", metavar="PATH", help="Also dump the final words JSON here")
     parser.add_argument("--pad-before", type=int, default=DEFAULT_PAD_BEFORE_MS)
     parser.add_argument("--pad-after", type=int, default=DEFAULT_PAD_AFTER_MS)
@@ -64,32 +69,63 @@ def main() -> None:
 
     if not os.path.isfile(args.audio_file):
         sys.exit(f"File not found: {args.audio_file}")
+    if args.vocals and not os.path.isfile(args.vocals):
+        sys.exit(f"Vocals stem not found: {args.vocals}")
 
     from lyrics_fetcher import extract_metadata, fetch_lyrics
     from profanity_detector import flag_profanity
-    from transcribe import transcribe_audio
+    from transcribe import clamp_stretched_words, rescan_vocal_gaps, transcribe_audio
     from audio_processor import _build_censor_regions
+    from hook_echo import infer_hook_echoes
     from main import apply_lyrics_pipeline
 
     meta = extract_metadata(args.audio_file)
     print(f"metadata: {meta}")
 
     synced = plain = None
-    if not args.no_lyrics and meta.get("artist") and meta.get("title"):
-        lyr = fetch_lyrics(meta["artist"], meta["title"], meta["duration"]) or {}
+    from_tags = True
+    if not args.no_lyrics:
+        lyr = fetch_lyrics(
+            meta.get("artist"), meta.get("title"), meta.get("duration"),
+            filename=os.path.basename(args.audio_file),
+        ) or {}
         synced = lyr.get("synced_lyrics")
         plain = lyr.get("plain_lyrics")
+        from_tags = lyr.get("from_tag_metadata", True)
         print(
             f"lyrics: source={lyr.get('lyrics_source')} "
             f"synced={'yes' if synced else 'no'} plain={'yes' if plain else 'no'} "
-            f"duration_mismatch={lyr.get('duration_mismatch', False)}"
+            f"duration_mismatch={lyr.get('duration_mismatch', False)} "
+            f"from_tag_metadata={from_tags}"
         )
 
-    result = transcribe_audio(args.audio_file, turbo=not args.no_turbo, initial_prompt=plain)
+    # Mirrors the app: guessed-metadata lyrics never bias the transcription.
+    result = transcribe_audio(
+        args.audio_file, turbo=not args.no_turbo,
+        initial_prompt=plain if from_tags else None,
+    )
     duration, lang = result["duration"], result["language"]
     print(f"transcribed: {len(result['words'])} words, duration={duration:.1f}s, lang={lang}")
 
     words = flag_profanity(result["words"], language=lang)
+
+    # Mirrors the app (main.py /transcribe): clamp timestamp blowouts, then
+    # rescan unattributed vocal energy when a stem is available.
+    words = clamp_stretched_words(words)
+    if args.vocals:
+        recovered = rescan_vocal_gaps(
+            words, args.vocals, language=lang, turbo=not args.no_turbo
+        )
+        if recovered:
+            recovered = flag_profanity(recovered, language=lang)
+            words = sorted(words + recovered, key=lambda w: w["start"])
+        print(f"rescan: {len(recovered)} recovered word(s)")
+
+    echoes = infer_hook_echoes(words, vocals_path=args.vocals, language=lang)
+    if echoes:
+        words = sorted(words + echoes, key=lambda w: w["start"])
+    print(f"hook-echo: {len(echoes)} injected word(s)")
+
     final = apply_lyrics_pipeline(words, duration, lang, plain, synced)
 
     if args.json:

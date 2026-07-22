@@ -156,7 +156,11 @@ from typing import Literal
 
 ExportFormat = Literal["mp3", "wav", "flac"]
 
-from transcribe import rescan_vocal_gaps, transcribe_audio, warmup_model
+from transcribe import (
+    _report_progress, clamp_stretched_words, rescan_vocal_gaps,
+    transcribe_audio, warmup_model,
+)
+from hook_echo import infer_hook_echoes
 from profanity_detector import flag_profanity
 from audio_processor import censor_audio, censor_audio_vocals_only
 from vocal_separator import separate as separate_vocals
@@ -257,6 +261,11 @@ class TranscribeRequest(BaseModel):
     vocals_path: str | None = None
     lyrics: str | None = None
     synced_lyrics: str | None = None
+    # False when the lyrics came from a guessed metadata interpretation
+    # (fetch_lyrics from_tag_metadata) — such lyrics may be a different song,
+    # so they are excluded from Whisper's initial_prompt: a wrong prompt
+    # degrades the transcription itself, which no downstream gate can undo.
+    lyrics_from_tags: bool = True
 
 
 class CensorWord(BaseModel):
@@ -403,6 +412,25 @@ def apply_lyrics_pipeline(
     """Post-transcription lyrics pipeline: correction, gap-fill, lyrics-based
     profanity discovery, and vocab flagging. Module-level so it can be run
     headless (tests, diagnostics) without the HTTP endpoint."""
+    # Wrong-song guard, BEFORE any correction touches the words: synced lyrics
+    # were previously trusted on duration alone, but duration coincidences
+    # happen (measured: a 226s Biggie mashup fetched 230s 'Hypnotize' via a
+    # swapped-tags title-only search, and its "corrections" rewrote real words
+    # — including un-flagging profanity). The content-word gate separates a
+    # right-song/shaky-timing fetch (which still aligns by content) from a
+    # different song (which doesn't).
+    if synced_lyrics:
+        synced_text = "\n".join(
+            line["text"] for line in parse_synced_lyrics(synced_lyrics)
+        )
+        if not lyrics_match_transcript(final_words, synced_text):
+            print(
+                "[Pipeline] Synced lyrics rejected: content doesn't match this "
+                "recording — ignoring them entirely",
+                file=sys.stderr,
+            )
+            synced_lyrics = None
+
     # Correct misheard words using synced lyrics (fuzzy matching)
     alignment_score = 0.0
     if synced_lyrics:
@@ -509,7 +537,8 @@ def apply_lyrics_pipeline(
     lyrics_for_vocab = lyrics or synced_lyrics
     if lyrics_for_vocab:
         # Plain-only lyrics may be a same-title different song (title-collision
-        # fetch); the synced path is already duration- and corroboration-gated.
+        # fetch); the synced path already passed the content-word gate at the
+        # top of this pipeline.
         vocab_ok = True
         if lyrics and not synced_lyrics:
             vocab_ok = lyrics_match_transcript(final_words, lyrics)
@@ -566,14 +595,27 @@ async def transcribe(req: TranscribeRequest):
         return words
 
     def _do_transcribe():
+        prompt_lyrics = req.lyrics if req.lyrics_from_tags else None
+        if req.lyrics and not req.lyrics_from_tags:
+            print(
+                "[Transcribe] Lyrics came from guessed metadata — not using as "
+                "initial_prompt (they still feed the post-transcription pipeline)",
+                file=sys.stderr,
+            )
+
         # Pass 1: Transcribe the full mix
         if dual_pass:
             result = transcribe_audio(
-                req.path, turbo=req.turbo, initial_prompt=req.lyrics,
+                req.path, turbo=req.turbo, initial_prompt=prompt_lyrics,
                 progress_offset=0, progress_scale=45,
             )
         else:
-            result = transcribe_audio(req.path, turbo=req.turbo, initial_prompt=req.lyrics)
+            # Cap at 95 like the dual-pass path: the rescan/echo/lyrics stages
+            # below own the last 5% and the "complete" message.
+            result = transcribe_audio(
+                req.path, turbo=req.turbo, initial_prompt=prompt_lyrics,
+                progress_offset=0, progress_scale=95,
+            )
 
         detected_language = result["language"]
         primary_words = flag_profanity(result["words"], language=detected_language)
@@ -585,7 +627,7 @@ async def transcribe(req: TranscribeRequest):
                 req.vocals_path,
                 turbo=req.turbo,
                 language=detected_language,
-                initial_prompt=req.lyrics,
+                initial_prompt=prompt_lyrics,
                 progress_offset=50,
                 progress_scale=45,
                 sensitive_mode=True,
@@ -610,11 +652,17 @@ async def transcribe(req: TranscribeRequest):
         else:
             final_words = primary_words
 
+        # Cap timestamp-blowout words BEFORE the rescan coverage map is built:
+        # a 5s stretched word blankets ad-lib energy and suppresses recovery
+        # (and stalls the karaoke highlight). Profanity is exempt inside.
+        final_words = clamp_stretched_words(final_words)
+
         # Vocal-gap rescan: transcribe unattributed-vocal-energy slices in
         # isolation to recover ad-libs both passes missed (Whisper attends to
         # the dominant voice and drops background shouts). Runs whenever a
         # vocals stem exists — separation happens even in single-pass mode.
         if req.vocals_path and os.path.isfile(req.vocals_path):
+            _report_progress("analyzing", 95.5, "Scanning for missed ad-libs...")
             recovered = rescan_vocal_gaps(
                 final_words, req.vocals_path,
                 language=detected_language, turbo=req.turbo,
@@ -624,10 +672,28 @@ async def transcribe(req: TranscribeRequest):
                 final_words = final_words + recovered
                 final_words.sort(key=lambda w: w["start"])
 
+        # Hook-echo completion: ad-libs sung CONCURRENTLY with the lead are
+        # invisible to every ASR pass (one voice per timespan) and leave no
+        # energy gap for the rescan. Infer them from the hook's own completed
+        # instances. Runs after the rescan so recovered words contribute
+        # instances / occupy slots, and before the lyrics pipeline so its
+        # injectors dedup against these and normalize resolves overlaps.
+        vocals_ok = req.vocals_path and os.path.isfile(req.vocals_path)
+        _report_progress("analyzing", 97.0, "Matching ad-lib echoes...")
+        echoes = infer_hook_echoes(
+            final_words,
+            vocals_path=req.vocals_path if vocals_ok else None,
+            language=detected_language,
+        )
+        if echoes:
+            final_words = sorted(final_words + echoes, key=lambda w: w["start"])
+
+        _report_progress("analyzing", 98.5, "Finalizing censor timeline...")
         final_words = apply_lyrics_pipeline(
             final_words, result["duration"], detected_language,
             req.lyrics, req.synced_lyrics,
         )
+        _report_progress("complete", 100.0, "Transcription complete!")
 
         return {
             "words": final_words,

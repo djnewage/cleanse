@@ -380,7 +380,7 @@ class TestFetchLyricsCandidateLoop:
         monkeypatch.setattr(lf, "_LYRICS_CACHE_DIR", str(tmp_path))
         calls = []
 
-        def fake_round(artist, title, duration):
+        def fake_round(artist, title, duration, allow_title_only=True):
             calls.append((artist, title))
             if artist == "Chief Keef":
                 return {"plain_lyrics": "real lyrics", "synced_lyrics": None,
@@ -401,7 +401,7 @@ class TestFetchLyricsCandidateLoop:
         monkeypatch.setattr(lf, "_LYRICS_CACHE_DIR", str(tmp_path))
         hits = {"n": 0}
 
-        def fake_round(artist, title, duration):
+        def fake_round(artist, title, duration, allow_title_only=True):
             hits["n"] += 1
             return {"plain_lyrics": "x", "synced_lyrics": None,
                     "lyrics_source": "genius", "duration_mismatch": False}
@@ -415,5 +415,5 @@ class TestFetchLyricsCandidateLoop:
     def test_all_candidates_fail_returns_none(self, monkeypatch, tmp_path):
         import lyrics_fetcher as lf
         monkeypatch.setattr(lf, "_LYRICS_CACHE_DIR", str(tmp_path))
-        monkeypatch.setattr(lf, "_fetch_lyrics_round", lambda *a: None)
+        monkeypatch.setattr(lf, "_fetch_lyrics_round", lambda *a, **k: None)
         assert lf.fetch_lyrics("A", "B", 100.0) is None
