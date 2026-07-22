@@ -157,7 +157,8 @@ from typing import Literal
 ExportFormat = Literal["mp3", "wav", "flac"]
 
 from transcribe import (
-    clamp_stretched_words, rescan_vocal_gaps, transcribe_audio, warmup_model,
+    _report_progress, clamp_stretched_words, rescan_vocal_gaps,
+    transcribe_audio, warmup_model,
 )
 from hook_echo import infer_hook_echoes
 from profanity_detector import flag_profanity
@@ -609,7 +610,12 @@ async def transcribe(req: TranscribeRequest):
                 progress_offset=0, progress_scale=45,
             )
         else:
-            result = transcribe_audio(req.path, turbo=req.turbo, initial_prompt=prompt_lyrics)
+            # Cap at 95 like the dual-pass path: the rescan/echo/lyrics stages
+            # below own the last 5% and the "complete" message.
+            result = transcribe_audio(
+                req.path, turbo=req.turbo, initial_prompt=prompt_lyrics,
+                progress_offset=0, progress_scale=95,
+            )
 
         detected_language = result["language"]
         primary_words = flag_profanity(result["words"], language=detected_language)
@@ -656,6 +662,7 @@ async def transcribe(req: TranscribeRequest):
         # the dominant voice and drops background shouts). Runs whenever a
         # vocals stem exists — separation happens even in single-pass mode.
         if req.vocals_path and os.path.isfile(req.vocals_path):
+            _report_progress("analyzing", 95.5, "Scanning for missed ad-libs...")
             recovered = rescan_vocal_gaps(
                 final_words, req.vocals_path,
                 language=detected_language, turbo=req.turbo,
@@ -672,6 +679,7 @@ async def transcribe(req: TranscribeRequest):
         # instances / occupy slots, and before the lyrics pipeline so its
         # injectors dedup against these and normalize resolves overlaps.
         vocals_ok = req.vocals_path and os.path.isfile(req.vocals_path)
+        _report_progress("analyzing", 97.0, "Matching ad-lib echoes...")
         echoes = infer_hook_echoes(
             final_words,
             vocals_path=req.vocals_path if vocals_ok else None,
@@ -680,10 +688,12 @@ async def transcribe(req: TranscribeRequest):
         if echoes:
             final_words = sorted(final_words + echoes, key=lambda w: w["start"])
 
+        _report_progress("analyzing", 98.5, "Finalizing censor timeline...")
         final_words = apply_lyrics_pipeline(
             final_words, result["duration"], detected_language,
             req.lyrics, req.synced_lyrics,
         )
+        _report_progress("complete", 100.0, "Transcription complete!")
 
         return {
             "words": final_words,

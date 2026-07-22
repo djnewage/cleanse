@@ -389,7 +389,16 @@ def transcribe_audio(
         print(f"[Transcribe] Collapsed repetition hallucination: {pre_collapse} -> {len(words)} words", file=sys.stderr)
 
     print(f"[Transcribe] Transcription done in {_time.monotonic() - t2:.1f}s - {len(words)} words", file=sys.stderr)
-    _report_progress("complete", round(progress_offset + progress_scale, 1), "Transcription complete!")
+    if progress_scale >= 100:
+        _report_progress("complete", 100.0, "Transcription complete!")
+    else:
+        # Partial-range pass (dual-pass leg or capped single pass): the
+        # endpoint still has rescan/echo/lyrics stages to run — it owns the
+        # "complete" message.
+        _report_progress(
+            "transcribing", round(progress_offset + progress_scale, 1),
+            "Transcribing audio...",
+        )
 
     return {
         "words": words,
