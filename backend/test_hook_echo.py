@@ -8,7 +8,7 @@ import numpy as np
 
 from hook_echo import (
     ECHO_CONF, ENERGY_FRAC_MIN, MAX_INJECTIONS, _slot_has_vocal_energy,
-    infer_hook_echoes,
+    find_acoustic_echoes, infer_hook_echoes,
 )
 
 HOOK = ["just", "me", "and", "my", "bitch"]
@@ -215,6 +215,68 @@ class TestSlotEnergy:
 
     def test_empty_slot_fails(self):
         assert _slot_has_vocal_energy(np.array([1.0]), 0.5, 5.0, 5.5, 0.05) is False
+
+
+class TestAcousticEchoes:
+    SR = 16000
+
+    def _burst(self, dur=0.4):
+        """A distinctive chirp burst — the 'ad-lib sample'."""
+        t = np.arange(int(dur * self.SR)) / self.SR
+        return (0.4 * np.sin(2 * np.pi * (400 + 1500 * t / dur) * t)).astype(np.float32)
+
+    def _song(self, seconds, burst_times, noise=0.01, seed=7):
+        rng = np.random.default_rng(seed)
+        x = (noise * rng.standard_normal(int(seconds * self.SR))).astype(np.float32)
+        b = self._burst()
+        for t in burst_times:
+            a = int(t * self.SR)
+            x[a:a + len(b)] += b
+        return x
+
+    def _flagged(self, times):
+        return [
+            _word("bitch", t, end=t + 0.4, is_profanity=True)
+            for t in times
+        ]
+
+    def test_uncaught_repeats_found(self):
+        # Bursts at 10/20/30/40 are flagged; bursts at 15 and 25 are the
+        # ad-libs no ASR pass emitted. The correlator must find exactly those.
+        audio = self._song(55, [10, 20, 30, 40, 15, 25])
+        words = self._flagged([10, 20, 30, 40]) + [_word("la", 5)]
+        echoes = find_acoustic_echoes(sorted(words, key=lambda w: w["start"]), audio)
+        found = sorted(round(e["start"], 1) for e in echoes)
+        assert len(found) == 2, echoes
+        assert abs(found[0] - 15.0) < 0.15 and abs(found[1] - 25.0) < 0.15
+        assert all(e["detection_source"] == "acoustic_echo" for e in echoes)
+        assert all(e["is_profanity"] for e in echoes)
+
+    def test_no_repeats_no_injections(self):
+        # Flagged instances exist but nothing else matches -> nothing injected.
+        audio = self._song(55, [10, 20, 30, 40])
+        words = self._flagged([10, 20, 30, 40])
+        assert find_acoustic_echoes(words, audio) == []
+
+    def test_below_min_instances(self):
+        audio = self._song(40, [10, 20, 15])
+        words = self._flagged([10, 20])
+        assert find_acoustic_echoes(words, audio) == []
+
+    def test_dedup_against_flagged_and_injected(self):
+        # The burst at 15 is already flagged (e.g. by rescan) -> no double.
+        audio = self._song(55, [10, 20, 30, 40, 15])
+        words = self._flagged([10, 20, 30, 40, 15])
+        assert find_acoustic_echoes(words, audio) == []
+
+    def test_dissimilar_instances_fail_closed(self):
+        # "Instances" that are just unrelated noise: self-calibration finds
+        # the template can't even match its siblings -> no injections anywhere.
+        rng = np.random.default_rng(3)
+        audio = (0.2 * rng.standard_normal(40 * self.SR)).astype(np.float32)
+        words = self._flagged([10, 15, 20, 25])
+        echoes = find_acoustic_echoes(words, audio)
+        assert echoes == []
 
 
 class TestNormalizeInterplay:
