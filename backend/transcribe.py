@@ -406,6 +406,7 @@ _RESCAN_CLOSE_GAP_S = 0.5       # merge energy islands across quiet gaps this sh
 _RESCAN_PAD_S = 0.4             # context around each region
 _RESCAN_MAX_REGIONS = 24        # cost cap per song
 _RESCAN_MIN_CONF = 0.3          # drop low-confidence slice words (hallucination guard)
+_RESCAN_MIN_CONF_PROFANE = 0.15  # profanity floor; dual-pass vocals filter precedent
 _RESCAN_ENERGY_RATIO = 0.3      # region RMS vs typical active-vocal RMS
 _RESCAN_MAX_REGION_S = 8.0      # cap slice length: long slices reintroduce the
                                 # dominant-voice attention problem
@@ -450,23 +451,25 @@ def clamp_stretched_words(
     return clamped
 
 
-def find_unattributed_vocal_regions(
+def compute_vocal_rms_envelope(
     words: list[dict],
     vocals_audio: np.ndarray,
     sample_rate: int = 16000,
-) -> list[tuple[float, float]]:
-    """Time regions where the vocals stem has real energy but NO transcribed
-    word covers them — the acoustic signature of a missed ad-lib. Whisper
-    decodes one voice stream: background shouts between (or under) main-vocal
-    phrases routinely never get emitted, in either transcription pass.
+) -> tuple[np.ndarray, np.ndarray, float] | None:
+    """Per-frame RMS envelope of the vocals stem at ``_RESCAN_FRAME_S`` hop.
+
+    Returns ``(rms, covered, threshold)`` where ``covered`` marks frames
+    inside transcribed words (±0.15s) and ``threshold`` is the
+    active-vocal level (``_RESCAN_ENERGY_RATIO`` × median covered RMS), or
+    None when the audio is empty or no covered frames carry energy.
     """
     n = len(vocals_audio)
     if n == 0:
-        return []
+        return None
     hop = max(1, int(_RESCAN_FRAME_S * sample_rate))
     n_frames = n // hop
     if n_frames == 0:
-        return []
+        return None
     frames = vocals_audio[: n_frames * hop].reshape(n_frames, hop)
     rms = np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1))
 
@@ -478,8 +481,26 @@ def find_unattributed_vocal_regions(
         covered[a:min(b, n_frames)] = True
     active = rms[covered & (rms > 1e-4)]
     if not len(active):
-        return []
+        return None
     threshold = _RESCAN_ENERGY_RATIO * float(np.median(active))
+    return rms, covered, threshold
+
+
+def find_unattributed_vocal_regions(
+    words: list[dict],
+    vocals_audio: np.ndarray,
+    sample_rate: int = 16000,
+) -> list[tuple[float, float]]:
+    """Time regions where the vocals stem has real energy but NO transcribed
+    word covers them — the acoustic signature of a missed ad-lib. Whisper
+    decodes one voice stream: background shouts between (or under) main-vocal
+    phrases routinely never get emitted, in either transcription pass.
+    """
+    envelope = compute_vocal_rms_envelope(words, vocals_audio, sample_rate)
+    if envelope is None:
+        return []
+    rms, covered, threshold = envelope
+    n_frames = len(rms)
 
     hot = (~covered) & (rms >= threshold)
     regions: list[tuple[float, float]] = []
@@ -522,6 +543,22 @@ def find_unattributed_vocal_regions(
             return float(np.sum(rms[a:b]))
         regions = sorted(sorted(regions, key=region_energy, reverse=True)[:_RESCAN_MAX_REGIONS])
     return regions
+
+
+def _rescan_conf_floor(word_text: str, language: str | None = None) -> float:
+    """Confidence floor for a rescan-recovered slice word.
+
+    Profanity gets the dual-pass vocals floor (0.15, matching main.py's
+    secondary-pass filter) instead of 0.3: faint background ad-libs decode at
+    low confidence, the token already matched the tiered detector, and the
+    slice already had unattributed vocal energy + repetition-loop collapse —
+    a rare false hit mutes ~0.5s of untranscribable vocals, while a miss
+    leaves profanity audible.
+    """
+    from profanity_detector import scan_token
+    if scan_token(word_text, language) is not None:
+        return _RESCAN_MIN_CONF_PROFANE
+    return _RESCAN_MIN_CONF
 
 
 def rescan_vocal_gaps(
@@ -597,13 +634,13 @@ def rescan_vocal_gaps(
         # reuse the full-pass collapse with slice-appropriate thresholds.
         slice_words = collapse_repetition_loops(slice_words, min_cycles=3)
         for w in slice_words:
-            if w["confidence"] < _RESCAN_MIN_CONF:
+            if w["confidence"] < _rescan_conf_floor(w["word"], language):
                 continue
             # The pads make slices re-hear words the main pass already has
             # (the phrase edges). Keep an already-covered word only if it's a
             # new profanity — the merge/normalize layers reconcile those.
             mid = (w["start"] + w["end"]) / 2
-            if _covered(mid) and scan_token(w["word"]) is None:
+            if _covered(mid) and scan_token(w["word"], language) is None:
                 continue
             recovered.append(w)
 

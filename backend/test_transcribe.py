@@ -156,6 +156,20 @@ class TestFindUnattributedVocalRegions:
         assert a <= 4.0 and b >= 6.5, f"freed ad-lib tail not detected: {regions}"
 
 
+class TestRescanConfFloor:
+    def test_profane_word_gets_low_floor(self):
+        from transcribe import _RESCAN_MIN_CONF_PROFANE, _rescan_conf_floor
+        assert _rescan_conf_floor("bitch") == _RESCAN_MIN_CONF_PROFANE
+
+    def test_clean_word_keeps_default_floor(self):
+        from transcribe import _RESCAN_MIN_CONF, _rescan_conf_floor
+        assert _rescan_conf_floor("sunshine") == _RESCAN_MIN_CONF
+
+    def test_stylized_profanity_gets_low_floor(self):
+        from transcribe import _RESCAN_MIN_CONF_PROFANE, _rescan_conf_floor
+        assert _rescan_conf_floor("fuuuck") == _RESCAN_MIN_CONF_PROFANE
+
+
 class TestClampStretchedWords:
     def _word(self, text, start, end, is_profanity=False):
         return {

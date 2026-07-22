@@ -159,6 +159,7 @@ ExportFormat = Literal["mp3", "wav", "flac"]
 from transcribe import (
     clamp_stretched_words, rescan_vocal_gaps, transcribe_audio, warmup_model,
 )
+from hook_echo import infer_hook_echoes
 from profanity_detector import flag_profanity
 from audio_processor import censor_audio, censor_audio_vocals_only
 from vocal_separator import separate as separate_vocals
@@ -663,6 +664,21 @@ async def transcribe(req: TranscribeRequest):
                 recovered = flag_profanity(recovered, language=detected_language)
                 final_words = final_words + recovered
                 final_words.sort(key=lambda w: w["start"])
+
+        # Hook-echo completion: ad-libs sung CONCURRENTLY with the lead are
+        # invisible to every ASR pass (one voice per timespan) and leave no
+        # energy gap for the rescan. Infer them from the hook's own completed
+        # instances. Runs after the rescan so recovered words contribute
+        # instances / occupy slots, and before the lyrics pipeline so its
+        # injectors dedup against these and normalize resolves overlaps.
+        vocals_ok = req.vocals_path and os.path.isfile(req.vocals_path)
+        echoes = infer_hook_echoes(
+            final_words,
+            vocals_path=req.vocals_path if vocals_ok else None,
+            language=detected_language,
+        )
+        if echoes:
+            final_words = sorted(final_words + echoes, key=lambda w: w["start"])
 
         final_words = apply_lyrics_pipeline(
             final_words, result["duration"], detected_language,

@@ -241,7 +241,7 @@ def _build_censor_regions(
     """
     intervals = []
     for w in sorted(words, key=lambda x: x["start"]):
-        extra = ESTIMATED_PAD_EXTRA_MS if w.get("detection_source", "") in ("lyrics", "lyrics_gap") else 0
+        extra = ESTIMATED_PAD_EXTRA_MS if w.get("detection_source", "") in ("lyrics", "lyrics_gap", "hook_echo") else 0
         start_ms = max(0, int(w["start"] * 1000) - padding_before_ms - extra)
         end_ms = min(audio_len_ms, int(w["end"] * 1000) + padding_after_ms + extra)
         if end_ms - start_ms <= 0:

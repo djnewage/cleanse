@@ -76,6 +76,7 @@ def main() -> None:
     from profanity_detector import flag_profanity
     from transcribe import clamp_stretched_words, rescan_vocal_gaps, transcribe_audio
     from audio_processor import _build_censor_regions
+    from hook_echo import infer_hook_echoes
     from main import apply_lyrics_pipeline
 
     meta = extract_metadata(args.audio_file)
@@ -119,6 +120,11 @@ def main() -> None:
             recovered = flag_profanity(recovered, language=lang)
             words = sorted(words + recovered, key=lambda w: w["start"])
         print(f"rescan: {len(recovered)} recovered word(s)")
+
+    echoes = infer_hook_echoes(words, vocals_path=args.vocals, language=lang)
+    if echoes:
+        words = sorted(words + echoes, key=lambda w: w["start"])
+    print(f"hook-echo: {len(echoes)} injected word(s)")
 
     final = apply_lyrics_pipeline(words, duration, lang, plain, synced)
 
