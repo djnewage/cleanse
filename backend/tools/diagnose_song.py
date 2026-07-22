@@ -13,7 +13,8 @@ Usage:
 
 Notes:
   * Single-pass only (no demucs vocal separation) — dual-pass in the app can
-    add vocals-sourced detections this report won't show.
+    add vocals-sourced detections this report won't show. Pass --vocals with
+    an existing demucs stem to also run the app's ad-lib vocal-gap rescan.
   * Mute regions use the app's default padding (150ms before / 100ms after).
 """
 
@@ -57,6 +58,10 @@ def main() -> None:
     parser.add_argument("audio_file", help="Path to the audio file")
     parser.add_argument("--no-turbo", action="store_true", help="Full beam search (slower)")
     parser.add_argument("--no-lyrics", action="store_true", help="Skip lyrics fetching")
+    parser.add_argument(
+        "--vocals", metavar="PATH",
+        help="Vocals stem WAV (demucs output); enables the ad-lib vocal-gap rescan",
+    )
     parser.add_argument("--json", metavar="PATH", help="Also dump the final words JSON here")
     parser.add_argument("--pad-before", type=int, default=DEFAULT_PAD_BEFORE_MS)
     parser.add_argument("--pad-after", type=int, default=DEFAULT_PAD_AFTER_MS)
@@ -64,10 +69,12 @@ def main() -> None:
 
     if not os.path.isfile(args.audio_file):
         sys.exit(f"File not found: {args.audio_file}")
+    if args.vocals and not os.path.isfile(args.vocals):
+        sys.exit(f"Vocals stem not found: {args.vocals}")
 
     from lyrics_fetcher import extract_metadata, fetch_lyrics
     from profanity_detector import flag_profanity
-    from transcribe import transcribe_audio
+    from transcribe import clamp_stretched_words, rescan_vocal_gaps, transcribe_audio
     from audio_processor import _build_censor_regions
     from main import apply_lyrics_pipeline
 
@@ -100,6 +107,19 @@ def main() -> None:
     print(f"transcribed: {len(result['words'])} words, duration={duration:.1f}s, lang={lang}")
 
     words = flag_profanity(result["words"], language=lang)
+
+    # Mirrors the app (main.py /transcribe): clamp timestamp blowouts, then
+    # rescan unattributed vocal energy when a stem is available.
+    words = clamp_stretched_words(words)
+    if args.vocals:
+        recovered = rescan_vocal_gaps(
+            words, args.vocals, language=lang, turbo=not args.no_turbo
+        )
+        if recovered:
+            recovered = flag_profanity(recovered, language=lang)
+            words = sorted(words + recovered, key=lambda w: w["start"])
+        print(f"rescan: {len(recovered)} recovered word(s)")
+
     final = apply_lyrics_pipeline(words, duration, lang, plain, synced)
 
     if args.json:

@@ -156,7 +156,9 @@ from typing import Literal
 
 ExportFormat = Literal["mp3", "wav", "flac"]
 
-from transcribe import rescan_vocal_gaps, transcribe_audio, warmup_model
+from transcribe import (
+    clamp_stretched_words, rescan_vocal_gaps, transcribe_audio, warmup_model,
+)
 from profanity_detector import flag_profanity
 from audio_processor import censor_audio, censor_audio_vocals_only
 from vocal_separator import separate as separate_vocals
@@ -642,6 +644,11 @@ async def transcribe(req: TranscribeRequest):
             final_words = merge_word_lists(primary_words, secondary_words, import_all=sparse)
         else:
             final_words = primary_words
+
+        # Cap timestamp-blowout words BEFORE the rescan coverage map is built:
+        # a 5s stretched word blankets ad-lib energy and suppresses recovery
+        # (and stalls the karaoke highlight). Profanity is exempt inside.
+        final_words = clamp_stretched_words(final_words)
 
         # Vocal-gap rescan: transcribe unattributed-vocal-energy slices in
         # isolation to recover ad-libs both passes missed (Whisper attends to

@@ -122,13 +122,90 @@ class TestFindUnattributedVocalRegions:
         a, b = regions[0]
         assert b - a >= 1.2, f"islands not merged: {regions}"
 
-    def test_long_region_capped(self):
+    def test_long_region_split_not_truncated(self):
+        # A 20s+ missed stretch (e.g. an outro the primary pass dropped) must
+        # be chunked into cap-sized slices covering ALL of it — truncating to
+        # the first slice silently loses the tail's profanity.
         from transcribe import find_unattributed_vocal_regions, _RESCAN_MAX_REGION_S
         audio = self._audio(30, [(0, 2), (4, 26), (27, 30)])
         regions = find_unattributed_vocal_regions(self._words([(0, 2), (27, 30)]), audio)
         assert regions and all(b - a <= _RESCAN_MAX_REGION_S + 1e-6 for a, b in regions)
+        assert regions[-1][1] >= 25.0, f"tail discarded: {regions}"
+        for (_, prev_end), (next_start, _) in zip(regions, regions[1:]):
+            assert next_start - prev_end < 0.5, f"coverage hole: {regions}"
 
     def test_empty_inputs(self):
         import numpy as np
         from transcribe import find_unattributed_vocal_regions
         assert find_unattributed_vocal_regions([], np.zeros(0, dtype=np.float32)) == []
+
+    def test_stretched_word_suppresses_region_until_clamped(self):
+        """The DJ Fly mashup bug: a timestamp-stretched word blankets ad-lib
+        energy, so no region is found — until clamp_stretched_words frees it."""
+        from transcribe import clamp_stretched_words, find_unattributed_vocal_regions
+        # Real vocals 0-2s, ad-libs 3.5-7s; one word stretched across all of it,
+        # plus normal covered words so the active-RMS reference is sane.
+        audio = self._audio(12, [(0, 2), (3.5, 7), (8, 12)])
+        words = self._words([(0, 1), (1, 2)]) + [
+            {"word": "and", "start": 0.5, "end": 7.0, "confidence": 0.9}
+        ] + self._words([(8, 10), (10, 12)])
+        assert find_unattributed_vocal_regions(words, audio) == []
+        regions = find_unattributed_vocal_regions(clamp_stretched_words(words), audio)
+        assert len(regions) == 1
+        a, b = regions[0]
+        assert a <= 4.0 and b >= 6.5, f"freed ad-lib tail not detected: {regions}"
+
+
+class TestClampStretchedWords:
+    def _word(self, text, start, end, is_profanity=False):
+        return {
+            "word": text, "start": start, "end": end,
+            "confidence": 0.9, "is_profanity": is_profanity,
+        }
+
+    def test_stretched_word_clamped(self):
+        # The measured case: 'and' spanning 64.92-70.18 over ad-lib repeats.
+        from transcribe import clamp_stretched_words
+        out = clamp_stretched_words([self._word("and", 64.92, 70.18)])
+        assert out[0]["end"] == 66.92
+        assert out[0]["start"] == 64.92
+
+    def test_normal_words_untouched(self):
+        from transcribe import clamp_stretched_words
+        words = [
+            self._word("hey", 0.0, 0.4),
+            self._word("looove", 1.0, 3.0),  # exactly 2.0s: allowed
+            self._word("yo", 3.5, 3.9),
+        ]
+        out = clamp_stretched_words(words)
+        assert [(w["word"], w["start"], w["end"]) for w in out] == [
+            ("hey", 0.0, 0.4), ("looove", 1.0, 3.0), ("yo", 3.5, 3.9),
+        ]
+
+    def test_profanity_exempt(self):
+        # Shortening a flagged word's end would shorten its mute.
+        from transcribe import clamp_stretched_words
+        out = clamp_stretched_words([self._word("fuck", 10.0, 15.0, is_profanity=True)])
+        assert out[0]["end"] == 15.0
+
+    def test_input_not_mutated(self):
+        from transcribe import clamp_stretched_words
+        words = [self._word("and", 64.92, 70.18)]
+        clamp_stretched_words(words)
+        assert words[0]["end"] == 70.18
+
+    def test_interplay_with_collapse(self):
+        # Mirrors the real call order: collapse_repetition_loops runs inside
+        # transcribe_audio, clamp runs later in main — a crammed repetition run
+        # is collapsed and an independent stretched word still gets clamped.
+        from transcribe import clamp_stretched_words, collapse_repetition_loops
+        crammed = [
+            self._word(t, 5.0 + i * 0.05, 5.0 + i * 0.05 + 0.04)
+            for i, t in enumerate(["dope", "shit"] * 6)
+        ]
+        stretched = [self._word("and", 20.0, 26.0)]
+        out = clamp_stretched_words(collapse_repetition_loops(crammed + stretched))
+        assert len(out) < len(crammed) + 1
+        and_w = [w for w in out if w["word"] == "and"][0]
+        assert and_w["end"] == 22.0
+        assert [w["start"] for w in out] == sorted(w["start"] for w in out)
