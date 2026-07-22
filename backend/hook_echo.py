@@ -37,12 +37,16 @@ from profanity_detector import scan_token
 
 # --- Acoustic echo matching (template correlation on the vocals stem) -------
 MIN_TEMPLATE_INSTANCES = 4   # flagged repeats required before matching
-MAX_TEMPLATES = 3            # strongest instances used as templates
+MAX_TEMPLATES = 12           # time-partitioned instances used as templates;
+                             # per-template validation discards useless ones,
+                             # so breadth beats curation (a lone background-
+                             # voice instance must make the bank to find its
+                             # own ghosts)
 SEARCH_PAD_S = 8.0           # search this far beyond the instance cluster
 SCORE_FLOOR = 0.35           # absolute correlation floor
 CALIBRATION_FRAC = 0.75      # accept >= this fraction of median known score
 ACOUSTIC_DEDUP_S = 0.45      # min spacing from flagged words AND other peaks
-MAX_ACOUSTIC_INJECTIONS = 12
+MAX_ACOUSTIC_INJECTIONS = 32  # per-group ceiling; real cap is 2x confirmed count
 _SPEC_N_FFT = 512            # 32ms @ 16kHz
 _SPEC_HOP = 160              # 10ms
 
@@ -89,17 +93,32 @@ def _log_spectrogram(x: np.ndarray) -> np.ndarray:
 def _template_scores(
     template_spec: np.ndarray, search_spec: np.ndarray
 ) -> np.ndarray:
-    """Normalized cross-correlation of the template over every offset."""
+    """Normalized cross-correlation of the template over every offset.
+
+    Vectorized: with the template z-normalized (mean 0), the per-offset score
+    reduces to corr[i] / (M * window_std[i]) where corr is a plain sliding
+    dot-product and window stats come from cumulative sums.
+    """
     T = len(template_spec)
     n = len(search_spec) - T
     if n <= 0 or T == 0:
         return np.zeros(0)
     tpl = (template_spec - template_spec.mean()) / (template_spec.std() + 1e-9)
-    scores = np.zeros(n)
-    for i in range(n):
-        w = search_spec[i:i + T]
-        scores[i] = float(np.mean(tpl * (w - w.mean()) / (w.std() + 1e-9)))
-    return scores
+    M = tpl.size
+
+    corr = np.zeros(n)
+    for j in range(T):
+        corr += search_spec[j:j + n] @ tpl[j]
+
+    # Sliding window mean/std over the T-row windows via cumulative sums.
+    row_sum = search_spec.sum(axis=1)
+    row_sumsq = (search_spec ** 2).sum(axis=1)
+    cs = np.concatenate([[0.0], np.cumsum(row_sum)])
+    cs2 = np.concatenate([[0.0], np.cumsum(row_sumsq)])
+    win_sum = cs[T:T + n] - cs[:n]
+    win_sumsq = cs2[T:T + n] - cs2[:n]
+    win_var = np.maximum(win_sumsq / M - (win_sum / M) ** 2, 0.0)
+    return corr / (M * np.sqrt(win_var) + 1e-9)
 
 
 def find_acoustic_echoes(
@@ -153,13 +172,35 @@ def find_acoustic_echoes(
         if not len(search_spec):
             continue
 
+        # Template selection: DIVERSITY over confidence. The same profane word
+        # often exists in two takes — the lead's and the background loop's —
+        # and top-confidence picks only lead instances, which score the faint
+        # background ghosts under the floor (measured: background instances at
+        # 76.7/77.4s matched 0.43-0.47 against a background template but were
+        # invisible to a lead-only bank). Partition the instances across time
+        # and take the strongest from each partition; beds cluster temporally,
+        # so temporal spread captures take diversity.
         # Leave >= 2 non-template instances for the self-calibration below.
         n_templates = min(MAX_TEMPLATES, len(instances) - 2)
-        templates = sorted(
-            instances, key=lambda w: w.get("confidence", 0), reverse=True
-        )[:n_templates]
-        # Score = max over templates at each offset.
-        best = None
+        templates = []
+        if n_templates > 0:
+            bounds = np.linspace(0, len(instances), n_templates + 1).astype(int)
+            for k in range(n_templates):
+                part = instances[bounds[k]:bounds[k + 1]]
+                if part:
+                    templates.append(
+                        max(part, key=lambda w: w.get("confidence", 0))
+                    )
+
+        # Per-template validation + calibration. Each template must prove it
+        # DISCRIMINATES: its median score at sibling instances must clear both
+        # the absolute floor and the template's own 95th-percentile background
+        # level (a promiscuous template that lights up everywhere calibrates
+        # itself out; a lead-voice template simply won't fire on background
+        # ghosts while a background template will). Each surviving template
+        # fires against its own threshold — combining RAW scores across
+        # templates lets one bad template poison the bank.
+        qual = None  # max over templates of score/threshold ratio
         for t in templates:
             a = int(t["start"] * sample_rate)
             b = int(t["end"] * sample_rate)
@@ -167,24 +208,27 @@ def find_acoustic_echoes(
             s = _template_scores(spec, search_spec)
             if not len(s):
                 continue
-            best = s if best is None else np.maximum(best[:len(s)], s[:len(best)])
-        if best is None or not len(best):
-            continue
-
-        # Self-calibration: how well does the template bank match the KNOWN
-        # instances (excluding each template's own position)?
-        known_scores = []
-        for inst in instances:
-            i = int((inst["start"] - span_a) / hop_s)
-            if not 0 <= i < len(best):
+            sib_scores = []
+            for inst in instances:
+                if abs(inst["start"] - t["start"]) < 0.2:
+                    continue
+                i = int((inst["start"] - span_a) / hop_s)
+                lo, hi = max(0, i - 5), min(len(s), i + 6)
+                if lo < hi:
+                    sib_scores.append(float(np.max(s[lo:hi])))
+            if len(sib_scores) < 2:
                 continue
-            lo, hi = max(0, i - 5), min(len(best), i + 6)
-            if any(abs(inst["start"] - t["start"]) < 0.2 for t in templates):
-                continue
-            known_scores.append(float(np.max(best[lo:hi])))
-        if len(known_scores) < 2:
+            sib_med = float(median(sib_scores))
+            if sib_med < max(SCORE_FLOOR, float(np.percentile(s, 95))):
+                continue  # non-discriminative template
+            threshold = max(SCORE_FLOOR, CALIBRATION_FRAC * sib_med)
+            ratio = s / threshold
+            if qual is None:
+                qual = np.full(len(search_spec), -np.inf)
+            n = min(len(qual), len(ratio))
+            qual[:n] = np.maximum(qual[:n], ratio[:n])
+        if qual is None:
             continue
-        threshold = max(SCORE_FLOOR, CALIBRATION_FRAC * float(median(known_scores)))
 
         med_dur = min(max(median(w["end"] - w["start"] for w in instances), 0.15), 1.0)
         display = Counter(w["word"].strip() for w in instances).most_common(1)[0][0]
@@ -193,11 +237,16 @@ def find_acoustic_echoes(
             (w["start"] + w["end"]) / 2 for w in words if w.get("is_profanity")
         ] + [(e["start"] + e["end"]) / 2 for e in inferred]
 
-        # Greedy peak-pick, strongest first.
-        for i in np.argsort(best)[::-1]:
-            if best[i] < threshold:
+        # Greedy peak-pick, strongest first. The cap scales with how often the
+        # ad-lib is CONFIRMED: a hook looped 21 times can echo well beyond a
+        # flat dozen (measured: a flat cap of 12 truncated real 0.35-0.39
+        # matches at 76.7/77.4/83.7s while accepting 0.39+ ones).
+        group_cap = min(MAX_ACOUSTIC_INJECTIONS, 2 * len(instances))
+        group_injected = 0
+        for i in np.argsort(qual)[::-1]:
+            if qual[i] < 1.0:
                 break
-            if len(injected) >= MAX_ACOUSTIC_INJECTIONS:
+            if group_injected >= group_cap:
                 break
             t = span_a + i * hop_s
             center = t + med_dur / 2
@@ -214,9 +263,10 @@ def find_acoustic_echoes(
             }
             injected.append(echo)
             inferred.append(echo)
+            group_injected += 1
             print(
                 f"[HookEcho] Acoustic match '{display}' at {t:.2f}-{t + med_dur:.2f}s "
-                f"(score {best[i]:.2f}, threshold {threshold:.2f}, "
+                f"({qual[i]:.2f}x its template's calibrated threshold, "
                 f"{len(instances)} confirmed instances)",
                 file=sys.stderr,
             )
