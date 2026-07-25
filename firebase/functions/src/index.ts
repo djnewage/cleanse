@@ -202,6 +202,26 @@ export const createCheckoutSession = functions.runWith({ secrets: [stripeSecretK
   // Get or create Stripe customer
   let customerId = userData.subscription.stripeCustomerId;
 
+  if (customerId) {
+    // Don't create a duplicate subscription. Re-subscribing while an old
+    // subscription is still active or in dunning leaves multiple subscriptions
+    // on the customer; the billing portal is the right place to fix payment.
+    const existing = await stripe.subscriptions.list({
+      customer: customerId,
+      status: 'all',
+      limit: 100
+    });
+    const blocking = existing.data.find((s) =>
+      ['active', 'trialing', 'past_due', 'unpaid'].includes(s.status)
+    );
+    if (blocking) {
+      throw new functions.https.HttpsError(
+        'already-exists',
+        'You already have a subscription. Use Manage Billing to update your payment method.'
+      );
+    }
+  }
+
   if (!customerId) {
     const customer = await stripe.customers.create({
       email: userData.email,
@@ -297,15 +317,10 @@ export const stripeWebhook = functions.runWith({ secrets: [stripeSecretKey, stri
   // Handle the event
   switch (event.type) {
     case 'customer.subscription.created':
-    case 'customer.subscription.updated': {
-      const subscription = event.data.object as Stripe.Subscription;
-      await handleSubscriptionUpdate(subscription);
-      break;
-    }
-
+    case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription;
-      await handleSubscriptionDeleted(subscription);
+      await reconcileSubscriptionStatus(stripe, subscription.customer as string);
       break;
     }
 
@@ -323,9 +338,20 @@ export const stripeWebhook = functions.runWith({ secrets: [stripeSecretKey, stri
   res.status(200).send('OK');
 });
 
-async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
-  const customerId = subscription.customer as string;
+// Best-first ordering used to pick which subscription represents the customer
+// when several exist (e.g. re-subscribed while an old one was in dunning).
+const STATUS_PRIORITY: Stripe.Subscription.Status[] = [
+  'active',
+  'trialing',
+  'past_due',
+  'unpaid',
+  'paused',
+  'incomplete',
+  'canceled',
+  'incomplete_expired'
+];
 
+async function reconcileSubscriptionStatus(stripe: Stripe, customerId: string) {
   // Find user by Stripe customer ID
   const usersSnapshot = await db.collection('users')
     .where('subscription.stripeCustomerId', '==', customerId)
@@ -338,44 +364,37 @@ async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
   }
 
   const userDoc = usersSnapshot.docs[0];
-  const status = mapStripeStatus(subscription.status);
+
+  // Derive status from the customer's best current subscription instead of the
+  // event payload — a deleted/past_due event for a stale duplicate subscription
+  // must not clobber an active one.
+  const subs = await stripe.subscriptions.list({
+    customer: customerId,
+    status: 'all',
+    limit: 100
+  });
+
+  const best = subs.data
+    .slice()
+    .sort((a, b) => STATUS_PRIORITY.indexOf(a.status) - STATUS_PRIORITY.indexOf(b.status))[0];
+
+  const status = best ? mapStripeStatus(best.status) : 'canceled';
+  const isCurrent = best && status !== 'canceled' && status !== 'none';
 
   // Get current_period_end from the first subscription item
-  const currentPeriodEnd = subscription.items?.data?.[0]?.current_period_end;
+  const currentPeriodEnd = best?.items?.data?.[0]?.current_period_end;
 
   await userDoc.ref.update({
     'subscription.status': status,
-    'subscription.stripeSubscriptionId': subscription.id,
-    'subscription.currentPeriodEnd': currentPeriodEnd
+    'subscription.stripeSubscriptionId': isCurrent ? best.id : null,
+    'subscription.currentPeriodEnd': isCurrent && currentPeriodEnd
       ? admin.firestore.Timestamp.fromMillis(currentPeriodEnd * 1000)
       : null
   });
 
-  console.log(`Updated subscription for user ${userDoc.id}: ${status}`);
-}
-
-async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
-  const customerId = subscription.customer as string;
-
-  const usersSnapshot = await db.collection('users')
-    .where('subscription.stripeCustomerId', '==', customerId)
-    .limit(1)
-    .get();
-
-  if (usersSnapshot.empty) {
-    console.error(`No user found for Stripe customer ${customerId}`);
-    return;
-  }
-
-  const userDoc = usersSnapshot.docs[0];
-
-  await userDoc.ref.update({
-    'subscription.status': 'canceled',
-    'subscription.stripeSubscriptionId': null,
-    'subscription.currentPeriodEnd': null
-  });
-
-  console.log(`Subscription canceled for user ${userDoc.id}`);
+  console.log(
+    `Reconciled subscription for user ${userDoc.id}: ${status}${best ? ` (${best.id})` : ''}`
+  );
 }
 
 function mapStripeStatus(stripeStatus: Stripe.Subscription.Status): UserDoc['subscription']['status'] {
