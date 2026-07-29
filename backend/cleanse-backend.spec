@@ -95,6 +95,21 @@ a = Analysis(
     cipher=block_cipher,
 )
 
+# Windows: drop CUDA libraries that torch never loads for our workloads.
+# htdemucs has no RNN layers (cudnn_adv), we never solve on multi-GPU
+# (cusolverMg), and torch loads the primary nvrtc, not the .alt variant.
+# Verified empirically: /separate and /transcribe both run on CUDA without
+# these. cudnn_heuristic and cudnn_engines_precompiled ARE required —
+# removing either breaks Demucs with CUDNN_STATUS_SUBLIBRARY_LOADING_FAILED.
+if sys.platform == 'win32':
+    _cuda_prune = (
+        'cudnn_adv64_9.dll',
+        'nvrtc64_120_0.alt.dll',
+        'cusolverMg64_11.dll',
+    )
+    a.binaries = [b for b in a.binaries if not b[0].lower().endswith(_cuda_prune)]
+    a.datas = [d for d in a.datas if not d[0].lower().endswith(_cuda_prune)]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
