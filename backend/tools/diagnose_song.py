@@ -63,6 +63,10 @@ def main() -> None:
         help="Vocals stem WAV (demucs output); enables the ad-lib vocal-gap rescan",
     )
     parser.add_argument("--json", metavar="PATH", help="Also dump the final words JSON here")
+    parser.add_argument(
+        "--language", metavar="CODE",
+        help="Force the transcription language (e.g. en); skips detection",
+    )
     parser.add_argument("--pad-before", type=int, default=DEFAULT_PAD_BEFORE_MS)
     parser.add_argument("--pad-after", type=int, default=DEFAULT_PAD_AFTER_MS)
     args = parser.parse_args()
@@ -74,7 +78,10 @@ def main() -> None:
 
     from lyrics_fetcher import extract_metadata, fetch_lyrics
     from profanity_detector import flag_profanity
-    from transcribe import clamp_stretched_words, rescan_vocal_gaps, transcribe_audio
+    from transcribe import (
+        clamp_stretched_words, detect_song_language, rescan_vocal_gaps,
+        transcribe_audio,
+    )
     from audio_processor import _build_censor_regions
     from hook_echo import infer_hook_echoes
     from main import apply_lyrics_pipeline
@@ -99,12 +106,30 @@ def main() -> None:
             f"from_tag_metadata={from_tags}"
         )
 
+    # Mirrors the app (main.py /transcribe): explicit language detection on
+    # the vocals stem when available, before any transcription pass.
+    if args.language:
+        lang = args.language
+        print(f"language: {lang} (forced via --language)")
+    else:
+        det_path = args.vocals or args.audio_file
+        lang_info = detect_song_language(
+            det_path, turbo=not args.no_turbo, lyrics_text=plain,
+        )
+        lang = lang_info["language"]
+        print(
+            f"language: {lang} (source={lang_info['source']} "
+            f"p={lang_info['probability']:.2f} "
+            f"low_confidence={lang_info['low_confidence']}, detected on "
+            f"{'vocals stem' if args.vocals else 'full mix'})"
+        )
+
     # Mirrors the app: guessed-metadata lyrics never bias the transcription.
     result = transcribe_audio(
-        args.audio_file, turbo=not args.no_turbo,
+        args.audio_file, turbo=not args.no_turbo, language=lang,
         initial_prompt=plain if from_tags else None,
     )
-    duration, lang = result["duration"], result["language"]
+    duration = result["duration"]
     print(f"transcribed: {len(result['words'])} words, duration={duration:.1f}s, lang={lang}")
 
     words = flag_profanity(result["words"], language=lang)

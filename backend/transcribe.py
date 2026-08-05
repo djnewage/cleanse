@@ -1,6 +1,7 @@
 """Transcription module using faster-whisper for word-level timestamps."""
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -181,6 +182,17 @@ def get_model(turbo: bool = False):
     if _model is not None and _model_turbo == turbo:
         return _model
 
+    if os.environ.get("CLEANSE_DEVICE") == "cpu":
+        # Diagnostic escape hatch: rule out GPU/quantization issues by forcing CPU.
+        print("[Transcribe] CLEANSE_DEVICE=cpu — forcing CPU inference", file=sys.stderr)
+        print(
+            "[Transcribe] Loading faster-whisper 'medium' model (device=cpu, compute=int8, forced)...",
+            file=sys.stderr,
+        )
+        _model = WhisperModel("medium", device="cpu", compute_type="int8")
+        _model_turbo = turbo
+        return _model
+
     if turbo:
         from device_info import get_device_string
 
@@ -213,6 +225,140 @@ def get_model(turbo: bool = False):
     _model_turbo = turbo
     print("[Transcribe] Model loaded.", file=sys.stderr)
     return _model
+
+
+# --- Language detection ------------------------------------------------------
+#
+# Whisper's in-call auto-detect looks at a single 30s window of whatever audio
+# it is given. On songs with instrumental/DJ-drop intros that window contains
+# no clean speech, and the detector can return junk like "km" — which then
+# poisons every pass that forces the detected language. Detection therefore
+# runs as an explicit step (on the vocals stem when available) with VAD,
+# multiple segments, and a confidence-based fallback.
+
+# Whisper language codes whose orthography is Latin script.
+LATIN_SCRIPT_LANGS = {
+    "en", "es", "fr", "de", "it", "pt", "nl", "pl", "tr", "ro", "ca", "sv",
+    "da", "no", "fi", "cs", "hr", "hu", "sk", "sl", "id", "ms", "vi", "sw",
+    "tl", "af",
+}
+
+_LANG_CONFIDENCE_THRESHOLD = 0.6
+_LYRICS_LATIN_RATIO_THRESHOLD = 0.85
+
+
+def _latin_ratio(text: str) -> float:
+    """Fraction of alphabetic characters that are Latin script (incl. accented)."""
+    alpha = [c for c in text if c.isalpha()]
+    if not alpha:
+        return 0.0
+    # Basic Latin + Latin-1 Supplement + Latin Extended-A/B covers en/es/fr/...
+    latin = sum(1 for c in alpha if ord(c) < 0x0250)
+    return latin / len(alpha)
+
+
+def choose_language(
+    detected: str,
+    probability: float,
+    all_probs: list[tuple[str, float]] | None,
+    lyrics_text: str | None = None,
+) -> dict:
+    """Decide the transcription language from raw detector output.
+
+    Returns {"language", "probability", "source", "low_confidence"}.
+    """
+    prob_map = dict(all_probs) if all_probs else {}
+
+    # 1. Lyrics-script prior: Latin-script lyrics make a non-Latin detection
+    # implausible. Only overrides TOWARD Latin — Hangul lyrics with detected
+    # "ko" pass through untouched.
+    if (
+        lyrics_text
+        and _latin_ratio(lyrics_text) >= _LYRICS_LATIN_RATIO_THRESHOLD
+        and detected not in LATIN_SCRIPT_LANGS
+    ):
+        latin_candidates = [
+            (lang, p) for lang, p in prob_map.items() if lang in LATIN_SCRIPT_LANGS
+        ]
+        if latin_candidates:
+            language = max(latin_candidates, key=lambda lp: lp[1])[0]
+        else:
+            language = "en"
+        return {
+            "language": language,
+            "probability": prob_map.get(language, 0.0),
+            "source": "lyrics_script_override",
+            "low_confidence": True,
+        }
+
+    # 2. Confident detection: trust it (keeps genuine es/ko/ja/... working).
+    if probability >= _LANG_CONFIDENCE_THRESHOLD:
+        return {
+            "language": detected,
+            "probability": probability,
+            "source": "detector",
+            "low_confidence": False,
+        }
+
+    # 3. Low confidence: profanity matching only supports en/es, so fall back
+    # to whichever of those the detector considered more likely.
+    language = "es" if prob_map.get("es", 0.0) > prob_map.get("en", 0.0) else "en"
+    return {
+        "language": language,
+        "probability": prob_map.get(language, 0.0),
+        "source": "low_confidence_fallback",
+        "low_confidence": True,
+    }
+
+
+def detect_song_language(
+    file_path: str,
+    turbo: bool = False,
+    lyrics_text: str | None = None,
+) -> dict:
+    """Detect a song's language with VAD + multi-segment voting + sane fallbacks.
+
+    Returns the same shape as choose_language().
+    """
+    model = get_model(turbo=turbo)
+    audio = _decode_audio_ffmpeg(file_path, sampling_rate=16000)
+
+    detected = None
+    for vad in (True, False):
+        try:
+            detected, probability, all_probs = model.detect_language(
+                audio=audio,
+                vad_filter=vad,
+                language_detection_segments=8,
+                language_detection_threshold=0.7,
+            )
+            break
+        except Exception as e:
+            # Known case: VAD finds zero speech (instrumental) -> the library's
+            # per-segment loop never runs and max({}) raises ValueError.
+            print(
+                f"[Language] detect_language failed (vad_filter={vad}): {e}",
+                file=sys.stderr,
+            )
+
+    if detected is None:
+        result = {
+            "language": "en",
+            "probability": 0.0,
+            "source": "error_fallback",
+            "low_confidence": True,
+        }
+        print("[Language] Detection failed entirely -> falling back to en", file=sys.stderr)
+        return result
+
+    result = choose_language(detected, probability, all_probs, lyrics_text=lyrics_text)
+    top5 = sorted(all_probs, key=lambda lp: lp[1], reverse=True)[:5] if all_probs else []
+    print(
+        f"[Language] raw={detected} p={probability:.2f} -> chose {result['language']} "
+        f"({result['source']}); top5={[(l, round(p, 3)) for l, p in top5]}",
+        file=sys.stderr,
+    )
+    return result
 
 
 def collapse_repetition_loops(

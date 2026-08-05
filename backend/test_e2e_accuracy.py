@@ -46,7 +46,7 @@ def main():
 
     # Import pipeline modules (triggers model loading)
     print("Loading modules...", flush=True)
-    from transcribe import transcribe_audio
+    from transcribe import detect_song_language, transcribe_audio
     from profanity_detector import flag_profanity
     from lyrics_fetcher import extract_metadata, fetch_lyrics
     from main import apply_lyrics_pipeline
@@ -72,17 +72,27 @@ def main():
             lyrics_source = lyrics_result.get("lyrics_source", "unknown")
 
     # ── Step 3: Transcribe ──
+    # Mirrors the app (main.py /transcribe): explicit language detection first.
+    lang_info = detect_song_language(
+        args.audio_file, turbo=args.turbo, lyrics_text=plain_lyrics,
+    )
+    detected_language = lang_info["language"]
+    print(
+        f"Language: {detected_language} (source={lang_info['source']}, "
+        f"p={lang_info['probability']:.2f})", flush=True,
+    )
+
     print(f"Transcribing (turbo={args.turbo})... this may take a while on first run (model download).", flush=True)
     t0 = time.time()
     result = transcribe_audio(
         args.audio_file,
         turbo=args.turbo,
+        language=detected_language,
         initial_prompt=plain_lyrics,
     )
     transcribe_time = time.time() - t0
 
     raw_words = result["words"]
-    detected_language = result["language"]
     audio_duration = result["duration"]
 
     # ── Step 4: Flag profanity ──

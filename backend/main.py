@@ -157,9 +157,16 @@ from typing import Literal
 ExportFormat = Literal["mp3", "wav", "flac"]
 
 from transcribe import (
-    _report_progress, clamp_stretched_words, rescan_vocal_gaps,
-    transcribe_audio, warmup_model,
+    _report_progress, clamp_stretched_words, detect_song_language,
+    rescan_vocal_gaps, transcribe_audio, warmup_model,
 )
+
+# Surface faster-whisper's own log lines (notably "Detected language 'x' with
+# probability y" and VAD messages) in backend.log via stderr.
+import logging
+_fw_logger = logging.getLogger("faster_whisper")
+_fw_logger.addHandler(logging.StreamHandler(sys.stderr))
+_fw_logger.setLevel(logging.INFO)
 from hook_echo import infer_hook_echoes
 from profanity_detector import flag_profanity
 from audio_processor import censor_audio, censor_audio_vocals_only
@@ -258,6 +265,9 @@ class TranscribeRequest(BaseModel):
     path: str
     turbo: bool = False
     dual_pass: bool = True
+    # Force the transcription language (e.g. "en"). None = auto-detect via
+    # detect_song_language() on the vocals stem / full mix.
+    language: str | None = None
     vocals_path: str | None = None
     lyrics: str | None = None
     synced_lyrics: str | None = None
@@ -603,21 +613,44 @@ async def transcribe(req: TranscribeRequest):
                 file=sys.stderr,
             )
 
+        # Determine the language up front instead of letting Whisper's in-call
+        # auto-detect run on the first 30s of the full mix (instrumental intros
+        # make it pick junk like "km", which then poisons every pass below).
+        if req.language:
+            lang_info = {
+                "language": req.language, "probability": 1.0,
+                "source": "user", "low_confidence": False,
+            }
+        else:
+            _report_progress("analyzing", 1.0, "Detecting language...")
+            det_path = (
+                req.vocals_path
+                if (req.vocals_path and os.path.isfile(req.vocals_path))
+                else req.path
+            )
+            # req.lyrics feeds the script prior even when lyrics_from_tags is
+            # False: wrong-song lyrics are still almost always the right script.
+            lang_info = detect_song_language(
+                det_path, turbo=req.turbo, lyrics_text=req.lyrics,
+            )
+        detected_language = lang_info["language"]
+
         # Pass 1: Transcribe the full mix
         if dual_pass:
             result = transcribe_audio(
-                req.path, turbo=req.turbo, initial_prompt=prompt_lyrics,
+                req.path, turbo=req.turbo, language=detected_language,
+                initial_prompt=prompt_lyrics,
                 progress_offset=0, progress_scale=45,
             )
         else:
             # Cap at 95 like the dual-pass path: the rescan/echo/lyrics stages
             # below own the last 5% and the "complete" message.
             result = transcribe_audio(
-                req.path, turbo=req.turbo, initial_prompt=prompt_lyrics,
+                req.path, turbo=req.turbo, language=detected_language,
+                initial_prompt=prompt_lyrics,
                 progress_offset=0, progress_scale=95,
             )
 
-        detected_language = result["language"]
         primary_words = flag_profanity(result["words"], language=detected_language)
         primary_words = _strip_intro_hallucinations(primary_words)
 
@@ -699,6 +732,9 @@ async def transcribe(req: TranscribeRequest):
             "words": final_words,
             "duration": result["duration"],
             "language": detected_language,
+            "language_probability": lang_info["probability"],
+            "language_source": lang_info["source"],
+            "language_low_confidence": lang_info["low_confidence"],
         }
 
     return StreamingResponse(
