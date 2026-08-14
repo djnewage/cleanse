@@ -98,11 +98,27 @@ def _make_replacement(audio: AudioSegment, start_ms: int, end_ms: int, censor_ty
             slowed = chunk._spawn(chunk.raw_data, overrides={"frame_rate": max(new_rate, 1000)})
             slowed = slowed.set_frame_rate(segment.frame_rate)
             result += slowed
-        if len(result) > duration_ms:
-            result = result[:duration_ms]
+        result = _fit_exact(result, duration_ms)
         return result.fade_out(min(duration_ms, 100))
     else:  # mute or unknown
-        return AudioSegment.silent(duration=duration_ms)
+        return AudioSegment.silent(duration=duration_ms, frame_rate=audio.frame_rate)
+
+
+def _fit_exact(segment: AudioSegment, duration_ms: int) -> AudioSegment:
+    """Force a segment to exactly duration_ms, padding with matching silence.
+
+    Demucs stems can run a few ms shorter than the source, so a region near the
+    end of the track may slice short. Splicing a short replacement would shrink
+    the output and invalidate every cue point after it, so pad rather than trim.
+    """
+    deficit = duration_ms - len(segment)
+    if deficit == 0:
+        return segment
+    if deficit < 0:
+        return segment[:duration_ms]
+    pad = AudioSegment.silent(duration=deficit, frame_rate=segment.frame_rate)
+    pad = pad.set_channels(segment.channels).set_sample_width(segment.sample_width)
+    return segment + pad
 
 
 def _splice_with_crossfade(audio: AudioSegment, start_ms: int, end_ms: int, replacement: AudioSegment, crossfade_ms: int = CROSSFADE_MS) -> AudioSegment:
@@ -347,12 +363,39 @@ def censor_audio_vocals_only(
     vocals = AudioSegment.from_file(vocals_path)
     accompaniment = AudioSegment.from_file(accompaniment_path)
 
-    regions = _build_censor_regions(words, len(vocals), padding_before_ms, padding_after_ms)
+    # Base the output on the ORIGINAL audio, not on a full-track stem remix.
+    # Demucs stems are a lossy reconstruction at the model's own sample rate and
+    # bit depth, so returning accompaniment.overlay(vocals) degraded 100% of the
+    # track in order to fix ~0.5s per censored word. Splicing stem-derived audio
+    # only into the censored regions leaves everything else identical to the
+    # source, and makes the output exactly the source's length -- which is what
+    # cue points in DJ software depend on.
+    base = None
+    if source_path and os.path.isfile(source_path):
+        try:
+            base = AudioSegment.from_file(source_path)
+        except Exception as e:
+            print(
+                f"[AudioProcessor] Could not decode source for splice base ({e}); "
+                f"falling back to full stem remix",
+                file=sys.stderr,
+            )
+    if base is None:
+        base = accompaniment.overlay(vocals)
+
+    original_len_ms = len(base)
+    regions = _build_censor_regions(words, original_len_ms, padding_before_ms, padding_after_ms)
     for r in regions:
         start_ms, end_ms = r["start_ms"], r["end_ms"]
+        region_len = end_ms - start_ms
+
+        # Stems can run slightly short of the source; pin both slices to the
+        # region length so the splice cannot change the track's duration.
+        vocal_slice = _fit_exact(vocals[start_ms:end_ms], region_len)
+        accomp_slice = _fit_exact(accompaniment[start_ms:end_ms], region_len)
 
         # Check vocal level to detect demucs leakage
-        vocal_level = vocals[start_ms:end_ms].dBFS
+        vocal_level = vocal_slice.dBFS
         is_leaked = vocal_level < VOCAL_SILENCE_THRESHOLD
 
         print(
@@ -364,19 +407,26 @@ def censor_audio_vocals_only(
             file=sys.stderr,
         )
 
-        # Censor vocals (always)
-        replacement = _make_replacement(vocals, start_ms, end_ms, r["censor_type"])
-        vocals = _splice_with_crossfade(vocals, start_ms, end_ms, replacement, crossfade_ms)
+        # Censor the vocal for this region only.
+        censored_vocal = _make_replacement(vocal_slice, 0, region_len, r["censor_type"])
 
         # If vocals are silent, the word leaked into the accompaniment.
         # Apply band-reject filter to suppress vocal frequencies (250-4000Hz)
         # while preserving kick/bass/hi-hats.
         if is_leaked:
-            filtered = _apply_bandreject(accompaniment[start_ms:end_ms])
-            accompaniment = _splice_with_crossfade(
-                accompaniment, start_ms, end_ms, filtered, crossfade_ms
-            )
+            accomp_slice = _apply_bandreject(accomp_slice)
 
-    # Mix censored vocals back with accompaniment
-    mixed = accompaniment.overlay(vocals)
-    return _export(mixed, output_path, source_path=source_path)
+        # Rebuild just this region from the stems, then splice it into the
+        # original. Demucs artifacts stay confined to the censored words.
+        replacement = _fit_exact(accomp_slice.overlay(censored_vocal), region_len)
+        base = _splice_with_crossfade(base, start_ms, end_ms, replacement, crossfade_ms)
+
+    if len(base) != original_len_ms:
+        # Every cue point after a length change would land in the wrong place.
+        print(
+            f"[AudioProcessor] WARNING: output length {len(base)}ms != "
+            f"source length {original_len_ms}ms",
+            file=sys.stderr,
+        )
+
+    return _export(base, output_path, source_path=source_path)

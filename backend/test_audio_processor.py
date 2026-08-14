@@ -348,3 +348,103 @@ class TestBuildCensorRegions:
     def test_empty_words(self):
         from audio_processor import _build_censor_regions
         assert _build_censor_regions([], 180_000, 150, 100) == []
+
+
+class TestCensorVocalsOnly:
+    """The output must be the ORIGINAL audio everywhere except censored regions.
+
+    Regression: this used to return accompaniment.overlay(vocals), making the
+    whole track a Demucs reconstruction rather than only the censored words.
+    """
+
+    def _build(self, tmp_path, duration_ms=3000, stem_duration_ms=None):
+        """Write an original plus two stems as three distinguishable tones."""
+        from pydub.generators import Sine
+
+        stem_len = stem_duration_ms if stem_duration_ms is not None else duration_ms
+        original = Sine(440).to_audio_segment(duration=duration_ms)
+        vocals = Sine(880).to_audio_segment(duration=stem_len)
+        accomp = Sine(220).to_audio_segment(duration=stem_len)
+
+        paths = {}
+        for name, seg in (("original", original), ("vocals", vocals), ("accomp", accomp)):
+            p = str(tmp_path / f"{name}.wav")
+            seg.export(p, format="wav")
+            paths[name] = p
+        paths["out"] = str(tmp_path / "out.wav")
+        return paths
+
+    def _words(self, start=1.0, end=1.2, censor_type="mute"):
+        return [{"word": "damn", "start": start, "end": end, "censor_type": censor_type}]
+
+    def test_output_length_matches_source_exactly(self, tmp_path):
+        """Any drift here invalidates every cue point after it."""
+        from audio_processor import censor_audio_vocals_only
+
+        p = self._build(tmp_path)
+        censor_audio_vocals_only(
+            p["vocals"], p["accomp"], self._words(), p["out"], source_path=p["original"]
+        )
+        assert len(pydub.AudioSegment.from_file(p["out"])) == len(
+            pydub.AudioSegment.from_file(p["original"])
+        )
+
+    def test_uncensored_audio_is_the_original_not_a_stem_remix(self, tmp_path):
+        """Audio away from any censored word must be untouched source."""
+        from audio_processor import censor_audio_vocals_only
+
+        p = self._build(tmp_path)
+        censor_audio_vocals_only(
+            p["vocals"], p["accomp"], self._words(), p["out"], source_path=p["original"]
+        )
+        out = pydub.AudioSegment.from_file(p["out"])
+        original = pydub.AudioSegment.from_file(p["original"])
+        # 2.4-2.6s is well clear of the padded+crossfaded region around 1.0-1.2s
+        assert out[2400:2600].raw_data == original[2400:2600].raw_data
+
+    def test_censored_region_is_actually_modified(self, tmp_path):
+        """Sanity check the splice still happens at all."""
+        from audio_processor import censor_audio_vocals_only
+
+        p = self._build(tmp_path)
+        censor_audio_vocals_only(
+            p["vocals"], p["accomp"], self._words(), p["out"], source_path=p["original"]
+        )
+        out = pydub.AudioSegment.from_file(p["out"])
+        original = pydub.AudioSegment.from_file(p["original"])
+        assert out[1050:1150].raw_data != original[1050:1150].raw_data
+
+    def test_short_stems_do_not_shrink_the_output(self, tmp_path):
+        """Demucs stems can end a few ms early; a censor at the tail must still fit."""
+        from audio_processor import censor_audio_vocals_only
+
+        p = self._build(tmp_path, duration_ms=3000, stem_duration_ms=2950)
+        censor_audio_vocals_only(
+            p["vocals"], p["accomp"], self._words(start=2.7, end=2.9), p["out"],
+            source_path=p["original"],
+        )
+        assert len(pydub.AudioSegment.from_file(p["out"])) == 3000
+
+    def test_falls_back_to_stem_remix_without_a_source(self, tmp_path):
+        """No source_path (shouldn't happen in practice) must still produce output."""
+        from audio_processor import censor_audio_vocals_only
+
+        p = self._build(tmp_path)
+        censor_audio_vocals_only(p["vocals"], p["accomp"], self._words(), p["out"])
+        assert os.path.exists(p["out"])
+        assert len(pydub.AudioSegment.from_file(p["out"])) == 3000
+
+    def test_leaked_vocal_triggers_bandreject_without_changing_length(self, tmp_path):
+        """Silent vocals mean the word leaked into the accompaniment."""
+        from pydub.generators import Sine
+        from audio_processor import censor_audio_vocals_only
+
+        p = self._build(tmp_path)
+        # Rewrite the vocals stem as silence so is_leaked is True.
+        pydub.AudioSegment.silent(duration=3000, frame_rate=44100).export(
+            p["vocals"], format="wav"
+        )
+        censor_audio_vocals_only(
+            p["vocals"], p["accomp"], self._words(), p["out"], source_path=p["original"]
+        )
+        assert len(pydub.AudioSegment.from_file(p["out"])) == 3000
