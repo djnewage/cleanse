@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import SupportLink from './SupportLink'
 
 interface PaywallModalProps {
   isOpen: boolean
@@ -16,7 +17,8 @@ function isAlreadySubscribedError(err: unknown): err is Error {
 }
 
 export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): React.JSX.Element | null {
-  const { openCheckout, openCustomerPortal, userData, freeSongsLimit, isLoading } = useAuth()
+  const { openCheckout, openCustomerPortal, userData, freeSongsLimit, proPriceLabel, isLoading } =
+    useAuth()
   const [checkoutLoading, setCheckoutLoading] = useState(false)
   const [portalLoading, setPortalLoading] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
@@ -161,25 +163,26 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
               </div>
             </div>
 
-            {/* Features list */}
+            {/* Features list.
+                Only claim what Pro actually changes. Everything Cleanse does --
+                per-word control, all four censor styles, format choice, batch --
+                is identical for free and paid accounts; the export limit is the
+                sole difference. Listing free features as "Pro" reads as a lie
+                the first time someone checks. */}
             <div className="mb-6">
-              <p className="text-sm font-medium text-text-primary mb-3">What you get with Pro:</p>
+              <p className="text-sm font-medium text-text-primary mb-3">Pro removes the limit:</p>
               <ul className="space-y-2 text-sm text-text-secondary">
                 <li className="flex items-center gap-2">
                   <span className="text-green-400">✓</span>
-                  Unlimited song processing
+                  Unlimited exports
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="text-green-400">✓</span>
-                  Batch processing support
+                  Every censor style, per word — mute, beep, reverse, tape stop
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="text-green-400">✓</span>
-                  Turbo Processing (GPU acceleration)
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-green-400">✓</span>
-                  Priority support
+                  Export as MP3, WAV or FLAC at source quality
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="text-green-400">✓</span>
@@ -193,6 +196,13 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
               <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-300 text-sm">
                 {checkoutError}
               </div>
+            )}
+
+            {/* Price, shown before checkout rather than first revealed on Stripe's page */}
+            {!checkoutBlocked && (
+              <p className="text-center text-sm text-text-secondary mb-3">
+                <span className="text-text-primary font-medium">{proPriceLabel}</span>
+              </p>
             )}
 
             {checkoutBlocked ? (
@@ -252,6 +262,10 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
         >
           Maybe later
         </button>
+
+        <p className="text-center text-xs text-text-tertiary">
+          Questions? <SupportLink />
+        </p>
       </div>
     </div>
   )

@@ -20,6 +20,7 @@ import SongDetailPanel from './components/SongDetailPanel'
 import HistoryList from './components/HistoryList'
 import AuthScreen from './components/AuthScreen'
 import UserMenu from './components/UserMenu'
+import UsageIndicator from './components/UsageIndicator'
 import PaywallModal from './components/PaywallModal'
 import FeedbackModal from './components/FeedbackModal'
 import UpdateModal from './components/UpdateModal'
@@ -1054,18 +1055,25 @@ function MainApp(): React.JSX.Element {
 
     exportingRef.current = true
 
-    const exportableSongs = state.songs.filter(
+    const allExportable = state.songs.filter(
       (s) => (s.status === 'ready' || s.status === 'completed') && s.words.some((w) => w.is_profanity)
     )
 
-    if (exportableSongs.length === 0) {
+    if (allExportable.length === 0) {
       exportingRef.current = false
       return
     }
 
-    // Check if user has enough quota for all songs
-    if (!usageInfo.isSubscribed && exportableSongs.length > usageInfo.songsRemaining) {
-      // Show paywall if they're trying to export more than their remaining quota
+    // Export as many as the remaining quota covers, then show the paywall once
+    // they're written. Previously a batch larger than the quota exported nothing
+    // at all, so a free user with 2 remaining and 5 ready songs got a paywall
+    // instead of the 2 exports they were entitled to.
+    const quotaLimited = !usageInfo.isSubscribed && allExportable.length > usageInfo.songsRemaining
+    const exportableSongs = quotaLimited
+      ? allExportable.slice(0, Math.max(0, usageInfo.songsRemaining))
+      : allExportable
+
+    if (exportableSongs.length === 0) {
       setShowPaywall(true)
       exportingRef.current = false
       return
@@ -1169,6 +1177,12 @@ function MainApp(): React.JSX.Element {
     dispatch({ type: 'EXPORT_ALL_COMPLETE' })
     logExportCompleted(successfulExports)
     exportingRef.current = false
+
+    // The rest of the batch didn't fit in the free quota - now that they have
+    // what they're owed, make the reason clear.
+    if (quotaLimited) {
+      setShowPaywall(true)
+    }
   }, [state.songs, exportFormat, checkCanProcess, recordUsage])
 
   // Toggle turbo mode
@@ -1266,6 +1280,9 @@ function MainApp(): React.JSX.Element {
 
             {/* Theme toggle */}
             <ThemeToggle />
+
+            {/* Free quota, always visible so the limit isn't a surprise */}
+            <UsageIndicator onManageSubscription={handleShowPaywall} />
 
             {/* User menu */}
             <UserMenu onManageSubscription={handleShowPaywall} />

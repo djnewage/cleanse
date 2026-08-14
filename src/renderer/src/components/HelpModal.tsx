@@ -1,3 +1,5 @@
+import SupportLink from './SupportLink'
+
 interface HelpModalProps {
   isOpen: boolean
   onClose: () => void
@@ -59,7 +61,6 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps): React.JS
         {/* Settings */}
         <Section title="Settings">
           <Row label="Dual-Pass" desc="Runs a second transcription pass on isolated vocals to catch ad-libs" />
-          <Row label="Turbo" desc="Uses a faster (but slightly less accurate) transcription model" />
           <Row label="Crossfade" desc="Smooths the transition in/out of each censor so it sounds natural" />
           <Row label="Censor Range" desc="Extends the censor before and after each word (higher = more aggressive, catches bleed)" />
         </Section>
@@ -70,6 +71,10 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps): React.JS
         >
           Got it
         </button>
+
+        <p className="text-center text-xs text-text-tertiary mt-3">
+          Stuck on something? <SupportLink />
+        </p>
       </div>
     </div>
   )

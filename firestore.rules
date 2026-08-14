@@ -1,9 +1,33 @@
-rules_version='2';
+rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Users collection - users can only read their own document.
+    // All writes must go through Cloud Functions (the Admin SDK bypasses rules).
     match /users/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    // Remote display config: freeSongsLimit and proPriceLabel.
+    //
+    // The client subscribes to this doc (AuthContext) so both values can change
+    // without shipping a release. Without a read rule the snapshot was denied
+    // and silently fell back to the hardcoded client defaults -- meaning the
+    // server would enforce a new free limit while the UI kept advertising the
+    // old one. Invisible only while the two happened to agree.
+    //
+    // Read-only and public: it holds nothing user-specific or sensitive, and
+    // the sign-in screen needs it before any user is authenticated.
+    match /config/app {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Deny all other access. Rules are OR'd, so this does not override the
+    // specific allows above - it just makes the default explicit.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
