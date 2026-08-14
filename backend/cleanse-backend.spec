@@ -34,6 +34,10 @@ hidden_imports += collect_submodules('torchaudio')
 hidden_imports += collect_submodules('pydub')
 hidden_imports += collect_submodules('numpy')
 hidden_imports += collect_submodules('scipy')
+# mutagen.File() picks its format handler dynamically, so static analysis finds
+# none of them. Without this the packaged backend silently loses every DJ cue
+# tag while working fine in dev.
+hidden_imports += collect_submodules('mutagen')
 hidden_imports += [
     'fastapi',
     'fastapi.middleware',

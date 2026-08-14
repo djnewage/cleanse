@@ -196,7 +196,10 @@ def _copy_metadata(source_path: str | None, output_path: str, out_format: str) -
         "-disposition:v:0", "attached_pic",
     ]
     if out_format == "mp3":
-        cmd += ["-id3v2_version", "3"]
+        # -write_xing keeps the LAME/Xing gapless header through the remux. DJ
+        # software uses its encoder-delay fields to line playback up, so losing
+        # it would shift the whole timeline against the cue points below.
+        cmd += ["-id3v2_version", "3", "-write_xing", "1"]
     cmd.append(temp_path)
 
     try:
@@ -239,6 +242,16 @@ def _export(audio: AudioSegment, output_path: str, source_path: str | None = Non
 
     audio.export(output_path, **kwargs)
     _copy_metadata(source_path, output_path, out_format)
+
+    # Carry DJ cue points / beatgrids that ffmpeg's muxers drop. Must run AFTER
+    # _copy_metadata, which finishes with an os.replace() that would otherwise
+    # discard this write. Best-effort: the censored audio is never lost to it.
+    try:
+        from tag_preserver import copy_tags
+        copy_tags(source_path, output_path)
+    except Exception as e:
+        print(f"[AudioProcessor] Tag passthrough failed: {e}", file=sys.stderr)
+
     return output_path
 
 
