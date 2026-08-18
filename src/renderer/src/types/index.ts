@@ -245,4 +245,4 @@ export const PRO_PRICE_LABEL = '$9.99/month'
 
 // The only way a user can reach us. Surfaced from the paywall, the help modal
 // and the feedback form.
-export const SUPPORT_EMAIL = 'support@recrate.app'
+export const SUPPORT_EMAIL = 'hello@recrate.app'
