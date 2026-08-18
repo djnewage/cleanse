@@ -35,6 +35,11 @@ interface UserDoc {
     stripeCustomerId: string | null;
     stripeSubscriptionId: string | null;
     currentPeriodEnd: admin.firestore.Timestamp | null;
+    /** Stripe keeps a subscription 'active' until the paid period actually
+     *  ends, so status alone cannot tell a renewing plan from one the user
+     *  has already cancelled. Without this the UI told cancelled users their
+     *  plan "renews" on the very date it was going to stop. */
+    cancelAtPeriodEnd?: boolean;
   };
 }
 
@@ -67,7 +72,8 @@ export const createUser = functions.auth.user().onCreate(async (user) => {
       status: 'none',
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-      currentPeriodEnd: null
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false
     }
   };
 
@@ -384,16 +390,24 @@ async function reconcileSubscriptionStatus(stripe: Stripe, customerId: string) {
   // Get current_period_end from the first subscription item
   const currentPeriodEnd = best?.items?.data?.[0]?.current_period_end;
 
+  // A subscription set to cancel at period end still reports status 'active'
+  // right up until the period closes, so this flag is the only signal that the
+  // user has cancelled. Clear it once the plan is no longer current, otherwise a
+  // resubscribe would inherit a stale "cancels soon" from the previous plan.
+  const cancelAtPeriodEnd = Boolean(isCurrent && best.cancel_at_period_end);
+
   await userDoc.ref.update({
     'subscription.status': status,
     'subscription.stripeSubscriptionId': isCurrent ? best.id : null,
     'subscription.currentPeriodEnd': isCurrent && currentPeriodEnd
       ? admin.firestore.Timestamp.fromMillis(currentPeriodEnd * 1000)
-      : null
+      : null,
+    'subscription.cancelAtPeriodEnd': cancelAtPeriodEnd
   });
 
   console.log(
-    `Reconciled subscription for user ${userDoc.id}: ${status}${best ? ` (${best.id})` : ''}`
+    `Reconciled subscription for user ${userDoc.id}: ${status}` +
+    `${best ? ` (${best.id})` : ''}${cancelAtPeriodEnd ? ' [cancels at period end]' : ''}`
   );
 }
 

@@ -153,7 +153,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
               lifetime: data.subscription?.lifetime || false,
               stripeCustomerId: data.subscription?.stripeCustomerId || null,
               stripeSubscriptionId: data.subscription?.stripeSubscriptionId || null,
-              currentPeriodEnd: data.subscription?.currentPeriodEnd?.toMillis?.() || null
+              currentPeriodEnd: data.subscription?.currentPeriodEnd?.toMillis?.() || null,
+              cancelAtPeriodEnd: data.subscription?.cancelAtPeriodEnd || false
             }
           })
         }

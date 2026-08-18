@@ -205,6 +205,10 @@ export interface UserSubscription {
   stripeCustomerId: string | null
   stripeSubscriptionId: string | null
   currentPeriodEnd: number | null
+  /** Subscription is cancelled but still paid up until currentPeriodEnd.
+   *  Stripe reports these as 'active', so status alone cannot distinguish
+   *  them from a renewing plan. */
+  cancelAtPeriodEnd: boolean
 }
 
 export interface UserData {
