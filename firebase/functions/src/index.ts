@@ -40,6 +40,9 @@ interface UserDoc {
      *  has already cancelled. Without this the UI told cancelled users their
      *  plan "renews" on the very date it was going to stop. */
     cancelAtPeriodEnd?: boolean;
+    /** Number of billable subscriptions on the Stripe customer. Anything above
+     *  1 means the customer is being charged that many times per cycle. */
+    billableCount?: number;
   };
 }
 
@@ -384,6 +387,24 @@ async function reconcileSubscriptionStatus(stripe: Stripe, customerId: string) {
     .slice()
     .sort((a, b) => STATUS_PRIORITY.indexOf(a.status) - STATUS_PRIORITY.indexOf(b.status))[0];
 
+  // Picking a single "best" subscription is right for deciding entitlement, but
+  // it silently hides the case that matters most: a customer carrying more than
+  // one billable subscription is charged once per subscription every cycle, and
+  // Firestore would still look completely normal. The checkout guard added in
+  // beaab16 only prevents NEW duplicates -- any created before it shipped are
+  // still live and still billing. Shout about them.
+  const billable = subs.data.filter((s) =>
+    ['active', 'trialing', 'past_due', 'unpaid'].includes(s.status)
+  );
+  if (billable.length > 1) {
+    console.error(
+      `DUPLICATE SUBSCRIPTIONS: user ${userDoc.id} (customer ${customerId}) has ` +
+      `${billable.length} billable subscriptions and is being charged ` +
+      `${billable.length}x per cycle — ` +
+      billable.map((s) => `${s.id}:${s.status}`).join(', ')
+    );
+  }
+
   const status = best ? mapStripeStatus(best.status) : 'canceled';
   const isCurrent = best && status !== 'canceled' && status !== 'none';
 
@@ -402,7 +423,10 @@ async function reconcileSubscriptionStatus(stripe: Stripe, customerId: string) {
     'subscription.currentPeriodEnd': isCurrent && currentPeriodEnd
       ? admin.firestore.Timestamp.fromMillis(currentPeriodEnd * 1000)
       : null,
-    'subscription.cancelAtPeriodEnd': cancelAtPeriodEnd
+    'subscription.cancelAtPeriodEnd': cancelAtPeriodEnd,
+    // Persisted so affected customers can be found by querying Firestore
+    // (> 1 means double-billed); logs age out after 30 days.
+    'subscription.billableCount': billable.length
   });
 
   console.log(
