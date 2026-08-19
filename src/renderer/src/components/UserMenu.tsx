@@ -105,7 +105,7 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
                     {userData?.subscription.lifetime
                       ? 'Lifetime'
                       : userData?.subscription.currentPeriodEnd
-                        ? `Renews ${new Date(userData.subscription.currentPeriodEnd).toLocaleDateString()}`
+                        ? `${userData.subscription.cancelAtPeriodEnd ? 'Cancels' : 'Renews'} ${new Date(userData.subscription.currentPeriodEnd).toLocaleDateString()}`
                         : ''}
                   </span>
                 </div>

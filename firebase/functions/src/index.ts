@@ -35,6 +35,14 @@ interface UserDoc {
     stripeCustomerId: string | null;
     stripeSubscriptionId: string | null;
     currentPeriodEnd: admin.firestore.Timestamp | null;
+    /** Stripe keeps a subscription 'active' until the paid period actually
+     *  ends, so status alone cannot tell a renewing plan from one the user
+     *  has already cancelled. Without this the UI told cancelled users their
+     *  plan "renews" on the very date it was going to stop. */
+    cancelAtPeriodEnd?: boolean;
+    /** Number of billable subscriptions on the Stripe customer. Anything above
+     *  1 means the customer is being charged that many times per cycle. */
+    billableCount?: number;
   };
 }
 
@@ -67,7 +75,8 @@ export const createUser = functions.auth.user().onCreate(async (user) => {
       status: 'none',
       stripeCustomerId: null,
       stripeSubscriptionId: null,
-      currentPeriodEnd: null
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false
     }
   };
 
@@ -202,6 +211,12 @@ export const createCheckoutSession = functions.runWith({ secrets: [stripeSecretK
   // Get or create Stripe customer
   let customerId = userData.subscription.stripeCustomerId;
 
+  // How many subscriptions the customer already has. Doubles as the
+  // discriminator on the idempotency key below: two racing calls compute the
+  // same value, while a genuine resubscribe later computes a different one and
+  // is never mistaken for a replay.
+  let existingCount = 0;
+
   if (customerId) {
     // Don't create a duplicate subscription. Re-subscribing while an old
     // subscription is still active or in dunning leaves multiple subscriptions
@@ -211,6 +226,7 @@ export const createCheckoutSession = functions.runWith({ secrets: [stripeSecretK
       status: 'all',
       limit: 100
     });
+    existingCount = existing.data.length;
     const blocking = existing.data.find((s) =>
       ['active', 'trialing', 'past_due', 'unpaid'].includes(s.status)
     );
@@ -220,13 +236,35 @@ export const createCheckoutSession = functions.runWith({ secrets: [stripeSecretK
         'You already have a subscription. Use Manage Billing to update your payment method.'
       );
     }
+
+    // The guard above can only fire once a subscription exists, so it cannot
+    // stop two checkouts that both begin before either has produced one. That
+    // is how one customer came to pay twice a month for three months: two
+    // sessions completed two minutes apart, because the cleanse:// success URL
+    // resolves to nothing and they reasonably assumed the first attempt failed.
+    // Hand back the session already in flight rather than minting a second.
+    const recent = await stripe.checkout.sessions.list({
+      customer: customerId,
+      limit: 10
+    });
+    const inFlight = recent.data.find((s) => s.status === 'open' && s.url);
+    if (inFlight?.url) {
+      console.log(`Reusing in-flight checkout session ${inFlight.id} for user ${uid}`);
+      return { sessionId: inFlight.id, url: inFlight.url };
+    }
   }
 
   if (!customerId) {
-    const customer = await stripe.customers.create({
-      email: userData.email,
-      metadata: { firebaseUid: uid }
-    });
+    // Keyed on the uid so two racing calls cannot create two separate customers
+    // for one person. That would put a subscription on each and defeat every
+    // duplicate check here, since they all scope to a single customer.
+    const customer = await stripe.customers.create(
+      {
+        email: userData.email,
+        metadata: { firebaseUid: uid }
+      },
+      { idempotencyKey: `cleanse:customer:${uid}` }
+    );
     customerId = customer.id;
 
     await db.collection('users').doc(uid).update({
@@ -240,20 +278,26 @@ export const createCheckoutSession = functions.runWith({ secrets: [stripeSecretK
     throw new functions.https.HttpsError('failed-precondition', 'Stripe price not configured');
   }
 
-  const session = await stripe.checkout.sessions.create({
-    customer: customerId,
-    payment_method_types: ['card'],
-    line_items: [
-      {
-        price: priceId,
-        quantity: 1
-      }
-    ],
-    mode: 'subscription',
-    success_url: data.successUrl || 'cleanse://subscription-success',
-    cancel_url: data.cancelUrl || 'cleanse://subscription-canceled',
-    metadata: { firebaseUid: uid }
-  });
+  const session = await stripe.checkout.sessions.create(
+    {
+      customer: customerId,
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1
+        }
+      ],
+      mode: 'subscription',
+      success_url: data.successUrl || 'cleanse://subscription-success',
+      cancel_url: data.cancelUrl || 'cleanse://subscription-canceled',
+      metadata: { firebaseUid: uid }
+    },
+    // Catches the sub-second double-fire the in-flight lookup above can still
+    // miss, since a session created milliseconds earlier may not be listed yet.
+    // Stripe replays the original response for 24h against the same key.
+    { idempotencyKey: `cleanse:checkout:${uid}:${existingCount}` }
+  );
 
   return { sessionId: session.id, url: session.url };
 });
@@ -378,22 +422,51 @@ async function reconcileSubscriptionStatus(stripe: Stripe, customerId: string) {
     .slice()
     .sort((a, b) => STATUS_PRIORITY.indexOf(a.status) - STATUS_PRIORITY.indexOf(b.status))[0];
 
+  // Picking a single "best" subscription is right for deciding entitlement, but
+  // it silently hides the case that matters most: a customer carrying more than
+  // one billable subscription is charged once per subscription every cycle, and
+  // Firestore would still look completely normal. The checkout guard added in
+  // beaab16 only prevents NEW duplicates -- any created before it shipped are
+  // still live and still billing. Shout about them.
+  const billable = subs.data.filter((s) =>
+    ['active', 'trialing', 'past_due', 'unpaid'].includes(s.status)
+  );
+  if (billable.length > 1) {
+    console.error(
+      `DUPLICATE SUBSCRIPTIONS: user ${userDoc.id} (customer ${customerId}) has ` +
+      `${billable.length} billable subscriptions and is being charged ` +
+      `${billable.length}x per cycle — ` +
+      billable.map((s) => `${s.id}:${s.status}`).join(', ')
+    );
+  }
+
   const status = best ? mapStripeStatus(best.status) : 'canceled';
   const isCurrent = best && status !== 'canceled' && status !== 'none';
 
   // Get current_period_end from the first subscription item
   const currentPeriodEnd = best?.items?.data?.[0]?.current_period_end;
 
+  // A subscription set to cancel at period end still reports status 'active'
+  // right up until the period closes, so this flag is the only signal that the
+  // user has cancelled. Clear it once the plan is no longer current, otherwise a
+  // resubscribe would inherit a stale "cancels soon" from the previous plan.
+  const cancelAtPeriodEnd = Boolean(isCurrent && best.cancel_at_period_end);
+
   await userDoc.ref.update({
     'subscription.status': status,
     'subscription.stripeSubscriptionId': isCurrent ? best.id : null,
     'subscription.currentPeriodEnd': isCurrent && currentPeriodEnd
       ? admin.firestore.Timestamp.fromMillis(currentPeriodEnd * 1000)
-      : null
+      : null,
+    'subscription.cancelAtPeriodEnd': cancelAtPeriodEnd,
+    // Persisted so affected customers can be found by querying Firestore
+    // (> 1 means double-billed); logs age out after 30 days.
+    'subscription.billableCount': billable.length
   });
 
   console.log(
-    `Reconciled subscription for user ${userDoc.id}: ${status}${best ? ` (${best.id})` : ''}`
+    `Reconciled subscription for user ${userDoc.id}: ${status}` +
+    `${best ? ` (${best.id})` : ''}${cancelAtPeriodEnd ? ' [cancels at period end]' : ''}`
   );
 }
 

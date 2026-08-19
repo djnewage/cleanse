@@ -1,5 +1,6 @@
 import { useState, useCallback, FormEvent } from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import { FREE_SONGS_LIMIT } from '../types'
 
 type AuthMode = 'signin' | 'signup' | 'reset'
 
@@ -222,9 +223,13 @@ export default function AuthScreen(): React.JSX.Element {
           </div>
         </div>
 
-        {/* Free tier info */}
+        {/* Free tier info. Bound to the constant, not a literal: this renders
+            pre-auth so it can't read the live config, and a hardcoded number
+            here silently drifted from the real limit (it claimed 5 when the
+            limit was 2 -- the first thing every new user read was wrong). */}
         <p className="text-center text-xs text-text-tertiary mt-6">
-          Start with 5 free songs. Subscribe for unlimited access.
+          Start with {FREE_SONGS_LIMIT} free {FREE_SONGS_LIMIT === 1 ? 'song' : 'songs'}. Subscribe
+          for unlimited access.
         </p>
       </div>
     </div>

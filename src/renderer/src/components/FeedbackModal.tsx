@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { submitFeedback } from '../lib/firebase'
 import { logFeedbackSubmitted } from '../lib/analytics'
+import SupportLink from './SupportLink'
 
 interface FeedbackModalProps {
   isOpen: boolean
@@ -128,6 +129,10 @@ export default function FeedbackModal({ isOpen, onClose }: FeedbackModalProps): 
             >
               Cancel
             </button>
+
+            <p className="text-center text-xs text-text-tertiary mt-1">
+              Need a reply? Email <SupportLink /> instead.
+            </p>
           </>
         )}
       </div>

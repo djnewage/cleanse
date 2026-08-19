@@ -12,7 +12,7 @@ import { doc, onSnapshot } from 'firebase/firestore'
 import { auth, db, incrementUsage, canProcessSong, createCheckoutSession, createPortalSession, recordMetric } from '../lib/firebase'
 import { logLogin, logSignUp, logSignOut, logCheckoutInitiated } from '../lib/analytics'
 import type { UserData, UsageInfo } from '../types'
-import { FREE_SONGS_LIMIT } from '../types'
+import { FREE_SONGS_LIMIT, PRO_PRICE_LABEL } from '../types'
 
 interface AuthContextType {
   // Auth state
@@ -41,6 +41,7 @@ interface AuthContextType {
   isSubscribed: boolean
   songsRemaining: number
   freeSongsLimit: number
+  proPriceLabel: string
 }
 
 const AuthContext = createContext<AuthContextType | null>(null)
@@ -89,6 +90,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [freeSongsLimit, setFreeSongsLimit] = useState(FREE_SONGS_LIMIT)
+  const [proPriceLabel, setProPriceLabel] = useState(PRO_PRICE_LABEL)
 
   // Listen to auth state changes
   useEffect(() => {
@@ -120,6 +122,9 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
           if (typeof data.freeSongsLimit === 'number') {
             setFreeSongsLimit(data.freeSongsLimit)
           }
+          if (typeof data.proPriceLabel === 'string' && data.proPriceLabel) {
+            setProPriceLabel(data.proPriceLabel)
+          }
         }
       },
       (err) => {
@@ -148,7 +153,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
               lifetime: data.subscription?.lifetime || false,
               stripeCustomerId: data.subscription?.stripeCustomerId || null,
               stripeSubscriptionId: data.subscription?.stripeSubscriptionId || null,
-              currentPeriodEnd: data.subscription?.currentPeriodEnd?.toMillis?.() || null
+              currentPeriodEnd: data.subscription?.currentPeriodEnd?.toMillis?.() || null,
+              cancelAtPeriodEnd: data.subscription?.cancelAtPeriodEnd || false
             }
           })
         }
@@ -343,7 +349,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     isAuthenticated,
     isSubscribed,
     songsRemaining,
-    freeSongsLimit
+    freeSongsLimit,
+    proPriceLabel
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

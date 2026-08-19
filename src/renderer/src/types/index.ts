@@ -205,6 +205,10 @@ export interface UserSubscription {
   stripeCustomerId: string | null
   stripeSubscriptionId: string | null
   currentPeriodEnd: number | null
+  /** Subscription is cancelled but still paid up until currentPeriodEnd.
+   *  Stripe reports these as 'active', so status alone cannot distinguish
+   *  them from a renewing plan. */
+  cancelAtPeriodEnd: boolean
 }
 
 export interface UserData {
@@ -232,4 +236,17 @@ export interface UsageInfo {
   isSubscribed: boolean
 }
 
-export const FREE_SONGS_LIMIT = 2
+// Typed as number, not narrowed to a literal: this is the fallback default,
+// and config/app.freeSongsLimit overrides it at runtime.
+export const FREE_SONGS_LIMIT: number = 2
+
+// Shown in-app so the price isn't first revealed on Stripe's checkout page.
+// The authoritative price is the Stripe price object (stored as a Firebase
+// secret and not visible to the client), so this is a display fallback --
+// config/app.proPriceLabel overrides it at runtime, letting the displayed
+// price change without shipping a release.
+export const PRO_PRICE_LABEL = '$9.99/month'
+
+// The only way a user can reach us. Surfaced from the paywall, the help modal
+// and the feedback form.
+export const SUPPORT_EMAIL = 'hello@recrate.app'
