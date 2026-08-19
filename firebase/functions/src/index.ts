@@ -211,6 +211,12 @@ export const createCheckoutSession = functions.runWith({ secrets: [stripeSecretK
   // Get or create Stripe customer
   let customerId = userData.subscription.stripeCustomerId;
 
+  // How many subscriptions the customer already has. Doubles as the
+  // discriminator on the idempotency key below: two racing calls compute the
+  // same value, while a genuine resubscribe later computes a different one and
+  // is never mistaken for a replay.
+  let existingCount = 0;
+
   if (customerId) {
     // Don't create a duplicate subscription. Re-subscribing while an old
     // subscription is still active or in dunning leaves multiple subscriptions
@@ -220,6 +226,7 @@ export const createCheckoutSession = functions.runWith({ secrets: [stripeSecretK
       status: 'all',
       limit: 100
     });
+    existingCount = existing.data.length;
     const blocking = existing.data.find((s) =>
       ['active', 'trialing', 'past_due', 'unpaid'].includes(s.status)
     );
@@ -229,13 +236,35 @@ export const createCheckoutSession = functions.runWith({ secrets: [stripeSecretK
         'You already have a subscription. Use Manage Billing to update your payment method.'
       );
     }
+
+    // The guard above can only fire once a subscription exists, so it cannot
+    // stop two checkouts that both begin before either has produced one. That
+    // is how one customer came to pay twice a month for three months: two
+    // sessions completed two minutes apart, because the cleanse:// success URL
+    // resolves to nothing and they reasonably assumed the first attempt failed.
+    // Hand back the session already in flight rather than minting a second.
+    const recent = await stripe.checkout.sessions.list({
+      customer: customerId,
+      limit: 10
+    });
+    const inFlight = recent.data.find((s) => s.status === 'open' && s.url);
+    if (inFlight?.url) {
+      console.log(`Reusing in-flight checkout session ${inFlight.id} for user ${uid}`);
+      return { sessionId: inFlight.id, url: inFlight.url };
+    }
   }
 
   if (!customerId) {
-    const customer = await stripe.customers.create({
-      email: userData.email,
-      metadata: { firebaseUid: uid }
-    });
+    // Keyed on the uid so two racing calls cannot create two separate customers
+    // for one person. That would put a subscription on each and defeat every
+    // duplicate check here, since they all scope to a single customer.
+    const customer = await stripe.customers.create(
+      {
+        email: userData.email,
+        metadata: { firebaseUid: uid }
+      },
+      { idempotencyKey: `cleanse:customer:${uid}` }
+    );
     customerId = customer.id;
 
     await db.collection('users').doc(uid).update({
@@ -249,20 +278,26 @@ export const createCheckoutSession = functions.runWith({ secrets: [stripeSecretK
     throw new functions.https.HttpsError('failed-precondition', 'Stripe price not configured');
   }
 
-  const session = await stripe.checkout.sessions.create({
-    customer: customerId,
-    payment_method_types: ['card'],
-    line_items: [
-      {
-        price: priceId,
-        quantity: 1
-      }
-    ],
-    mode: 'subscription',
-    success_url: data.successUrl || 'cleanse://subscription-success',
-    cancel_url: data.cancelUrl || 'cleanse://subscription-canceled',
-    metadata: { firebaseUid: uid }
-  });
+  const session = await stripe.checkout.sessions.create(
+    {
+      customer: customerId,
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1
+        }
+      ],
+      mode: 'subscription',
+      success_url: data.successUrl || 'cleanse://subscription-success',
+      cancel_url: data.cancelUrl || 'cleanse://subscription-canceled',
+      metadata: { firebaseUid: uid }
+    },
+    // Catches the sub-second double-fire the in-flight lookup above can still
+    // miss, since a session created milliseconds earlier may not be listed yet.
+    // Stripe replays the original response for 24h against the same key.
+    { idempotencyKey: `cleanse:checkout:${uid}:${existingCount}` }
+  );
 
   return { sessionId: session.id, url: session.url };
 });
