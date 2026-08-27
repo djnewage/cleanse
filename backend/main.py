@@ -787,15 +787,33 @@ def preview(req: CensorRequest):
             ext = f".{req.output_format}"
         import time
         import glob
-        # Cap cleanse-preview/ at one file per source song: every regen leaves
+        # Cap cleanse-preview/ at two files per source song: every regen leaves
         # an orphaned 5-40 MB preview behind otherwise, which exhausts the temp
-        # disk after a few format/crossfade toggles.
-        for stale in glob.glob(os.path.join(temp_dir, f"{name}_preview_*")):
+        # disk after a few format/crossfade toggles. The NEWEST existing preview
+        # is kept rather than purged — the renderer keeps playing it while this
+        # regen runs, and deleting it out from under the audio element breaks
+        # playback mid-edit. It gets collected on the regen after next.
+        def _mtime(path: str) -> float:
+            # A concurrent regen for the same song can unlink between the glob
+            # and the sort; a missing file sorts oldest and is skipped below.
+            try:
+                return os.path.getmtime(path)
+            except OSError:
+                return 0.0
+
+        existing = sorted(
+            glob.glob(os.path.join(temp_dir, f"{name}_preview_*")),
+            key=_mtime,
+        )
+        for stale in existing[:-1]:
             try:
                 os.remove(stale)
             except OSError as e:
                 print(f"[Preview] Could not remove stale preview {stale}: {e}", file=sys.stderr)
-        preview_path = os.path.join(temp_dir, f"{name}_preview_{int(time.time())}{ext}")
+        # Millisecond resolution: two regens inside the same second would
+        # otherwise collide on one path and the renderer would keep serving the
+        # cached older file for the newer edit.
+        preview_path = os.path.join(temp_dir, f"{name}_preview_{int(time.time() * 1000)}{ext}")
 
         words_dicts = [w.model_dump() for w in req.words]
 

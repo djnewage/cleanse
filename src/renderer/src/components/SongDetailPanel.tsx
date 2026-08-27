@@ -269,15 +269,18 @@ export default function SongDetailPanel({
       {/* Audio preview: shown during review (ready) and after export */}
       {showAudioPreview && (
         <div className="pt-2">
-          {/* Show preview generation status */}
-          {song.isGeneratingPreview && (
+          {/* Only for the FIRST render, when there is no censored player yet to
+              carry the status on its label. During edits the censored player is
+              always mounted, so this banner never appears and the layout never
+              shifts. */}
+          {song.isGeneratingPreview && !song.previewFilePath && !song.censoredFilePath && (
             <div className="flex items-center gap-2 text-xs text-text-tertiary mb-3 px-3 py-2 bg-surface border border-border rounded">
               <div className="w-3 h-3 border-2 border-border-strong border-t-blue-400 rounded-full animate-spin" />
-              <span>Updating preview...</span>
+              <span>Rendering preview...</span>
             </div>
           )}
 
-          {!song.isGeneratingPreview && !song.previewFilePath && !song.censoredFilePath && song.errorMessage && (
+          {!song.isGeneratingPreview && !song.previewStale && song.errorMessage && (
             <div className="text-xs text-red-400 mb-3 px-3 py-2 bg-red-900/20 border border-red-800 rounded">
               Preview failed: {song.errorMessage}
             </div>
@@ -287,6 +290,10 @@ export default function SongDetailPanel({
             originalPath={song.filePath}
             censoredPath={song.previewFilePath || song.censoredFilePath}
             audioRef={audioRef}
+            // previewStale flips on click; isGeneratingPreview only after the
+            // 500ms debounce — the union covers the whole window so the status
+            // shows immediately rather than a beat later.
+            isUpdating={song.previewStale || song.isGeneratingPreview}
             onClearFile={song.censoredFilePath ? () => {} : undefined}
           />
         </div>

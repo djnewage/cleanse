@@ -5,7 +5,18 @@ export interface TranscribedWord {
   confidence: number
   is_profanity: boolean
   censor_type?: CensorType
-  detection_source?: 'primary' | 'vocals' | 'adlib' | 'adlib_rescan' | 'lyrics' | 'lyrics_gap' | 'lyrics_corrected' | 'manual' | 'custom'
+  detection_source?:
+    | 'primary'
+    | 'vocals'
+    | 'adlib'
+    | 'adlib_rescan'
+    | 'hook_echo'
+    | 'acoustic_echo'
+    | 'lyrics'
+    | 'lyrics_gap'
+    | 'lyrics_corrected'
+    | 'manual'
+    | 'custom'
 }
 
 export interface CensorWord {
@@ -79,6 +90,9 @@ export interface SongEntry {
   transcriptionProgress: SeparationProgress | null
   censoredFilePath: string | null
   previewFilePath: string | null
+  /** The shown preview no longer matches the current words/settings; it stays
+   *  mounted (so playback survives an edit) until the replacement lands. */
+  previewStale: boolean
   isGeneratingPreview: boolean
   defaultCensorType: CensorType
   userReviewed: boolean
@@ -152,6 +166,7 @@ export type BatchAppAction =
   | { type: 'PREVIEW_GENERATED'; id: string; previewPath: string }
   | { type: 'PREVIEW_GENERATION_FAILED'; id: string; error: string }
   | { type: 'CLEAR_PREVIEW'; id: string }
+  | { type: 'DROP_PREVIEW'; id: string }
   | { type: 'ADD_CUSTOM_WORD'; word: string }
   | { type: 'REMOVE_CUSTOM_WORD'; word: string }
   | { type: 'SET_CUSTOM_WORDS'; words: string[] }
