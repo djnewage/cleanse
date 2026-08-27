@@ -114,6 +114,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         transcriptionProgress: null,
         censoredFilePath: null,
         previewFilePath: null,
+        previewStale: false,
         isGeneratingPreview: false,
         defaultCensorType: state.globalDefaultCensorType,
         userReviewed: false,
@@ -282,7 +283,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
                 status: s.status === 'completed' ? 'ready' : s.status,
                 words: [...s.words, action.word].sort((a, b) => a.start - b.start),
                 censoredFilePath: null,
-                previewFilePath: null
+                previewStale: true
               }
             : s
         )
@@ -298,7 +299,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
                 status: s.status === 'completed' ? 'ready' : s.status,
                 words: s.words.filter((_, i) => i !== action.wordIndex),
                 censoredFilePath: null,
-                previewFilePath: null
+                previewStale: true
               }
             : s
         )
@@ -316,7 +317,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
                   i === action.wordIndex ? { ...w, is_profanity: !w.is_profanity } : w
                 ),
                 censoredFilePath: null,
-                previewFilePath: null
+                previewStale: true
               }
             : s
         )
@@ -334,7 +335,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
                   i === action.wordIndex ? { ...w, censor_type: action.censorType } : w
                 ),
                 censoredFilePath: null,
-                previewFilePath: null
+                previewStale: true
               }
             : s
         )
@@ -350,7 +351,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
                 status: s.status === 'completed' ? 'ready' : s.status,
                 words: s.words.map((w) => ({ ...w, censor_type: undefined })),
                 censoredFilePath: null,
-                previewFilePath: null
+                previewStale: true
               }
             : s
         )
@@ -361,7 +362,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         ...state,
         songs: state.songs.map((s) =>
           s.id === action.songId
-            ? { ...s, status: s.status === 'completed' ? 'ready' : s.status, defaultCensorType: action.censorType, censoredFilePath: null, previewFilePath: null }
+            ? { ...s, status: s.status === 'completed' ? 'ready' : s.status, defaultCensorType: action.censorType, censoredFilePath: null, previewStale: true }
             : s
         )
       }
@@ -379,26 +380,56 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         ...state,
         songs: state.songs.map((s) =>
           s.id === action.id
-            ? { ...s, previewFilePath: action.previewPath, isGeneratingPreview: false }
+            // errorMessage is cleared because a successful render resolves any
+            // previous preview failure. The error banner is no longer gated on
+            // previewFilePath being null (a stale preview stays mounted now), so
+            // a leftover message would otherwise sit next to a working preview.
+            ? {
+                ...s,
+                previewFilePath: action.previewPath,
+                previewStale: false,
+                isGeneratingPreview: false,
+                errorMessage: null
+              }
             : s
         )
       }
 
     case 'PREVIEW_GENERATION_FAILED':
+      // Clear staleness too: previewStale means "a replacement is coming", and
+      // after a failure none is. Left set, the player's "updating..." status
+      // would run forever with nothing behind it, and the regen guard would
+      // keep treating the song as unfinished work.
       return {
         ...state,
         songs: state.songs.map((s) =>
           s.id === action.id
-            ? { ...s, isGeneratingPreview: false, errorMessage: action.error }
+            ? { ...s, isGeneratingPreview: false, previewStale: false, errorMessage: action.error }
             : s
         )
       }
 
     case 'CLEAR_PREVIEW':
+      // Marks the shown preview out of date WITHOUT unmounting it: the player
+      // keeps playing it (and the playhead survives) until the regenerated file
+      // replaces it.
       return {
         ...state,
         songs: state.songs.map((s) =>
-          s.id === action.id ? { ...s, previewFilePath: null, isGeneratingPreview: false } : s
+          s.id === action.id ? { ...s, previewStale: true, isGeneratingPreview: false } : s
+        )
+      }
+
+    case 'DROP_PREVIEW':
+      // Genuinely removes the preview — used when nothing is left to censor, so
+      // there is no replacement coming and the player must fall back to the
+      // original rather than keep playing a stale censored file.
+      return {
+        ...state,
+        songs: state.songs.map((s) =>
+          s.id === action.id
+            ? { ...s, previewFilePath: null, previewStale: false, isGeneratingPreview: false }
+            : s
         )
       }
 
@@ -409,7 +440,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         songs: state.songs.map((s) => {
           if (s.status === 'exporting' || s.status === 'completed') return s
           if (s.status === 'ready') {
-            return { ...s, defaultCensorType: action.censorType, censoredFilePath: null, previewFilePath: null }
+            return { ...s, defaultCensorType: action.censorType, censoredFilePath: null, previewStale: true }
           }
           return { ...s, defaultCensorType: action.censorType }
         })
@@ -526,7 +557,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
         songs: state.songs.map((s) => ({
           ...s,
           words: applyCustomProfanity(s.words, newCustomWords),
-          previewFilePath: null
+          previewStale: true
         }))
       }
     }
@@ -543,7 +574,7 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
               ? { ...w, is_profanity: false, detection_source: undefined }
               : w
           ),
-          previewFilePath: null
+          previewStale: true
         }))
       }
     }
@@ -594,10 +625,15 @@ function MainApp(): React.JSX.Element {
     } catch { /* ignore quota errors */ }
   }, [exportFormat])
 
-  // Track the expanded song's previewFilePath as its own value so effects
-  // that depend on regeneration can re-fire when CLEAR_PREVIEW flips it null.
+  // Track the expanded song's preview identity AND staleness as one value so
+  // effects that depend on regeneration re-fire when CLEAR_PREVIEW marks the
+  // shown preview stale (the path itself no longer changes at that moment —
+  // the old file stays mounted so playback survives the edit).
   const expandedSongPreviewPath = state.expandedSongId
-    ? (state.songs.find((s) => s.id === state.expandedSongId)?.previewFilePath ?? null)
+    ? (() => {
+        const s = state.songs.find((x) => x.id === state.expandedSongId)
+        return s ? `${s.previewFilePath ?? ''}|${s.previewStale}` : null
+      })()
     : null
 
   // Memoized signature of expanded song's censored words
@@ -798,7 +834,7 @@ function MainApp(): React.JSX.Element {
       dispatch({ type: 'SET_EXPANDED_SONG', id })
 
       // Generate preview if song is ready and no preview exists and has profanity
-      if (song && song.status === 'ready' && !song.previewFilePath && !song.isGeneratingPreview) {
+      if (song && song.status === 'ready' && (!song.previewFilePath || song.previewStale) && !song.isGeneratingPreview) {
         const profaneWords = song.words.filter((w) => w.is_profanity)
         if (profaneWords.length > 0) {
           dispatch({ type: 'START_PREVIEW_GENERATION', id })
@@ -851,14 +887,19 @@ function MainApp(): React.JSX.Element {
     const song = state.songs.find((s) => s.id === state.expandedSongId)
     if (!song || song.status !== 'ready') return
 
-    // Don't regenerate if a preview already exists. Staleness of any in-flight regen is
-    // handled by generationRequestRef — checking isGeneratingPreview here would drop the
+    // Don't regenerate while the shown preview still matches the current words
+    // and settings. Staleness of any in-flight regen is handled by
+    // generationRequestRef — checking isGeneratingPreview here would drop the
     // latest settings change when a regen is still running.
-    if (song.previewFilePath) return
+    if (song.previewFilePath && !song.previewStale) return
 
-    // Only regenerate if there are profane words to censor
+    // Nothing left to censor: no regeneration is coming, so drop the stale
+    // preview instead of leaving a censored file playing for a clean edit.
     const profaneWords = song.words.filter((w) => w.is_profanity)
-    if (profaneWords.length === 0) return
+    if (profaneWords.length === 0) {
+      if (song.previewFilePath) dispatch({ type: 'DROP_PREVIEW', id: song.id })
+      return
+    }
 
     // Debounce: Set timeout to regenerate preview after 500ms
     const timeoutId = setTimeout(async () => {

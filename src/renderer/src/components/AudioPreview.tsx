@@ -7,13 +7,17 @@ interface AudioPreviewProps {
   censoredPath: string | null
   onClearFile?: () => void
   audioRef?: (node: HTMLAudioElement | null) => void
+  /** A regenerated preview is on its way; the censored player is showing the
+   *  previous edit until it lands. */
+  isUpdating?: boolean
 }
 
 export default function AudioPreview({
   originalPath,
   censoredPath,
   onClearFile,
-  audioRef
+  audioRef,
+  isUpdating = false
 }: AudioPreviewProps): React.JSX.Element {
   const primaryPath = censoredPath ?? originalPath
   const secondaryPath = censoredPath ? originalPath : null
@@ -72,7 +76,7 @@ export default function AudioPreview({
     <div className="flex flex-col gap-4">
       {secondaryPath && (
         <WaveformPlayer
-          key={`secondary-${secondaryPath}`}
+          key={`secondary-${originalPath}`}
           src={`media://${encodeURIComponent(secondaryPath)}`}
           label="Original"
           onPlay={handleSecondaryPlay}
@@ -82,13 +86,16 @@ export default function AudioPreview({
       )}
       {primaryPath && (
         <WaveformPlayer
-          key={`primary-${primaryPath}`}
+          key={`primary-${originalPath}`}
           src={`media://${encodeURIComponent(primaryPath)}`}
           label={censoredPath ? 'Censored Version' : 'Original'}
           labelColor={censoredPath ? 'text-green-400' : 'text-text-secondary'}
           onPlay={handlePrimaryPlay}
           audioRef={primaryRefCallback}
           externalPauseRef={primaryPauseRef}
+          // Only the censored player can be out of date. With no preview yet the
+          // primary IS the original, which is never "updating".
+          isUpdating={Boolean(censoredPath) && isUpdating}
         />
       )}
       {censoredPath && onClearFile && (

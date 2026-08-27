@@ -44,9 +44,21 @@ MAX_TEMPLATES = 12           # time-partitioned instances used as templates;
                              # own ghosts)
 SEARCH_PAD_S = 8.0           # search this far beyond the instance cluster
 SCORE_FLOOR = 0.35           # absolute correlation floor
-CALIBRATION_FRAC = 0.75      # accept >= this fraction of median known score
+CALIBRATION_FRAC = 0.90      # accept >= this fraction of median known score.
+                             # THE dominant precision knob: measured across the
+                             # scenario sweep behind test_decoy_bed_*, 0.75 and
+                             # 0.85 both admit near-miss decoys once genuine
+                             # echoes are sparse (the greedy cap hides it while
+                             # real echoes are plentiful); 0.90+ admits none.
+BACKGROUND_PCT = 95          # percentile of a template's own score array taken
+                             # as its background level — the SAME level the
+                             # template is validated against, so acceptance can
+                             # never drop below it
+SEPARATION_MIN = 1.1         # a template must score this many times its own
+                             # background at its siblings, or it is discarded
 ACOUSTIC_DEDUP_S = 0.45      # min spacing from flagged words AND other peaks
-MAX_ACOUSTIC_INJECTIONS = 32  # per-group ceiling; real cap is 2x confirmed count
+MAX_ACOUSTIC_INJECTIONS = 8  # per-group ceiling; real cap is half the confirmed
+                             # count — inferences must never outnumber evidence
 _SPEC_N_FFT = 512            # 32ms @ 16kHz
 _SPEC_HOP = 160              # 10ms
 
@@ -140,6 +152,31 @@ def find_acoustic_echoes(
     even match its own siblings never fires (measured on the reported mashup:
     known instances score 0.31-0.55 vs a <0.3 noise floor, and the new peaks
     at 64.0s / 71.6s / 76.7s are exactly the ad-libs every ASR pass missed).
+
+    Acceptance is anchored to the template's OWN background, not to a constant.
+    The first version validated a template against percentile(s, 95) but then
+    accepted at 0.75 * sib_med, which on many songs lands BELOW that same p95 —
+    so >5% of every offset in the span qualified and the CAP, not the audio,
+    decided the output. Measured on the song a user reported (a Mobb Deep
+    breakdown edit, 2026-08-26): 31 ASR-confirmed profanities produced 30
+    acoustic injections, two groups landing exactly on their caps — 'nigga'
+    6 confirmed -> 12 injected, 'hoes' 4 -> 8, with six injections inside one
+    4.4s stretch. Four things keep that from recurring: the accept threshold can
+    never fall below the measured background, a template must beat its
+    background by SEPARATION_MIN at its own siblings, injections must carry
+    vocal energy in the stem, and the cap is HALF the confirmed count so an
+    inference layer can never outvote the evidence it was built from.
+
+    REJECTED: gating injections on stem vocal energy the way the transcript
+    path does. It looks obviously right and is exactly backwards here. The
+    transcript path checks slots EMPTY of transcription, where the hook
+    completion is the loudest thing present; this layer targets ad-libs sung
+    UNDER a lead, which are quieter than the lead by definition — and
+    compute_vocal_rms_envelope derives its threshold from the median RMS
+    INSIDE transcribed words, i.e. the lead's level. Measured on the Biggie
+    mashup: it removed the documented real finds at 64.1s (scoring 1.17x its
+    threshold) and 71.7s (1.61x), while removing nothing at all on the song
+    with the reported false positives. Pure recall loss, zero precision gain.
     """
     hop_s = _SPEC_HOP / sample_rate
     inferred = list(already_injected or [])
@@ -219,9 +256,14 @@ def find_acoustic_echoes(
             if len(sib_scores) < 2:
                 continue
             sib_med = float(median(sib_scores))
-            if sib_med < max(SCORE_FLOOR, float(np.percentile(s, 95))):
+            bg = float(np.percentile(s, BACKGROUND_PCT))
+            if sib_med < max(SCORE_FLOOR, SEPARATION_MIN * bg):
                 continue  # non-discriminative template
-            threshold = max(SCORE_FLOOR, CALIBRATION_FRAC * sib_med)
+            # The floor `bg` is what stops the cap from becoming the output:
+            # without it CALIBRATION_FRAC pulls the bar under the background the
+            # template was just validated against, and every song has thousands
+            # of offsets sitting there.
+            threshold = max(SCORE_FLOOR, CALIBRATION_FRAC * sib_med, bg)
             ratio = s / threshold
             if qual is None:
                 qual = np.full(len(search_spec), -np.inf)
@@ -238,10 +280,15 @@ def find_acoustic_echoes(
         ] + [(e["start"] + e["end"]) / 2 for e in inferred]
 
         # Greedy peak-pick, strongest first. The cap scales with how often the
-        # ad-lib is CONFIRMED: a hook looped 21 times can echo well beyond a
-        # flat dozen (measured: a flat cap of 12 truncated real 0.35-0.39
-        # matches at 76.7/77.4/83.7s while accepting 0.39+ ones).
-        group_cap = min(MAX_ACOUSTIC_INJECTIONS, 2 * len(instances))
+        # ad-lib is CONFIRMED, but stays BELOW that count: these are inferences
+        # with no transcript evidence, and a layer that can emit two guesses per
+        # confirmed instance turns a hook into a wall of mutes.
+        group_cap = min(MAX_ACOUSTIC_INJECTIONS, len(instances) // 2)
+        if group_cap < 1:
+            continue
+        # Injections must not stack: two mutes a fraction of a second apart merge
+        # into one long mute once padding is applied.
+        dedup_s = max(ACOUSTIC_DEDUP_S, med_dur)
         group_injected = 0
         for i in np.argsort(qual)[::-1]:
             if qual[i] < 1.0:
@@ -250,7 +297,7 @@ def find_acoustic_echoes(
                 break
             t = span_a + i * hop_s
             center = t + med_dur / 2
-            if any(abs(center - ft) <= ACOUSTIC_DEDUP_S for ft in flagged_times):
+            if any(abs(center - ft) <= dedup_s for ft in flagged_times):
                 continue
             flagged_times.append(center)
             echo = {

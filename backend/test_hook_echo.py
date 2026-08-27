@@ -269,6 +269,78 @@ class TestAcousticEchoes:
         words = self._flagged([10, 20, 30, 40, 15])
         assert find_acoustic_echoes(words, audio) == []
 
+    def _decoy(self, dur=0.4):
+        """A NEAR-MISS of the ad-lib: same chirp, different sweep target. This
+        is what a looped DJ edit hands the correlator — vocal chops that are
+        almost, but not, the flagged word."""
+        t = np.arange(int(dur * self.SR)) / self.SR
+        return (0.4 * np.sin(2 * np.pi * (400 + 1400 * t / dur) * t)).astype(np.float32)
+
+    def _decoy_bed(self, confirmed, hidden, noise=0.01, seed=7):
+        """Confirmed instances + genuine un-transcribed repeats + a dense bed of
+        near-miss decoys on the offbeats."""
+        rng = np.random.default_rng(seed)
+        x = (noise * rng.standard_normal(int(72 * self.SR))).astype(np.float32)
+        tgt, dec = self._burst(), self._decoy()
+        for t in list(confirmed) + list(hidden):
+            a = int(t * self.SR)
+            x[a:a + len(tgt)] += tgt
+        for t in np.arange(5.0, 68.0, 2.5):
+            if all(abs(t - r) > 1.0 for r in list(confirmed) + list(hidden)):
+                a = int(t * self.SR)
+                x[a:a + len(dec)] += dec
+        return x
+
+    # NEGATIVES TABLE — the reported failure. Against the pre-fix code the two
+    # tests below inject 12 and 3 phantom mutes respectively; 12 is exactly
+    # min(32, 2 * 6 confirmed), i.e. the CAP, not the audio, deciding the
+    # output. That is the shape of the user report: ~30 "shit" mutes that do
+    # not exist on a loop-based breakdown edit.
+    CONFIRMED = [10, 20, 30, 40, 50, 60]
+
+    def test_decoy_bed_no_phantom_injections(self):
+        # No genuine hidden repeats exist — every peak in the bed is a decoy.
+        audio = self._decoy_bed(self.CONFIRMED, [])
+        words = self._flagged(self.CONFIRMED)
+        echoes = find_acoustic_echoes(sorted(words, key=lambda w: w["start"]), audio)
+        assert echoes == [], (
+            f"{len(echoes)} phantom injection(s) over a near-miss decoy bed: "
+            f"{[round(e['start'], 2) for e in echoes]}"
+        )
+
+    def test_decoy_bed_finds_only_the_real_repeat(self):
+        # One genuine repeat hidden in the same bed. Precision must not cost
+        # the recall this layer exists for: find the one, inject nothing else.
+        # This is the case the greedy cap cannot mask — with real echoes sparse,
+        # a loose threshold spends the cap on decoys (measured: 2 FPs at
+        # CALIBRATION_FRAC 0.75/0.85, 0 at 0.90).
+        hidden = [35.0]
+        audio = self._decoy_bed(self.CONFIRMED, hidden)
+        words = self._flagged(self.CONFIRMED)
+        echoes = find_acoustic_echoes(sorted(words, key=lambda w: w["start"]), audio)
+        found = sorted(round(e["start"], 2) for e in echoes)
+        assert len(found) == 1, f"expected exactly the real repeat, got {found}"
+        assert abs(found[0] - hidden[0]) < 0.25, f"found {found}, wanted ~{hidden}"
+
+    def test_cap_never_exceeds_half_the_evidence(self):
+        # Inferences must not outnumber the evidence they were derived from.
+        # 8 confirmed instances + 8 genuinely matching un-transcribed repeats
+        # still yields at most 4 injections.
+        confirmed = [10, 20, 30, 40, 50, 60, 70, 80]
+        hidden = [15, 25, 35, 45, 55, 65, 75, 85]
+        audio = self._song(95, confirmed + hidden)
+        words = self._flagged(confirmed)
+        echoes = find_acoustic_echoes(sorted(words, key=lambda w: w["start"]), audio)
+        assert len(echoes) <= len(confirmed) // 2, (
+            f"{len(echoes)} injections from {len(confirmed)} confirmed instances"
+        )
+
+    # NOTE: no vocal-energy gate here on purpose. Requiring stem energy the way
+    # the transcript path does removed the documented real ad-libs at 64.1s and
+    # 71.7s of the Biggie mashup (scoring 1.17x and 1.61x their threshold) and
+    # removed nothing on the song with the reported false positives — the
+    # threshold and the cap do all the precision work. See find_acoustic_echoes.
+
     def test_dissimilar_instances_fail_closed(self):
         # "Instances" that are just unrelated noise: self-calibration finds
         # the template can't even match its siblings -> no injections anywhere.

@@ -10,7 +10,7 @@ export default function DualPassToggle({
   onToggle
 }: DualPassToggleProps): React.JSX.Element {
   return (
-    <div className="flex items-center gap-2" title="Scans vocal track separately to catch background vocals and ad-libs">
+    <div className="flex items-center gap-2" title="Scans the vocal track separately to catch background vocals and ad-libs, and infers repeats of an ad-lib that no pass could transcribe. Turn off if a song comes back with edits that aren't there.">
       <span className="text-xs text-text-secondary">Ad-lib Scan</span>
       <button
         onClick={() => onToggle(!enabled)}
