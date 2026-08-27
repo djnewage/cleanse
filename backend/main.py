@@ -711,15 +711,20 @@ async def transcribe(req: TranscribeRequest):
         # instances. Runs after the rescan so recovered words contribute
         # instances / occupy slots, and before the lyrics pipeline so its
         # injectors dedup against these and normalize resolves overlaps.
-        vocals_ok = req.vocals_path and os.path.isfile(req.vocals_path)
-        _report_progress("analyzing", 97.0, "Matching ad-lib echoes...")
-        echoes = infer_hook_echoes(
-            final_words,
-            vocals_path=req.vocals_path if vocals_ok else None,
-            language=detected_language,
-        )
-        if echoes:
-            final_words = sorted(final_words + echoes, key=lambda w: w["start"])
+        # Gated on dual_pass ("Ad-lib Scan" in the UI): these layers INFER mutes
+        # that no ASR pass transcribed, so the toggle that promises "catch
+        # background vocals and ad-libs" is also the off switch when a song's
+        # inferences go wrong. Separation runs unconditionally, so gating on the
+        # stem alone left users with no way to turn inference off.
+        if dual_pass:
+            _report_progress("analyzing", 97.0, "Matching ad-lib echoes...")
+            echoes = infer_hook_echoes(
+                final_words,
+                vocals_path=req.vocals_path,
+                language=detected_language,
+            )
+            if echoes:
+                final_words = sorted(final_words + echoes, key=lambda w: w["start"])
 
         _report_progress("analyzing", 98.5, "Finalizing censor timeline...")
         final_words = apply_lyrics_pipeline(
