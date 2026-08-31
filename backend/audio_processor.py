@@ -122,15 +122,37 @@ def _fit_exact(segment: AudioSegment, duration_ms: int) -> AudioSegment:
 
 
 def _splice_with_crossfade(audio: AudioSegment, start_ms: int, end_ms: int, replacement: AudioSegment, crossfade_ms: int = CROSSFADE_MS) -> AudioSegment:
-    """Splice a replacement into audio with crossfade at boundaries."""
+    """Splice a replacement into audio, crossfading against it at both edges.
+
+    The fade runs INSIDE the region, blending the outgoing audio against the
+    replacement across the same timestamps, so the two signals sum to a
+    continuous envelope.
+
+    The earlier version faded the outgoing audio down to digital silence and
+    then hard-cut to the replacement at full level (and hard-cut back out).
+    On the vocals-only path -- where the replacement is a full-level
+    accompaniment stem, not silence -- that put a ~23 dB hole and a ~25 dB
+    single-sample step into the whole mix at every censored word: the "mute
+    pops" DJs reported. It was inaudible before only because the splice used
+    to be applied to the vocal stem alone, with untouched accompaniment
+    overlaid on top to mask it.
+
+    Both fades land in the padding around the word (PADDING_BEFORE_MS /
+    PADDING_AFTER_MS are an order of magnitude longer than the crossfade), so
+    blending inside the region cannot uncover the word itself.
+    """
     before = audio[:start_ms]
     after = audio[end_ms:]
 
-    if crossfade_ms > 0 and len(before) >= crossfade_ms and len(after) >= crossfade_ms:
-        before_tail = before[-crossfade_ms:].fade_out(crossfade_ms)
-        after_head = after[:crossfade_ms].fade_in(crossfade_ms)
-        return before[:-crossfade_ms] + before_tail + replacement + after_head + after[crossfade_ms:]
-    return before + replacement + after
+    # Never consume more than half the region from either end, so the two
+    # fades cannot overlap each other on a very short censor.
+    cf = max(0, min(crossfade_ms, len(replacement) // 2, (end_ms - start_ms) // 2))
+    if cf == 0:
+        return before + replacement + after
+
+    head = audio[start_ms:start_ms + cf].fade_out(cf).overlay(replacement[:cf].fade_in(cf))
+    tail = replacement[len(replacement) - cf:].fade_out(cf).overlay(audio[end_ms - cf:end_ms].fade_in(cf))
+    return before + head + replacement[cf:len(replacement) - cf] + tail + after
 
 
 def _detect_source_bitrate_kbps(source_path: str | None) -> int | None:

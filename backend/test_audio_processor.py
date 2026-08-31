@@ -258,21 +258,79 @@ class TestSpliceWithCrossfade:
         # = 370 + 30 + 200 + 30 + 370 = 1000
         assert len(result) == 1000
 
-    def test_splice_at_start_skips_crossfade(self):
-        """When start_ms=0, 'before' is empty so crossfade is skipped."""
+    def test_splice_at_start_still_crossfades(self):
+        """A region at t=0 has no 'before', but the fade lives inside the
+        region now, so the boundary is still smoothed rather than hard-cut."""
         audio = pydub.AudioSegment.silent(duration=1000)
         replacement = pydub.AudioSegment.silent(duration=200)
         result = _splice_with_crossfade(audio, 0, 200, replacement, crossfade_ms=30)
-        # before=0ms (< 30ms) -> plain concat: 0 + 200 + 800 = 1000
         assert len(result) == 1000
 
-    def test_splice_at_end_skips_crossfade(self):
-        """When end_ms=len(audio), 'after' is empty so crossfade is skipped."""
+    def test_splice_at_end_still_crossfades(self):
+        """Same at the tail: no 'after' to borrow from, fade stays in-region."""
         audio = pydub.AudioSegment.silent(duration=1000)
         replacement = pydub.AudioSegment.silent(duration=200)
         result = _splice_with_crossfade(audio, 800, 1000, replacement, crossfade_ms=30)
-        # after=0ms (< 30ms) -> plain concat: 800 + 200 + 0 = 1000
         assert len(result) == 1000
+
+    def test_short_region_halves_the_crossfade(self):
+        """The two fades must not overlap on a region shorter than 2x crossfade."""
+        audio = pydub.AudioSegment.silent(duration=1000)
+        replacement = pydub.AudioSegment.silent(duration=20)
+        result = _splice_with_crossfade(audio, 400, 420, replacement, crossfade_ms=30)
+        assert len(result) == 1000
+
+    def _envelope_dbfs(self, seg, step_ms=2):
+        """Per-step RMS in dBFS across a segment."""
+        import math
+        out = []
+        for t in range(0, len(seg) - step_ms, step_ms):
+            chunk = seg[t:t + step_ms]
+            out.append((t, chunk.dBFS if chunk.rms > 0 else -math.inf))
+        return out
+
+    def test_no_level_hole_or_step_at_boundaries(self):
+        """Regression: the splice must not punch a hole in the outgoing audio.
+
+        The old implementation faded the outgoing audio to digital silence and
+        then hard-cut to the replacement at full level, which put a ~23 dB
+        hole and a ~25 dB single-sample step into the mix at every censored
+        word -- the "mute pops" reported against 1.20.0. A replacement at the
+        same level as the surrounding audio must splice in inaudibly.
+        """
+        from pydub.generators import Sine
+
+        # Same tone at the same level either side of the splice: a correct
+        # crossfade is then a no-op on the envelope.
+        audio = Sine(440).to_audio_segment(duration=2000)
+        replacement = Sine(440).to_audio_segment(duration=400)
+        result = _splice_with_crossfade(audio, 800, 1200, replacement, crossfade_ms=30)
+
+        reference = audio.dBFS
+        for boundary in (800, 1200):
+            window = result[boundary - 60:boundary + 60]
+            for offset, level in self._envelope_dbfs(window):
+                assert level > reference - 6.0, (
+                    f"{reference - level:.1f} dB hole at "
+                    f"{boundary - 60 + offset}ms (boundary {boundary}ms)"
+                )
+
+    def test_boundary_is_continuous_for_a_full_level_replacement(self):
+        """No abrupt level step across either edge of the spliced region."""
+        from pydub.generators import Sine
+
+        audio = Sine(440).to_audio_segment(duration=2000)
+        # A different tone at the same level stands in for the accompaniment
+        # stem the vocals-only path splices in.
+        replacement = Sine(330).to_audio_segment(duration=400)
+        result = _splice_with_crossfade(audio, 800, 1200, replacement, crossfade_ms=30)
+
+        for boundary in (800, 1200):
+            before = result[boundary - 5:boundary]
+            after = result[boundary:boundary + 5]
+            assert abs(before.dBFS - after.dBFS) < 3.0, (
+                f"{abs(before.dBFS - after.dBFS):.1f} dB step at {boundary}ms"
+            )
 
     def test_replacement_preserves_overall_structure(self):
         """Replacing a region with same-length silence should produce same-length output."""
