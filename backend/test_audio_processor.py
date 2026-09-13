@@ -492,6 +492,59 @@ class TestCensorVocalsOnly:
         assert os.path.exists(p["out"])
         assert len(pydub.AudioSegment.from_file(p["out"])) == 3000
 
+    def test_vocal_copied_into_accompaniment_is_subtracted(self, tmp_path):
+        """Regression: Demucs left a copy of the vocal in the accompaniment
+        while the vocal stem was still loud, so the silent-vocal guard never
+        fired and the muted region was rebuilt from an accompaniment that
+        still contained the word. Measured on 'Michael Jordan': the hook's
+        'bitch' repeats leaked at 0.7-1.1x and 0.4-0.5 of the vocal survived
+        the mute. The leak must be measured and subtracted."""
+        from audio_processor import censor_audio_vocals_only, _leak_coefficient
+
+        p = self._build(tmp_path)
+        vocals = pydub.AudioSegment.from_file(p["vocals"])   # 880 Hz tone
+        beat = pydub.AudioSegment.from_file(p["accomp"])     # 220 Hz tone
+        # Accompaniment = beat at half amplitude plus 0.4x of the vocal. Both
+        # tones are generated at full scale, so they are attenuated before
+        # mixing to keep the sum clear of int16 clipping.
+        (beat - 6.0).overlay(vocals - 8.0).export(p["accomp"], format="wav")
+        leaky = pydub.AudioSegment.from_file(p["accomp"])
+        assert 0.3 < _leak_coefficient(leaky[1000:1200], vocals[1000:1200]) < 0.5
+
+        censor_audio_vocals_only(
+            p["vocals"], p["accomp"], self._words(), p["out"], source_path=p["original"]
+        )
+        out = pydub.AudioSegment.from_file(p["out"])
+
+        # The word core (1.0-1.2s) must no longer carry the vocal...
+        assert abs(_leak_coefficient(out[1000:1200], vocals[1000:1200])) < 0.1
+        # ...while the beat is still there at its mixed level (~0.5x), not
+        # silenced and not band-rejected.
+        assert _leak_coefficient(out[1000:1200], beat[1000:1200]) > 0.4
+        # Length and untouched audio are unaffected.
+        assert len(out) == 3000
+        original = pydub.AudioSegment.from_file(p["original"])
+        assert out[2400:2600].raw_data == original[2400:2600].raw_data
+
+    def test_clean_separation_is_spliced_exactly_as_before(self, tmp_path):
+        """With no leak (the common case) the mute must be the plain
+        accompaniment splice, byte for byte, so nothing changes for songs
+        Demucs separates cleanly."""
+        from audio_processor import censor_audio_vocals_only, _leak_coefficient
+
+        p = self._build(tmp_path)
+        vocals = pydub.AudioSegment.from_file(p["vocals"])
+        beat = pydub.AudioSegment.from_file(p["accomp"])
+        assert abs(_leak_coefficient(beat[1000:1200], vocals[1000:1200])) < 0.25
+
+        censor_audio_vocals_only(
+            p["vocals"], p["accomp"], self._words(), p["out"], source_path=p["original"]
+        )
+        out = pydub.AudioSegment.from_file(p["out"])
+        # Inside the region, clear of the 30 ms crossfades, the output is the
+        # accompaniment stem exactly.
+        assert out[1000:1200].raw_data == beat[1000:1200].raw_data
+
     def test_leaked_vocal_triggers_bandreject_without_changing_length(self, tmp_path):
         """Silent vocals mean the word leaked into the accompaniment."""
         from pydub.generators import Sine
