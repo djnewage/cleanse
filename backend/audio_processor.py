@@ -32,6 +32,25 @@ VOCAL_SILENCE_THRESHOLD = -40
 BANDREJECT_LOW = 250
 BANDREJECT_HIGH = 4000
 
+# Demucs sometimes leaves a copy of the vocal in the accompaniment stem even
+# though the vocal stem is loud (doubled/effected hook lines are the usual
+# case). Muting the vocal stem then leaves the word in the mix, because the
+# region is rebuilt from the accompaniment. The leak is estimated per region
+# as the least-squares gain of the vocal slice inside the accompaniment slice
+# and subtracted when it reaches LEAK_SUBTRACT_MIN. Measured on Kendrick
+# Lamar "Michael Jordan": the hook's "bitch" repeats leaked at 0.7-1.1x and
+# stayed clearly audible after the mute (0.4-0.5 of the vocal left), while
+# ordinary regions leak at 0.1-0.2x. Subtracting the projection removes only
+# what is correlated with the vocal; the beat is untouched.
+LEAK_SUBTRACT_MIN = 0.25
+LEAK_SUBTRACT_MAX = 1.5
+# The leak is not constant across a region: the 200/250 ms padding around the
+# word is often clean while the word itself is doubled. A single gain over the
+# padded region under-estimates the leak (measured 0.1-0.2 over the region
+# vs 0.5-1.1 over the word), so the gain is tracked per frame and smoothed.
+LEAK_FRAME_MS = 20
+LEAK_SMOOTH_FRAMES = 3
+
 # Output extensions whose pydub format accepts a `bitrate` kwarg (lossy codecs).
 # WAV/FLAC are lossless and pydub ignores/rejects bitrate for them.
 _LOSSY_FORMATS = {"mp3", "mp4", "ogg"}
@@ -69,6 +88,98 @@ def _apply_bandreject(segment: AudioSegment, low: int = BANDREJECT_LOW, high: in
         filtered = sosfilt(sos, samples)
 
     return segment._spawn(np.int16(np.clip(filtered, -32768, 32767)).tobytes())
+
+
+_SAMPLE_DTYPES = {1: np.int8, 2: np.int16, 4: np.int32}
+
+
+def _leak_coefficient(accomp: AudioSegment, vocal: AudioSegment) -> float:
+    """How much of `vocal` is present in `accomp`, as a least-squares gain.
+
+    0.0 means none of the vocal is in the accompaniment; 1.0 means a full copy.
+    Both slices are expected to share frame rate and channel layout (they come
+    from the same Demucs run); any length difference is trimmed.
+    """
+    a = np.array(accomp.get_array_of_samples(), dtype=np.float64)
+    v = np.array(vocal.get_array_of_samples(), dtype=np.float64)
+    n = min(len(a), len(v))
+    if n == 0:
+        return 0.0
+    energy = float(np.dot(v[:n], v[:n]))
+    if energy <= 0.0:
+        return 0.0
+    return float(np.dot(a[:n], v[:n]) / energy)
+
+
+def _leak_gain_track(
+    a: np.ndarray, v: np.ndarray, frame: int,
+    min_gain: float = LEAK_SUBTRACT_MIN, max_gain: float = LEAK_SUBTRACT_MAX,
+    smooth_frames: int = LEAK_SMOOTH_FRAMES,
+) -> tuple[np.ndarray, float]:
+    """Per-sample gain of `v` inside `a`, estimated per frame and smoothed.
+
+    Frames whose gain is below `min_gain` contribute 0 (nothing to remove);
+    gains are clipped to `max_gain`. The frame gains are averaged over
+    `smooth_frames` neighbours and linearly interpolated between frame
+    centres so the subtraction never steps.
+
+    Also returns the largest raw (unclipped) frame gain. A raw gain well above
+    1 means the accompaniment holds MORE of the word than the vocal stem does,
+    i.e. the separation failed there and the vocal stem is not a usable
+    estimate to subtract; callers should fall back to band-rejecting the
+    accompaniment instead.
+    """
+    n = len(a)
+    n_frames = max(1, n // frame)
+    gains = np.zeros(n_frames)
+    raw = np.zeros(n_frames)
+    energies = np.zeros(n_frames)
+    centres = np.zeros(n_frames)
+    for i in range(n_frames):
+        s = i * frame
+        e = n if i == n_frames - 1 else s + frame
+        vf = v[s:e]
+        energy = float(np.dot(vf, vf))
+        g = float(np.dot(a[s:e], vf) / energy) if energy > 0.0 else 0.0
+        raw[i] = g
+        energies[i] = energy
+        gains[i] = min(g, max_gain) if g >= min_gain else 0.0
+        centres[i] = (s + e) / 2.0
+    # The raw peak is judged only on frames where the vocal stem actually
+    # carries the word (>= 25% of the loudest frame's energy). Quiet frames
+    # divide by a tiny energy and produce meaningless gains of 5-15x.
+    loud = energies >= 0.25 * energies.max() if energies.max() > 0.0 else energies > 0.0
+    raw_peak = float(raw[loud].max()) if loud.any() else 0.0
+    if smooth_frames > 1 and n_frames > 1:
+        k = np.ones(smooth_frames) / smooth_frames
+        gains = np.convolve(gains, k, mode="same")
+    return np.interp(np.arange(n), centres, gains), raw_peak
+
+
+def _subtract_leaked_vocal(
+    accomp: AudioSegment, vocal: AudioSegment, frame_ms: int = LEAK_FRAME_MS
+) -> tuple[AudioSegment, float, float]:
+    """Return `accomp` with the vocal that leaked into it removed, the peak
+    per-frame leak gain that was applied, and the peak raw gain measured.
+
+    Returns the input segment unchanged (same object) when no frame reaches
+    LEAK_SUBTRACT_MIN, so clean separations are spliced byte-for-byte as
+    before.
+    """
+    a = np.array(accomp.get_array_of_samples(), dtype=np.float64)
+    v = np.array(vocal.get_array_of_samples(), dtype=np.float64)
+    n = min(len(a), len(v))
+    if n == 0:
+        return accomp, 0.0, 0.0
+    frame = max(1, int(accomp.frame_rate * frame_ms / 1000)) * accomp.channels
+    gain, raw_peak = _leak_gain_track(a[:n], v[:n], frame)
+    peak = float(gain.max())
+    if peak <= 0.0:
+        return accomp, 0.0, raw_peak
+    a[:n] -= gain * v[:n]
+    limit = 2 ** (8 * accomp.sample_width - 1)
+    dtype = _SAMPLE_DTYPES.get(accomp.sample_width, np.int16)
+    return accomp._spawn(np.clip(a, -limit, limit - 1).astype(dtype).tobytes()), peak, raw_peak
 
 
 def _make_replacement(audio: AudioSegment, start_ms: int, end_ms: int, censor_type: str) -> AudioSegment:
@@ -433,12 +544,30 @@ def censor_audio_vocals_only(
         vocal_level = vocal_slice.dBFS
         is_leaked = vocal_level < VOCAL_SILENCE_THRESHOLD
 
+        # Audible vocal stem AND a copy of it in the accompaniment: the
+        # silent-vocal guard above cannot see this case. Track the leak per
+        # frame and subtract it; a clean separation comes back unchanged.
+        leak = 0.0
+        if not is_leaked:
+            subtracted, leak, raw_leak = _subtract_leaked_vocal(accomp_slice, vocal_slice)
+            if raw_leak > LEAK_SUBTRACT_MAX:
+                # The accompaniment carries more of the word than the vocal
+                # stem does: the separation failed here, and subtracting the
+                # poor vocal estimate leaves the word (measured: 0.74 of the
+                # vocal still present). Treat it like a silent-vocal leak.
+                is_leaked = True
+                leak = raw_leak
+            else:
+                accomp_slice = subtracted
+
         print(
             f"[AudioProcessor] Region {start_ms}-{end_ms}ms "
             f"words={' '.join(r['words'])} "
             f"censor={r['censor_type']} "
-            f"vocal_dBFS={vocal_level:.1f}"
-            f"{'  -> BANDREJECT' if is_leaked else ''}",
+            f"vocal_dBFS={vocal_level:.1f} "
+            f"leak={leak:.2f}"
+            f"{'  -> BANDREJECT' if is_leaked else ''}"
+            f"{'  -> SUBTRACT' if (leak > 0.0 and not is_leaked) else ''}",
             file=sys.stderr,
         )
 

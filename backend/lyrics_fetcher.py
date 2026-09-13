@@ -92,6 +92,22 @@ def _clean_search_title(title: str) -> str:
         '', cleaned, flags=re.IGNORECASE
     )
 
+    # Strip upload/release tags that describe the file rather than the song:
+    # (OFFICIAL), (Official Video), (Official Audio), (Lyrics), (HQ)... These
+    # come from filenames of untagged rips. Measured: 'Michael Jordan
+    # (OFFICIAL)' got 0 LRCLIB results while 'Michael Jordan' returned the
+    # exact-duration synced lyrics, so the whole song ran without lyrics.
+    # Whole-parenthetical match only, so '(feat. X)' and real title
+    # parentheticals survive.
+    cleaned = re.sub(
+        r'\s*\(\s*(?:'
+        r'official(?:\s+(?:music\s+)?(?:video|audio|visuali[sz]er|lyric\s+video|lyrics|version))?'
+        r'|lyrics?(?:\s+video)?|visuali[sz]er|audio|video|music\s+video'
+        r'|hq|hd|4k|explicit\s+version'
+        r')\s*\)',
+        '', cleaned, flags=re.IGNORECASE
+    )
+
     # Clean trailing dashes, spaces, and dots
     cleaned = cleaned.strip(' -.')
 

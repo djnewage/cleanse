@@ -96,6 +96,30 @@ class TestCleanSearchTitle:
     def test_preserves_non_tag_parens(self):
         assert _clean_search_title("Song (feat. Artist)") == "Song (feat. Artist)"
 
+    # Upload/release tags from untagged rips. 'Michael Jordan (OFFICIAL)'
+    # returned zero LRCLIB results while 'Michael Jordan' matched the song's
+    # exact-duration synced lyrics, so the track was censored without lyrics.
+    def test_official_tag(self):
+        assert _clean_search_title("Michael Jordan (OFFICIAL)") == "Michael Jordan"
+
+    def test_official_video_tag(self):
+        assert _clean_search_title("Song (Official Video)") == "Song"
+
+    def test_official_audio_tag(self):
+        assert _clean_search_title("Song (Official Audio)") == "Song"
+
+    def test_lyrics_tag(self):
+        assert _clean_search_title("Song (Lyrics)") == "Song"
+
+    def test_official_music_video_tag(self):
+        assert _clean_search_title("Song (Official Music Video)") == "Song"
+
+    def test_hq_tag(self):
+        assert _clean_search_title("Song (HQ)") == "Song"
+
+    def test_title_containing_the_word_official_is_kept(self):
+        assert _clean_search_title("Official Business") == "Official Business"
+
 
 class TestSelectLrclibResult:
     """Duration-verified search-hit selection — a wrong-duration hit is a
