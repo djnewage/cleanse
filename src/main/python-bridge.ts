@@ -1,4 +1,4 @@
-import { ChildProcess, spawn } from 'child_process'
+import { ChildProcess, spawn, spawnSync } from 'child_process'
 import { app } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -229,24 +229,53 @@ export async function startPythonBackend(): Promise<number> {
   return backendPort
 }
 
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Kill the backend and everything it spawned. A plain kill() only ends one
+ *  PID; the PyInstaller backend starts multiprocessing workers and the bundled
+ *  ffmpeg from inside resources/backend, and on Windows those survive their
+ *  parent and keep the install directory locked, which is what broke the
+ *  in-app update. taskkill /T takes the whole tree. */
+function killBackendTree(proc: ChildProcess, force: boolean): void {
+  const pid = proc.pid
+  if (!pid) return
+  if (process.platform === 'win32') {
+    try {
+      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 10_000 })
+    } catch {
+      /* already gone, or taskkill unavailable; the installer's own kill is the fallback */
+    }
+    return
+  }
+  try {
+    proc.kill(force ? 'SIGKILL' : 'SIGTERM')
+  } catch {
+    /* process already gone */
+  }
+}
+
 export function stopPythonBackend(): void {
-  if (pythonProcess) {
+  const proc = pythonProcess
+  if (proc) {
     // Remove all listeners BEFORE killing to prevent EIO crashes
     // during shutdown (handlers firing console.log after Electron's stdout closes)
-    pythonProcess.stdout?.removeAllListeners()
-    pythonProcess.stderr?.removeAllListeners()
-    pythonProcess.removeAllListeners()
+    proc.stdout?.removeAllListeners()
+    proc.stderr?.removeAllListeners()
+    proc.removeAllListeners()
 
-    pythonProcess.kill('SIGTERM')
+    killBackendTree(proc, false)
 
-    // Capture reference for the timeout since we null pythonProcess immediately
-    const proc = pythonProcess
+    // Escalate if it ignored the polite signal. Captures `proc` because
+    // pythonProcess is nulled immediately below.
     setTimeout(() => {
-      try {
-        if (!proc.killed) proc.kill('SIGKILL')
-      } catch {
-        /* process already gone */
-      }
+      if (proc.pid && isPidAlive(proc.pid)) killBackendTree(proc, true)
     }, 5000)
 
     pythonProcess = null
@@ -254,6 +283,33 @@ export function stopPythonBackend(): void {
   }
   logStream?.end()
   logStream = null
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** Like stopPythonBackend, but resolves only once the process is actually gone
+ *  (or after `timeoutMs`), so callers such as the updater know the backend's
+ *  files are free to replace. */
+export async function stopPythonBackendAndWait(timeoutMs = 8000): Promise<void> {
+  const proc = pythonProcess
+  const pid = proc?.pid
+  stopPythonBackend()
+  if (!proc || !pid) return
+
+  const start = Date.now()
+  let forced = process.platform === 'win32' // taskkill /F is already forceful
+  while (isPidAlive(pid)) {
+    const elapsed = Date.now() - start
+    if (elapsed > timeoutMs) {
+      console.warn(`[Backend] Still alive after ${timeoutMs} ms; continuing anyway`)
+      return
+    }
+    if (!forced && elapsed > timeoutMs / 2) {
+      killBackendTree(proc, true)
+      forced = true
+    }
+    await sleep(100)
+  }
 }
 
 export interface DeviceInfo {

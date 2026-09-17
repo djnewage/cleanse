@@ -601,7 +601,8 @@ function MainApp(): React.JSX.Element {
     releaseNotes: string
     downloadProgress: number | null
     downloaded: boolean
-  }>({ show: false, version: '', releaseNotes: '', downloadProgress: null, downloaded: false })
+    error: string | null
+  }>({ show: false, version: '', releaseNotes: '', downloadProgress: null, downloaded: false, error: null })
 
   const { isAuthenticated, isLoading: authLoading, checkCanProcess, recordUsage, recordSongsImported, recordSongsReady } = useAuth()
 
@@ -769,8 +770,16 @@ function MainApp(): React.JSX.Element {
         version: info.version,
         releaseNotes: notes,
         downloadProgress: null,
-        downloaded: false
+        downloaded: false,
+        error: null
       })
+    })
+
+    // Download failures (including the free-space refusal from the main
+    // process) land here so the modal can show the reason and re-enable the
+    // Download button instead of sitting on a dead progress bar.
+    const unsubError = window.electronAPI.onUpdateError((message) => {
+      setUpdateState((prev) => (prev.show ? { ...prev, error: message, downloadProgress: null } : prev))
     })
 
     const unsubProgress = window.electronAPI.onDownloadProgress((progress) => {
@@ -786,6 +795,7 @@ function MainApp(): React.JSX.Element {
       unsubAvailable()
       unsubProgress()
       unsubDownloaded()
+      unsubError()
     }
   }, [])
 
@@ -1462,9 +1472,13 @@ function MainApp(): React.JSX.Element {
         releaseNotes={updateState.releaseNotes}
         downloadProgress={updateState.downloadProgress}
         downloaded={updateState.downloaded}
+        error={updateState.error}
         onDownload={() => {
-          setUpdateState((prev) => ({ ...prev, downloadProgress: 0 }))
-          window.electronAPI.downloadUpdate()
+          setUpdateState((prev) => ({ ...prev, downloadProgress: 0, error: null }))
+          window.electronAPI.downloadUpdate().catch((err) => {
+            const message = err instanceof Error ? err.message : String(err)
+            setUpdateState((prev) => ({ ...prev, error: message, downloadProgress: null }))
+          })
         }}
         onInstall={() => window.electronAPI.installUpdate()}
         onClose={() => setUpdateState((prev) => ({ ...prev, show: false }))}

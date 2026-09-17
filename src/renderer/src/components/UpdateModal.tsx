@@ -4,6 +4,8 @@ interface UpdateModalProps {
   releaseNotes: string
   downloadProgress: number | null
   downloaded: boolean
+  /** Why the last download attempt failed, shown above the actions. */
+  error?: string | null
   onDownload: () => void
   onInstall: () => void
   onClose: () => void
@@ -73,6 +75,7 @@ export default function UpdateModal({
   downloadProgress,
   downloaded,
   onDownload,
+  error = null,
   onInstall,
   onClose
 }: UpdateModalProps): React.JSX.Element | null {
@@ -132,6 +135,12 @@ export default function UpdateModal({
               />
             </div>
           </div>
+        )}
+
+        {error && (
+          <p className="mb-4 text-sm text-red-400 bg-red-900/20 border border-red-900/40 rounded-lg px-3 py-2">
+            {error}
+          </p>
         )}
 
         {/* Actions */}

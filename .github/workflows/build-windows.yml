@@ -54,6 +54,7 @@ jobs:
           name: cleanse-windows-x64
           path: |
             dist/*.exe
+            dist/*.exe.blockmap
             dist/*.zip
             dist/latest.yml
           if-no-files-found: error
@@ -68,6 +69,7 @@ jobs:
           $tag = '${{ github.ref_name }}'
           $files = @()
           $files += Get-ChildItem dist -Filter '*.exe'
+          $files += Get-ChildItem dist -Filter '*.exe.blockmap'
           $files += Get-ChildItem dist -Filter '*.zip'
           $files += Get-ChildItem dist -Filter 'latest.yml'
           if ($files.Count -gt 0) {

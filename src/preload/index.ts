@@ -78,7 +78,7 @@ export interface ElectronAPI {
   checkForUpdates: () => Promise<{ updateAvailable: boolean }>
   onUpdateNotAvailable: (callback: () => void) => () => void
   onUpdateError: (callback: (message: string) => void) => () => void
-  downloadUpdate: () => Promise<void>
+  downloadUpdate: () => Promise<{ started: boolean; message?: string }>
   installUpdate: () => Promise<void>
   getPathForFile: (file: File) => string
   getHistory: () => Promise<HistoryEntry[]>

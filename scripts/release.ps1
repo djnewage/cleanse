@@ -40,6 +40,7 @@ if (-not $gh) {
 # Clean previous Windows artifacts
 $DistDir = Join-Path $PSScriptRoot '..\dist'
 Get-ChildItem $DistDir -Filter '*.exe' -ErrorAction SilentlyContinue | Remove-Item -Force
+Get-ChildItem $DistDir -Filter '*.exe.blockmap' -ErrorAction SilentlyContinue | Remove-Item -Force
 Get-ChildItem $DistDir -Filter 'latest.yml' -ErrorAction SilentlyContinue | Remove-Item -Force
 Get-ChildItem $DistDir -Filter 'cleanse-*-x64.zip' -ErrorAction SilentlyContinue | Remove-Item -Force
 
@@ -49,7 +50,20 @@ if ($LASTEXITCODE -ne 0) { throw 'build:win failed' }
 
 $artifacts = @()
 $artifacts += Get-ChildItem $DistDir -Filter "*-$Version-x64.exe" -ErrorAction SilentlyContinue
+# The blockmap lets electron-updater download only the changed blocks. Without
+# it every update is the full ~1.9 GB installer.
+$artifacts += Get-ChildItem $DistDir -Filter "*-$Version-x64.exe.blockmap" -ErrorAction SilentlyContinue
 $artifacts += Get-ChildItem $DistDir -Filter "*-$Version-x64.zip" -ErrorAction SilentlyContinue
+
+# GitHub rejects release assets of 2 GiB or more (HTTP 422). The CUDA build is
+# already ~1.9 GB, so fail here with a clear message instead of after upload.
+$MaxAssetBytes = 2000000000
+foreach ($a in $artifacts) {
+    if ($a.Length -ge $MaxAssetBytes) {
+        Write-Error ("{0} is {1:N1} MB, over GitHub's 2 GiB asset limit. Prune the backend bundle before releasing." -f $a.Name, ($a.Length / 1MB))
+        exit 1
+    }
+}
 $latestYml = Get-ChildItem $DistDir -Filter 'latest.yml' -ErrorAction SilentlyContinue | Select-Object -First 1
 
 if (-not $artifacts) {

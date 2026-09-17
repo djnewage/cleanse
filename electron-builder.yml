@@ -55,7 +55,13 @@ win:
 nsis:
   oneClick: false
   perMachine: false
+  # No elevation: keeps every install per-user, so an update can never flip
+  # to a per-machine install in Program Files halfway through and strand the
+  # old per-user copy. In-app updates run this installer with /S anyway.
+  allowElevation: false
   allowToChangeInstallationDirectory: true
+  # User data (history, settings, logs in %APPDATA%) survives uninstall/update.
+  deleteAppDataOnUninstall: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Cleanse

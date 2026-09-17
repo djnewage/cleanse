@@ -26,7 +26,7 @@ Sentry.init({
 
 import { join, extname, basename } from 'path'
 import { createReadStream } from 'fs'
-import { stat, readFile } from 'fs/promises'
+import { stat, readFile, statfs } from 'fs/promises'
 import { Readable } from 'stream'
 import { existsSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -36,6 +36,7 @@ import log from 'electron-log'
 import {
   startPythonBackend,
   stopPythonBackend,
+  stopPythonBackendAndWait,
   isBackendReady,
   isBackendAlive,
   getBackendLogPath,
@@ -62,6 +63,29 @@ async function describeBackendError(originalMsg: string): Promise<string> {
 // Configure auto-updater logging
 autoUpdater.logger = log
 autoUpdater.autoDownload = false
+// Install only from the explicit "Restart & Update" button. Installing on a
+// normal quit would launch the NSIS installer while the backend is still being
+// torn down, and a DJ closing the app before a gig does not expect a multi-GB
+// install to start.
+autoUpdater.autoInstallOnAppQuit = false
+
+// Free disk needed for an in-app update to finish. The Windows installer is
+// ~1.9 GB and the installed app ~2.7 GB; during the update NSIS parks the old
+// install in %TEMP%, extracts the 1.8 GB archive there, extracts 2.7 GB again
+// into the install dir, and electron-updater keeps two copies of the installer.
+// Running out after the uninstall step leaves the user with no app at all,
+// which is how a 1.20.0 -> 1.20.1 update "deleted" Cleanse. macOS only unzips.
+const UPDATE_FREE_SPACE_BYTES = process.platform === 'win32' ? 12 * 1024 ** 3 : 3 * 1024 ** 3
+
+async function freeSpaceOnAppVolume(): Promise<number | null> {
+  try {
+    const st = await statfs(app.getPath('exe'))
+    return Number(st.bavail) * Number(st.bsize)
+  } catch (err) {
+    log.warn('[AutoUpdater] Could not read free space:', err)
+    return null
+  }
+}
 
 let mainWindow: BrowserWindow | null = null
 
@@ -490,12 +514,32 @@ function setupAutoUpdater(): void {
   })
 }
 
-ipcMain.handle('download-update', () => {
-  return autoUpdater.downloadUpdate()
+ipcMain.handle('download-update', async () => {
+  const free = await freeSpaceOnAppVolume()
+  if (free !== null && free < UPDATE_FREE_SPACE_BYTES) {
+    const needGb = Math.round(UPDATE_FREE_SPACE_BYTES / 1024 ** 3)
+    const haveGb = (free / 1024 ** 3).toFixed(1)
+    const message =
+      `Not enough free space to update. Cleanse needs about ${needGb} GB free ` +
+      `during the update (${haveGb} GB available). Free up space and try again.`
+    log.warn(`[AutoUpdater] ${message}`)
+    sendToMain('update-error', message)
+    return { started: false, message }
+  }
+  await autoUpdater.downloadUpdate()
+  return { started: true }
 })
 
-ipcMain.handle('install-update', () => {
-  autoUpdater.quitAndInstall()
+ipcMain.handle('install-update', async () => {
+  // Kill the backend tree first: NSIS cannot replace files that
+  // cleanse-backend.exe or its ffmpeg children hold open, and quitAndInstall
+  // spawns the installer before before-quit gets a chance to run.
+  log.info('[AutoUpdater] Stopping backend before install')
+  await stopPythonBackendAndWait()
+  // isSilent=true runs the NSIS installer with /S: no wizard, and no
+  // per-user/per-machine page that could flip the install mode mid-update.
+  // isForceRunAfter=true relaunches the app when the installer finishes.
+  autoUpdater.quitAndInstall(true, true)
 })
 
 ipcMain.handle('check-for-updates', async () => {
