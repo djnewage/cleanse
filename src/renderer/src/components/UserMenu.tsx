@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { track } from '../lib/analytics'
 import { useAuth } from '../contexts/AuthContext'
 
 interface UserMenuProps {
@@ -41,7 +42,7 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
   const handleManageClick = async () => {
     setIsOpen(false)
     if (isSubscribed) {
-      await openCustomerPortal()
+      await openCustomerPortal('manage')
     } else if (onManageSubscription) {
       onManageSubscription()
     }
@@ -49,6 +50,7 @@ export default function UserMenu({ onManageSubscription }: UserMenuProps): React
 
   const handleCheckForUpdates = useCallback(() => {
     setUpdateStatus('checking')
+    track('update_check_clicked')
     window.electronAPI.checkForUpdates()
     // update-available event will trigger the UpdateModal in App.tsx
     // update-not-available event will show "up to date" here

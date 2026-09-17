@@ -11,7 +11,14 @@ import type {
   TranscribedWord
 } from './types'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { logSongsImported, logExportStarted, logExportCompleted, logManualCensorAdded, logUpdateDownloaded } from './lib/analytics'
+import {
+  track,
+  errorKind,
+  logSongsImported,
+  logManualCensorAdded,
+  setAnalyticsDevice,
+  type PaywallReason
+} from './lib/analytics'
 import { useQueueProcessor } from './hooks/useQueueProcessor'
 import FileUpload from './components/FileUpload'
 import QueueList from './components/QueueList'
@@ -603,7 +610,26 @@ function MainApp(): React.JSX.Element {
     downloaded: boolean
   }>({ show: false, version: '', releaseNotes: '', downloadProgress: null, downloaded: false })
 
-  const { isAuthenticated, isLoading: authLoading, checkCanProcess, recordUsage, recordSongsImported, recordSongsReady } = useAuth()
+  const {
+    isAuthenticated,
+    isLoading: authLoading,
+    checkCanProcess,
+    recordUsage,
+    recordSongsImported,
+    recordSongsReady,
+    songsRemaining
+  } = useAuth()
+
+  // Every paywall open goes through here so the reason is recorded. The
+  // paywall -> checkout ratio is the free-to-paid funnel's key step.
+  const openPaywall = useCallback(
+    (reason: PaywallReason) => {
+      track('paywall_shown', { reason, songs_remaining: songsRemaining })
+      track('screen_view', { screen_name: 'paywall' })
+      setShowPaywall(true)
+    },
+    [songsRemaining]
+  )
 
   // Model warmup state
   const [modelStatus, setModelStatus] = useState<'waiting' | 'downloading' | 'loading' | 'ready'>('waiting')
@@ -624,6 +650,11 @@ function MainApp(): React.JSX.Element {
       localStorage.setItem('cleanse.exportFormat', exportFormat)
     } catch { /* ignore quota errors */ }
   }, [exportFormat])
+
+  const handleSetExportFormat = useCallback((format: ExportFormat) => {
+    track('export_format_changed', { format })
+    setExportFormat(format)
+  }, [])
 
   // Track the expanded song's preview identity AND staleness as one value so
   // effects that depend on regeneration re-fire when CLEAR_PREVIEW marks the
@@ -696,6 +727,8 @@ function MainApp(): React.JSX.Element {
 
     setModelStatus('downloading')
     setModelDownloadMessage('Checking audio engine...')
+    const warmupStartedAt = performance.now()
+    track('model_download_started')
 
     const unsubProgress = window.electronAPI.onModelDownloadProgress((progress) => {
       setModelDownloadProgress(progress.progress)
@@ -710,9 +743,13 @@ function MainApp(): React.JSX.Element {
     })
 
     window.electronAPI.warmupModel()
-      .then(() => setModelStatus('ready'))
+      .then(() => {
+        setModelStatus('ready')
+        track('model_download_completed', { elapsed_ms: Math.round(performance.now() - warmupStartedAt) })
+      })
       .catch((err) => {
         console.error('Model warmup failed:', err)
+        track('model_download_failed', { elapsed_ms: Math.round(performance.now() - warmupStartedAt) })
         setModelStatus('ready') // Allow usage even if warmup fails
       })
 
@@ -723,12 +760,14 @@ function MainApp(): React.JSX.Element {
   useEffect(() => {
     const unsubscribe = window.electronAPI.onDeviceInfo((info) => {
       dispatch({ type: 'SET_DEVICE_INFO', deviceInfo: info })
+      setAnalyticsDevice(info)
     })
 
     // Fetch only if backend is already ready (handles late-mount / hot-reload)
     if (state.backendReady) {
       window.electronAPI.getDeviceInfo().then((info) => {
         dispatch({ type: 'SET_DEVICE_INFO', deviceInfo: info })
+        setAnalyticsDevice(info)
       }).catch(() => {
         // Will get it from the event
       })
@@ -738,6 +777,7 @@ function MainApp(): React.JSX.Element {
   }, [state.backendReady])
 
   // Listen for auto-update events
+  const updateVersionRef = useRef('')
   useEffect(() => {
     const unsubAvailable = window.electronAPI.onUpdateAvailable((info) => {
       let notes = ''
@@ -764,6 +804,8 @@ function MainApp(): React.JSX.Element {
       if (looksLikeCommitFallback) {
         notes = 'Bug fixes and improvements.'
       }
+      updateVersionRef.current = info.version
+      track('update_available', { version: info.version })
       setUpdateState({
         show: true,
         version: info.version,
@@ -779,7 +821,7 @@ function MainApp(): React.JSX.Element {
 
     const unsubDownloaded = window.electronAPI.onUpdateDownloaded(() => {
       setUpdateState((prev) => ({ ...prev, downloaded: true, downloadProgress: 100 }))
-      logUpdateDownloaded()
+      track('update_downloaded', { version: updateVersionRef.current })
     })
 
     return () => {
@@ -824,6 +866,7 @@ function MainApp(): React.JSX.Element {
   // Toggle expanded song
   const handleToggleExpand = useCallback(async (id: string) => {
     const song = state.songs.find((s) => s.id === id)
+    if (state.expandedSongId !== id) track('screen_view', { screen_name: 'song_panel' })
 
     if (state.expandedSongId === id) {
       // Closing - cancel any in-flight preview generation
@@ -959,13 +1002,17 @@ function MainApp(): React.JSX.Element {
   // Set global censor type
   const handleSetGlobalCensorType = useCallback((censorType: CensorType) => {
     dispatch({ type: 'SET_GLOBAL_CENSOR_TYPE', censorType })
+    track('censor_style_changed', { style: censorType, scope: 'global' })
   }, [])
 
   // Toggle profanity for a word
   const handleToggleProfanity = useCallback((songId: string, wordIndex: number) => {
+    // A word switched OFF is the model's false positive as judged by the user.
+    const word = state.songs.find((s) => s.id === songId)?.words[wordIndex]
+    if (word?.is_profanity) track('word_toggled_off', { detection_source: word.detection_source ?? 'unknown' })
     dispatch({ type: 'TOGGLE_PROFANITY', songId, wordIndex })
     dispatch({ type: 'CLEAR_PREVIEW', id: songId })
-  }, [])
+  }, [state.songs])
 
   // Add a manual censor word
   const handleAddManualWord = useCallback((songId: string, word: TranscribedWord) => {
@@ -976,15 +1023,18 @@ function MainApp(): React.JSX.Element {
 
   // Remove a word (manual censors)
   const handleRemoveWord = useCallback((songId: string, wordIndex: number) => {
+    const word = state.songs.find((s) => s.id === songId)?.words[wordIndex]
+    track('word_removed', { detection_source: word?.detection_source ?? 'unknown' })
     dispatch({ type: 'REMOVE_WORD', songId, wordIndex })
     dispatch({ type: 'CLEAR_PREVIEW', id: songId })
-  }, [])
+  }, [state.songs])
 
   // Set censor type for a word (undefined = reset to default)
   const handleSetWordCensorType = useCallback(
     (songId: string, wordIndex: number, censorType: CensorType | undefined) => {
       dispatch({ type: 'SET_WORD_CENSOR_TYPE', songId, wordIndex, censorType })
       dispatch({ type: 'CLEAR_PREVIEW', id: songId })
+      track('censor_style_changed', { style: censorType ?? 'default', scope: 'word' })
     },
     []
   )
@@ -993,12 +1043,14 @@ function MainApp(): React.JSX.Element {
   const handleResetAllWordCensorTypes = useCallback((songId: string) => {
     dispatch({ type: 'RESET_ALL_WORD_CENSOR_TYPES', songId })
     dispatch({ type: 'CLEAR_PREVIEW', id: songId })
+    track('censor_style_changed', { style: 'default', scope: 'word_reset' })
   }, [])
 
   // Set censor type for a song
   const handleSetSongCensorType = useCallback((songId: string, censorType: CensorType) => {
     dispatch({ type: 'SET_SONG_CENSOR_TYPE', songId, censorType })
     dispatch({ type: 'CLEAR_PREVIEW', id: songId })
+    track('censor_style_changed', { style: censorType, scope: 'song' })
   }, [])
 
   // Mark song as reviewed
@@ -1025,7 +1077,7 @@ function MainApp(): React.JSX.Element {
 
     const usageInfo = await checkCanProcess()
     if (!usageInfo.canProcess) {
-      setShowPaywall(true)
+      openPaywall('limit_reached')
       return
     }
 
@@ -1049,6 +1101,7 @@ function MainApp(): React.JSX.Element {
     if (!outputPath) return
 
     dispatch({ type: 'START_EXPORT', id: song.id })
+    track('export_started', { count: 1, format: exportFormat, mode: 'single', truncated_by_quota: false })
 
     try {
       const result = await window.electronAPI.censorAudio(
@@ -1063,6 +1116,7 @@ function MainApp(): React.JSX.Element {
         exportFormat === 'source' ? undefined : exportFormat
       )
       dispatch({ type: 'EXPORT_COMPLETE', id: song.id, outputPath: result.output_path })
+      track('export_completed', { count: 1, failed: 0, format: exportFormat, mode: 'single' })
 
       await recordUsage()
 
@@ -1079,9 +1133,12 @@ function MainApp(): React.JSX.Element {
       })
     } catch (err) {
       console.error('Export failed:', err)
-      dispatch({ type: 'SET_SONG_ERROR', id: song.id, message: err instanceof Error ? err.message : String(err) })
+      const message = err instanceof Error ? err.message : String(err)
+      track('song_failed', { stage: 'export', error_kind: errorKind(message) })
+      track('export_completed', { count: 0, failed: 1, format: exportFormat, mode: 'single' })
+      dispatch({ type: 'SET_SONG_ERROR', id: song.id, message })
     }
-  }, [state.songs, state.crossfadeMs, state.paddingMs, exportFormat, checkCanProcess, recordUsage])
+  }, [state.songs, state.crossfadeMs, state.paddingMs, exportFormat, checkCanProcess, recordUsage, openPaywall])
 
   // Export all ready songs with paywall check
   const handleExportAll = useCallback(async () => {
@@ -1090,7 +1147,7 @@ function MainApp(): React.JSX.Element {
     // Check if user can process
     const usageInfo = await checkCanProcess()
     if (!usageInfo.canProcess) {
-      setShowPaywall(true)
+      openPaywall('limit_reached')
       return
     }
 
@@ -1115,7 +1172,7 @@ function MainApp(): React.JSX.Element {
       : allExportable
 
     if (exportableSongs.length === 0) {
-      setShowPaywall(true)
+      openPaywall('limit_reached')
       exportingRef.current = false
       return
     }
@@ -1145,10 +1202,15 @@ function MainApp(): React.JSX.Element {
     }
 
     dispatch({ type: 'START_EXPORT_ALL', total: exportableSongs.length })
-    logExportStarted(exportableSongs.length)
+    track('export_started', {
+      count: exportableSongs.length,
+      format: exportFormat,
+      mode: 'batch',
+      truncated_by_quota: quotaLimited
+    })
 
     let completed = 0
-    let successfulExports = 0
+    let written = 0
 
     for (const song of exportableSongs) {
       dispatch({ type: 'START_EXPORT', id: song.id })
@@ -1182,11 +1244,11 @@ function MainApp(): React.JSX.Element {
         )
 
         dispatch({ type: 'EXPORT_COMPLETE', id: song.id, outputPath: result.output_path })
+        written++
 
         // Record usage for this export
         try {
           await recordUsage()
-          successfulExports++
         } catch (usageErr) {
           console.error('Failed to record usage:', usageErr)
           // Continue anyway - the export succeeded
@@ -1208,6 +1270,7 @@ function MainApp(): React.JSX.Element {
       } catch (err) {
         Sentry.captureException(err)
         const message = err instanceof Error ? err.message : String(err)
+        track('song_failed', { stage: 'export', error_kind: errorKind(message) })
         dispatch({ type: 'SET_SONG_ERROR', id: song.id, message })
       }
 
@@ -1216,30 +1279,37 @@ function MainApp(): React.JSX.Element {
     }
 
     dispatch({ type: 'EXPORT_ALL_COMPLETE' })
-    logExportCompleted(successfulExports)
+    track('export_completed', {
+      count: written,
+      failed: exportableSongs.length - written,
+      format: exportFormat,
+      mode: 'batch'
+    })
     exportingRef.current = false
 
     // The rest of the batch didn't fit in the free quota - now that they have
     // what they're owed, make the reason clear.
     if (quotaLimited) {
-      setShowPaywall(true)
+      openPaywall('batch_truncated')
     }
-  }, [state.songs, exportFormat, checkCanProcess, recordUsage])
+  }, [state.songs, exportFormat, checkCanProcess, recordUsage, openPaywall])
 
   // Toggle turbo mode
   const handleToggleTurbo = useCallback((enabled: boolean) => {
     dispatch({ type: 'SET_TURBO_ENABLED', enabled })
+    track('turbo_toggled', { enabled })
   }, [])
 
   // Toggle dual-pass transcription (ad-lib detection)
   const handleToggleDualPass = useCallback((enabled: boolean) => {
     dispatch({ type: 'SET_DUAL_PASS_ENABLED', enabled })
+    track('dual_pass_toggled', { enabled })
   }, [])
 
   // Show paywall modal
   const handleShowPaywall = useCallback(() => {
-    setShowPaywall(true)
-  }, [])
+    openPaywall('upgrade_click')
+  }, [openPaywall])
 
   // If still loading auth, show loading screen
   if (authLoading) {
@@ -1274,7 +1344,10 @@ function MainApp(): React.JSX.Element {
           <div className="flex items-center gap-3">
             {/* Help button */}
             <button
-              onClick={() => setShowHelp(true)}
+              onClick={() => {
+                track('screen_view', { screen_name: 'help' })
+                setShowHelp(true)
+              }}
               className="w-5 h-5 rounded-full border border-border-strong text-text-secondary hover:text-text-primary hover:border-border-strong text-xs font-medium transition-colors flex items-center justify-center"
               title="Quick reference"
             >
@@ -1283,7 +1356,10 @@ function MainApp(): React.JSX.Element {
 
             {/* Feedback button */}
             <button
-              onClick={() => setShowFeedback(true)}
+              onClick={() => {
+                track('screen_view', { screen_name: 'feedback' })
+                setShowFeedback(true)
+              }}
               className="text-xs text-text-secondary hover:text-text-primary transition-colors"
             >
               Feedback
@@ -1312,7 +1388,10 @@ function MainApp(): React.JSX.Element {
 
             {/* Custom words */}
             <button
-              onClick={() => setShowCustomWords(true)}
+              onClick={() => {
+                track('screen_view', { screen_name: 'custom_words' })
+                setShowCustomWords(true)
+              }}
               className="text-xs text-text-tertiary hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-muted"
               title="Custom profanity word list"
             >
@@ -1420,7 +1499,7 @@ function MainApp(): React.JSX.Element {
               paddingMs={state.paddingMs}
               onSetPaddingMs={(ms) => dispatch({ type: 'SET_PADDING_MS', ms })}
               exportFormat={exportFormat}
-              onSetExportFormat={setExportFormat}
+              onSetExportFormat={handleSetExportFormat}
               onExportAll={handleExportAll}
               onClearAll={handleClearAll}
               isExporting={state.isExportingAll}
@@ -1443,8 +1522,14 @@ function MainApp(): React.JSX.Element {
       {showCustomWords && (
         <CustomWordList
           words={state.customProfanityWords}
-          onAddWord={(word) => dispatch({ type: 'ADD_CUSTOM_WORD', word })}
-          onRemoveWord={(word) => dispatch({ type: 'REMOVE_CUSTOM_WORD', word })}
+          onAddWord={(word) => {
+            dispatch({ type: 'ADD_CUSTOM_WORD', word })
+            track('custom_word_added', { list_size: state.customProfanityWords.length + 1 })
+          }}
+          onRemoveWord={(word) => {
+            dispatch({ type: 'REMOVE_CUSTOM_WORD', word })
+            track('custom_word_removed', { list_size: Math.max(0, state.customProfanityWords.length - 1) })
+          }}
           onClose={() => setShowCustomWords(false)}
         />
       )}
@@ -1466,8 +1551,14 @@ function MainApp(): React.JSX.Element {
           setUpdateState((prev) => ({ ...prev, downloadProgress: 0 }))
           window.electronAPI.downloadUpdate()
         }}
-        onInstall={() => window.electronAPI.installUpdate()}
-        onClose={() => setUpdateState((prev) => ({ ...prev, show: false }))}
+        onInstall={() => {
+          track('update_install_clicked', { version: updateState.version })
+          window.electronAPI.installUpdate()
+        }}
+        onClose={() => {
+          track('update_dismissed', { version: updateState.version, downloaded: updateState.downloaded })
+          setUpdateState((prev) => ({ ...prev, show: false }))
+        }}
       />
     </div>
   )

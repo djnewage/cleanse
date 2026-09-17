@@ -94,6 +94,10 @@ export interface TranscriptionResult {
   words: TranscribedWord[]
   duration: number
   language: string
+  /** Whisper's confidence in the detected language (0-1); absent on old backends. */
+  language_probability?: number
+  language_source?: string
+  language_low_confidence?: boolean
 }
 
 export interface TranscribedWord {
