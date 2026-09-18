@@ -26,7 +26,8 @@ Sentry.init({
 
 import { join, extname, basename } from 'path'
 import { createReadStream } from 'fs'
-import { stat, readFile, statfs } from 'fs/promises'
+import { stat, readFile, writeFile, statfs } from 'fs/promises'
+import { randomUUID } from 'crypto'
 import { Readable } from 'stream'
 import { existsSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -284,6 +285,9 @@ ipcMain.handle('transcribe-file', async (_event, filePath: string, turbo: boolea
       words: Array<Record<string, unknown>>
       duration: number
       language: string
+      language_probability?: number
+      language_source?: string
+      language_low_confidence?: boolean
     }>('/transcribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -468,6 +472,28 @@ ipcMain.handle('delete-history-entry', (_event, id: string) => {
 
 ipcMain.handle('open-external', (_event, url: string) => {
   return shell.openExternal(url)
+})
+
+// A stable per-installation id for analytics. It lives in userData so it
+// survives the renderer's localStorage being cleared, and unlike a hardware id
+// it carries nothing identifying. Generated once, on first request.
+let machineIdPromise: Promise<string> | null = null
+ipcMain.handle('get-machine-id', () => {
+  if (!machineIdPromise) {
+    machineIdPromise = (async () => {
+      const file = join(app.getPath('userData'), 'machine-id')
+      try {
+        const existing = (await readFile(file, 'utf8')).trim()
+        if (/^[0-9a-f-]{36}$/i.test(existing)) return existing
+      } catch {
+        /* first run */
+      }
+      const id = randomUUID()
+      await writeFile(file, id, 'utf8').catch(() => {})
+      return id
+    })()
+  }
+  return machineIdPromise
 })
 
 ipcMain.handle('get-device-info', async () => {

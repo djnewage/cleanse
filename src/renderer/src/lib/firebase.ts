@@ -3,8 +3,18 @@ import { getAuth, connectAuthEmulator } from 'firebase/auth'
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore'
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions'
 
-// Firebase configuration
-// In production, these values should come from environment variables
+// Firebase configuration comes from VITE_FIREBASE_* at build time. The demo
+// fallbacks exist only so `npm run dev` can boot against the emulators; a
+// production build without real config would ship an app that cannot sign in
+// (this is exactly what a CI build without the env vars would produce), so
+// refuse to start rather than fail quietly at the login screen.
+if (!import.meta.env.DEV && !import.meta.env.VITE_FIREBASE_API_KEY) {
+  throw new Error(
+    'Firebase config missing from this build (VITE_FIREBASE_API_KEY is unset). ' +
+      'Set the VITE_FIREBASE_* variables in the build environment.'
+  )
+}
+
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'demo-api-key',
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'demo-project.firebaseapp.com',

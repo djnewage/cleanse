@@ -1,13 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import * as Sentry from '@sentry/react'
 import type { BatchAppAction, SongEntry } from '../types'
-import {
-  logSeparationCompleted,
-  logSeparationFailed,
-  logTranscriptionCompleted,
-  logTranscriptionFailed,
-  logLyricsFetched
-} from '../lib/analytics'
+import { track, errorKind, type ProcessingStage } from '../lib/analytics'
 
 interface UseQueueProcessorProps {
   songs: SongEntry[]
@@ -66,6 +60,7 @@ export function useQueueProcessor({
   const cancelSong = useCallback(
     (songId: string) => {
       cancelledIdsRef.current.add(songId)
+      track('song_canceled')
     },
     []
   )
@@ -75,6 +70,9 @@ export function useQueueProcessor({
     async (songId: string) => {
       const song = songs.find((s) => s.id === songId)
       if (!song) return
+
+      // Which step was running when an error escapes, for song_failed.
+      let stage: ProcessingStage = 'separation'
 
       try {
         // Step 1 + 2: Fetch lyrics AND separate vocals in parallel
@@ -110,12 +108,17 @@ export function useQueueProcessor({
                     durationMismatch: Boolean(result.duration_mismatch)
                   }
                 })
-                logLyricsFetched()
+                track('lyrics_fetched', {
+                  source: (result.lyrics_source as string | null) ?? 'unknown',
+                  duration_mismatch: Boolean(result.duration_mismatch),
+                  from_tags: lyricsFromTags
+                })
               }
             }).catch(() => { /* best-effort */ })
           : Promise.resolve()
 
         dispatch({ type: 'START_SEPARATING', id: songId })
+        const separationStartedAt = performance.now()
         const [separationResult] = await Promise.all([
           window.electronAPI.separateAudio(song.filePath, turboEnabled),
           lyricsPromise
@@ -130,10 +133,15 @@ export function useQueueProcessor({
           vocalsPath: separationResult.vocals_path,
           accompanimentPath: separationResult.accompaniment_path
         })
-        logSeparationCompleted()
+        track('separation_completed', {
+          elapsed_ms: Math.round(performance.now() - separationStartedAt),
+          turbo: turboEnabled
+        })
 
         // Step 3: Dual-pass Transcription (with lyrics as initial_prompt + synced lyrics cross-ref)
+        stage = 'transcription'
         dispatch({ type: 'START_TRANSCRIPTION', id: songId })
+        const transcriptionStartedAt = performance.now()
         const transcriptionResult = await window.electronAPI.transcribeFile(
           song.filePath,
           turboEnabled,
@@ -154,7 +162,16 @@ export function useQueueProcessor({
           duration: transcriptionResult.duration,
           language: transcriptionResult.language
         })
-        logTranscriptionCompleted()
+        track('transcription_completed', {
+          elapsed_ms: Math.round(performance.now() - transcriptionStartedAt),
+          audio_duration_s: Math.round(transcriptionResult.duration),
+          language: transcriptionResult.language || 'unknown',
+          word_count: transcriptionResult.words.length,
+          profanity_count: transcriptionResult.words.filter((w) => w.is_profanity).length,
+          turbo: turboEnabled,
+          dual_pass: dualPassEnabled,
+          language_low_confidence: Boolean(transcriptionResult.language_low_confidence)
+        })
 
         // Mark as ready
         dispatch({ type: 'SET_SONG_READY', id: songId })
@@ -164,8 +181,7 @@ export function useQueueProcessor({
         if (isCancelled(songId)) return
         Sentry.captureException(err)
         const message = err instanceof Error ? err.message : String(err)
-        if (message.includes('Separation')) logSeparationFailed()
-        else logTranscriptionFailed()
+        track('song_failed', { stage, error_kind: errorKind(message) })
         dispatch({ type: 'SET_SONG_ERROR', id: songId, message })
       } finally {
         cancelledIdsRef.current.delete(songId)
@@ -214,6 +230,7 @@ export function useQueueProcessor({
   const retrySong = useCallback(
     (songId: string) => {
       startedIdsRef.current.delete(songId)
+      track('song_retried')
       dispatch({ type: 'RETRY_SONG', id: songId })
     },
     [dispatch]

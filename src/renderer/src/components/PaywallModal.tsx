@@ -47,7 +47,10 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
     setPortalLoading(true)
     setCheckoutError(null)
     try {
-      await openCustomerPortal()
+      // Two paths reach here: a past_due card, or checkout refused because a
+      // subscription already exists. Both go to the portal, but they mean
+      // different things in the funnel.
+      await openCustomerPortal(checkoutBlocked ? 'already_exists' : 'past_due')
       // Don't close modal - user completes the payment update in browser
     } catch (err) {
       console.error('Portal error:', err)
@@ -55,7 +58,7 @@ export default function PaywallModal({ isOpen, onClose }: PaywallModalProps): Re
     } finally {
       setPortalLoading(false)
     }
-  }, [openCustomerPortal])
+  }, [openCustomerPortal, checkoutBlocked])
 
   if (!isOpen) return null
 

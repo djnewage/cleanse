@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/react'
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react'
 import {
   User,
   onAuthStateChanged,
@@ -10,8 +10,16 @@ import {
 } from 'firebase/auth'
 import { doc, onSnapshot } from 'firebase/firestore'
 import { auth, db, incrementUsage, canProcessSong, createCheckoutSession, createPortalSession, recordMetric } from '../lib/firebase'
-import { logLogin, logSignUp, logSignOut, logCheckoutInitiated } from '../lib/analytics'
-import type { UserData, UsageInfo } from '../types'
+import {
+  logLogin,
+  logSignUp,
+  logSignOut,
+  track,
+  setAnalyticsUser,
+  setAnalyticsUserProperties,
+  type PortalReason
+} from '../lib/analytics'
+import type { UserData, UsageInfo, UserSubscription } from '../types'
 import { FREE_SONGS_LIMIT, PRO_PRICE_LABEL } from '../types'
 
 interface AuthContextType {
@@ -34,7 +42,7 @@ interface AuthContextType {
   recordSongsImported: (count: number) => Promise<void>
   recordSongsReady: () => Promise<void>
   openCheckout: () => Promise<void>
-  openCustomerPortal: () => Promise<void>
+  openCustomerPortal: (reason?: PortalReason) => Promise<void>
 
   // Computed values
   isAuthenticated: boolean
@@ -52,6 +60,48 @@ export function useAuth(): AuthContextType {
     throw new Error('useAuth must be used within an AuthProvider')
   }
   return context
+}
+
+/** The `auth/xxx` code from a Firebase error, or 'unknown'. Low-cardinality,
+ *  safe as an analytics dimension. */
+function authErrorCode(err: unknown): string {
+  const message = err instanceof Error ? err.message : ''
+  return message.match(/auth\/([a-z-]+)/)?.[1] ?? 'unknown'
+}
+
+/** The plan label sent to analytics as a user property. */
+function planOf(sub: UserSubscription): string {
+  if (sub.lifetime) return 'lifetime'
+  if (sub.status === 'active') return sub.cancelAtPeriodEnd ? 'pro_canceling' : 'pro'
+  if (sub.status === 'past_due') return 'past_due'
+  if (sub.status === 'canceled') return 'canceled'
+  return 'free'
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** Fire GA4's `purchase` exactly once per subscription, when Firestore first
+ *  reports it active. The webhook is the source of truth, so this is the only
+ *  place the app learns that checkout actually succeeded. */
+function trackPurchaseOnce(sub: UserSubscription): void {
+  const subId = sub.stripeSubscriptionId
+  if (!subId) return
+  const key = `ga_purchase_${subId}`
+  try {
+    if (localStorage.getItem(key)) return
+    localStorage.setItem(key, '1')
+  } catch {
+    /* if storage is unavailable, better one duplicate than none */
+  }
+  // No interval field yet; a period ending more than 200 days out is yearly.
+  const yearly = !!sub.currentPeriodEnd && sub.currentPeriodEnd - Date.now() > 200 * DAY_MS
+  const price = yearly ? 99 : 9.99
+  track('purchase', {
+    value: price,
+    currency: 'USD',
+    transaction_id: subId,
+    items: [{ item_name: 'Cleanse Pro', item_variant: yearly ? 'yearly' : 'monthly', price, quantity: 1 }]
+  })
 }
 
 function friendlyAuthError(err: unknown): string {
@@ -91,18 +141,25 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
   const [error, setError] = useState<string | null>(null)
   const [freeSongsLimit, setFreeSongsLimit] = useState(FREE_SONGS_LIMIT)
   const [proPriceLabel, setProPriceLabel] = useState(PRO_PRICE_LABEL)
+  // Subscription status from the previous Firestore snapshot for this user,
+  // so a flip to 'active' can be told apart from simply loading an active user.
+  const prevSubStatusRef = useRef<string | null>(null)
 
   // Listen to auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser)
+      prevSubStatusRef.current = null
       if (firebaseUser) {
         const sentryUser = { id: firebaseUser.uid, email: firebaseUser.email ?? undefined }
         Sentry.setUser(sentryUser)
         window.electronAPI.setSentryUser(sentryUser)
+        setAnalyticsUser(firebaseUser.uid)
       } else {
         Sentry.setUser(null)
         window.electronAPI.setSentryUser(null)
+        setAnalyticsUser(null)
+        setAnalyticsUserProperties({ plan: null, songs_processed: null })
         setUserData(null)
         setIsLoading(false)
       }
@@ -144,19 +201,29 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       (docSnapshot) => {
         if (docSnapshot.exists()) {
           const data = docSnapshot.data()
+          const subscription: UserSubscription = {
+            status: data.subscription?.status || 'none',
+            lifetime: data.subscription?.lifetime || false,
+            stripeCustomerId: data.subscription?.stripeCustomerId || null,
+            stripeSubscriptionId: data.subscription?.stripeSubscriptionId || null,
+            currentPeriodEnd: data.subscription?.currentPeriodEnd?.toMillis?.() || null,
+            cancelAtPeriodEnd: data.subscription?.cancelAtPeriodEnd || false
+          }
           setUserData({
             email: data.email,
             createdAt: data.createdAt?.toMillis?.() || Date.now(),
             songsProcessed: data.songsProcessed || 0,
-            subscription: {
-              status: data.subscription?.status || 'none',
-              lifetime: data.subscription?.lifetime || false,
-              stripeCustomerId: data.subscription?.stripeCustomerId || null,
-              stripeSubscriptionId: data.subscription?.stripeSubscriptionId || null,
-              currentPeriodEnd: data.subscription?.currentPeriodEnd?.toMillis?.() || null,
-              cancelAtPeriodEnd: data.subscription?.cancelAtPeriodEnd || false
-            }
+            subscription
           })
+          setAnalyticsUserProperties({
+            plan: planOf(subscription),
+            songs_processed: data.songsProcessed || 0
+          })
+          const prev = prevSubStatusRef.current
+          if (prev !== null && prev !== 'active' && subscription.status === 'active') {
+            trackPurchaseOnce(subscription)
+          }
+          prevSubStatusRef.current = subscription.status
         }
         setIsLoading(false)
       },
@@ -177,6 +244,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       await signInWithEmailAndPassword(auth, email, password)
       logLogin()
     } catch (err) {
+      track('auth_failed', { action: 'login', code: authErrorCode(err) })
       setError(friendlyAuthError(err))
       throw err
     } finally {
@@ -193,6 +261,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       logSignUp()
       // User document will be created by Cloud Function trigger
     } catch (err) {
+      track('auth_failed', { action: 'sign_up', code: authErrorCode(err) })
       setError(friendlyAuthError(err))
       throw err
     } finally {
@@ -219,7 +288,9 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
     setError(null)
     try {
       await sendPasswordResetEmail(auth, email)
+      track('password_reset_requested')
     } catch (err) {
+      track('auth_failed', { action: 'reset_password', code: authErrorCode(err) })
       setError(friendlyAuthError(err))
       throw err
     }
@@ -294,7 +365,10 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
 
     try {
       const result = await createCheckoutSession({})
-      logCheckoutInitiated()
+      const subscribed = userData?.subscription.lifetime || userData?.subscription.status === 'active'
+      track('checkout_initiated', {
+        songs_remaining: subscribed ? -1 : Math.max(0, freeSongsLimit - (userData?.songsProcessed || 0))
+      })
       if (result.data.url) {
         // Open in system browser
         window.electronAPI?.openExternal?.(result.data.url) ||
@@ -306,14 +380,15 @@ export function AuthProvider({ children }: AuthProviderProps): React.JSX.Element
       setError(message)
       throw err
     }
-  }, [user])
+  }, [user, userData, freeSongsLimit])
 
   // Open Stripe Customer Portal
-  const openCustomerPortal = useCallback(async () => {
+  const openCustomerPortal = useCallback(async (reason: PortalReason = 'manage') => {
     if (!user) return
 
     try {
       const result = await createPortalSession({})
+      track('portal_opened', { reason })
       if (result.data.url) {
         window.electronAPI?.openExternal?.(result.data.url) ||
           window.open(result.data.url, '_blank')
