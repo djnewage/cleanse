@@ -385,6 +385,15 @@ def _export(audio: AudioSegment, output_path: str, source_path: str | None = Non
     except Exception as e:
         print(f"[AudioProcessor] Tag passthrough failed: {e}", file=sys.stderr)
 
+    # DJ software lists tracks by title tag, not filename, so without this the
+    # export is indistinguishable from the explicit original in the library.
+    # Separate from copy_tags because that returns early on cross-format exports.
+    try:
+        from tag_preserver import mark_title_clean
+        mark_title_clean(output_path)
+    except Exception as e:
+        print(f"[AudioProcessor] Title marking failed: {e}", file=sys.stderr)
+
     return output_path
 
 

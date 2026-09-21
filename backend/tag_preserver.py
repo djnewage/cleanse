@@ -19,9 +19,15 @@ Cross-container exports cannot carry cues -- Serato encodes the same payload
 differently per container (raw GEOB in ID3, base64 in a Vorbis comment, a
 `----:com.serato.dj:` freeform atom in MP4) -- so those are reported as not
 preserved rather than silently mangled.
+
+The one tag that is deliberately *not* carried over as-is is the title:
+`mark_title_clean()` appends " (Clean)" so the export is distinguishable from
+the explicit original inside DJ software, which lists tracks by title tag and
+ignores the `_clean` filename.
 """
 
 import os
+import re
 import sys
 
 # Substrings identifying a tag as DJ performance data rather than normal metadata.
@@ -43,6 +49,12 @@ _FLAC_EXTS = {"flac"}
 _MP4_EXTS = {"m4a", "mp4"}
 
 TAG_PASSTHROUGH_EXTS = _ID3_EXTS | _FLAC_EXTS | _MP4_EXTS
+
+CLEAN_TITLE_SUFFIX = " (Clean)"
+
+# A title that already says it's clean ("(Clean)", "[Clean Edit]", a re-export of
+# a Cleanse output) must not be marked twice.
+_ALREADY_CLEAN_RE = re.compile(r"\bclean\b", re.IGNORECASE)
 
 
 def _ext(path: str) -> str:
@@ -249,3 +261,74 @@ def copy_tags(source_path: str | None, output_path: str) -> dict:
             file=sys.stderr,
         )
     return result
+
+
+def _clean_title(title: str) -> str | None:
+    """The marked title, or None when it should be left alone."""
+    if not title or not title.strip():
+        return None
+    if _ALREADY_CLEAN_RE.search(title):
+        return None
+    return f"{title.rstrip()}{CLEAN_TITLE_SUFFIX}"
+
+
+def mark_title_clean(output_path: str) -> bool:
+    """Append " (Clean)" to the export's title tag. Returns True if it was changed.
+
+    Serato lists tracks by title tag and only falls back to the filename when
+    there is none (other DJ software does the same), so the `_clean` filename alone leaves the
+    export looking identical to the explicit original in the library -- an easy
+    way to load the wrong one at a family gig.
+
+    A file with no title tag is left without one: the DJ software then shows the
+    filename, which already ends in `_clean`. Only the title is touched; artist
+    and album stay identical so both versions still group together. Run this
+    after `copy_tags()`, which for WAV/AIFF is what brings the source title over.
+    """
+    if not output_path or not os.path.isfile(output_path):
+        return False
+
+    container = _container(_ext(output_path))
+    try:
+        if container == "id3":
+            from mutagen.id3 import TIT2
+
+            f = _load_id3(output_path)
+            frame = f.tags.get("TIT2") if f.tags is not None else None
+            new = _clean_title(str(frame.text[0])) if frame is not None and frame.text else None
+            if new is None:
+                return False
+            f.tags.setall("TIT2", [TIT2(encoding=3, text=[new])])
+            # Same ID3 version as _copy_id3 / ffmpeg's -id3v2_version 3.
+            try:
+                f.save(v2_version=3)
+            except TypeError:
+                f.save()
+            return True
+
+        if container == "flac":
+            from mutagen.flac import FLAC
+
+            f = FLAC(output_path)
+            values = f.get("title")
+            new = _clean_title(values[0]) if values else None
+            if new is None:
+                return False
+            f["title"] = [new]
+            f.save()
+            return True
+
+        if container == "mp4":
+            from mutagen.mp4 import MP4
+
+            f = MP4(output_path)
+            values = f.tags.get("\xa9nam") if f.tags is not None else None
+            new = _clean_title(values[0]) if values else None
+            if new is None:
+                return False
+            f.tags["\xa9nam"] = [new]
+            f.save()
+            return True
+    except Exception as e:
+        print(f"[TagPreserver] Failed to mark title clean on {output_path}: {e}", file=sys.stderr)
+    return False

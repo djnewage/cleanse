@@ -7,7 +7,7 @@ import pytest
 from pydub.generators import Sine
 
 from audio_processor import _export, _copy_metadata
-from tag_preserver import copy_tags, describe_dj_tags
+from tag_preserver import copy_tags, describe_dj_tags, mark_title_clean
 
 # A stand-in for Serato's cue/loop payload. Contents are never parsed, so the
 # only thing that matters is that the exact bytes come out the other side.
@@ -198,3 +198,104 @@ class TestCopyTagsGuards:
 
         assert ID3(out)["TIT2"].text == ["Existing Title"]
         assert ID3(out)["GEOB:Serato Markers2"].data == MARKERS_BLOB
+
+
+def _set_id3_text(path: str, title: str | None = None, artist: str | None = None) -> None:
+    from mutagen.id3 import ID3, TIT2, TPE1
+
+    tags = ID3(path)
+    if title is not None:
+        tags.add(TIT2(encoding=3, text=[title]))
+    if artist is not None:
+        tags.add(TPE1(encoding=3, text=[artist]))
+    tags.save(path, v2_version=3)
+
+
+class TestMarkTitleClean:
+    """The export must be tellable from the explicit original by title alone."""
+
+    def test_mp3_title_is_marked(self, tmp_path):
+        from mutagen.id3 import ID3
+
+        src = _mp3_with_serato(str(tmp_path / "src.mp3"))
+        _set_id3_text(src, title="Song", artist="Artist")
+        out = _export(_seg(), str(tmp_path / "src_clean.mp3"), source_path=src)
+
+        tags = ID3(out)
+        assert str(tags["TIT2"].text[0]) == "Song (Clean)"
+        assert str(tags["TPE1"].text[0]) == "Artist"
+        # The source is never touched.
+        assert str(ID3(src)["TIT2"].text[0]) == "Song"
+
+    def test_serato_frames_survive_title_rewrite(self, tmp_path):
+        from mutagen.id3 import ID3
+
+        src = _mp3_with_serato(str(tmp_path / "src.mp3"))
+        _set_id3_text(src, title="Song")
+        out = _export(_seg(), str(tmp_path / "src_clean.mp3"), source_path=src)
+
+        tags = ID3(out)
+        assert tags["GEOB:Serato Markers2"].data == MARKERS_BLOB
+        assert tags["GEOB:Serato BeatGrid"].data == BEATGRID_BLOB
+
+    def test_flac_title_is_marked(self, tmp_path):
+        from mutagen.flac import FLAC
+
+        src = _flac_with_serato(str(tmp_path / "src.flac"))
+        f = FLAC(src)
+        f["title"] = ["Song"]
+        f.save()
+        out = _export(_seg(), str(tmp_path / "src_clean.flac"), source_path=src)
+
+        out_tags = FLAC(out)
+        assert out_tags["title"] == ["Song (Clean)"]
+        assert out_tags["SERATO_MARKERS_V2"] == ["dGVzdC1wYXlsb2Fk"]
+
+    def test_cross_format_export_is_still_marked(self, tmp_path):
+        from mutagen.flac import FLAC
+
+        src = _mp3_with_serato(str(tmp_path / "src.mp3"))
+        _set_id3_text(src, title="Song")
+        out = _export(_seg(), str(tmp_path / "src_clean.flac"), source_path=src)
+
+        assert FLAC(out)["title"] == ["Song (Clean)"]
+
+    def test_untitled_source_stays_untitled(self, tmp_path):
+        from mutagen.id3 import ID3
+
+        src = _mp3_with_serato(str(tmp_path / "src.mp3"))
+        out = _export(_seg(), str(tmp_path / "src_clean.mp3"), source_path=src)
+
+        assert "TIT2" not in ID3(out)
+
+    @pytest.mark.parametrize("title", ["Song (Clean)", "Song [clean edit]", "Song - CLEAN"])
+    def test_already_clean_title_is_left_alone(self, tmp_path, title):
+        from mutagen.id3 import ID3
+
+        src = _mp3_with_serato(str(tmp_path / "src.mp3"))
+        _set_id3_text(src, title=title)
+        out = _export(_seg(), str(tmp_path / "src_clean.mp3"), source_path=src)
+
+        assert str(ID3(out)["TIT2"].text[0]) == title
+
+    def test_clean_as_part_of_a_word_is_not_a_marker(self, tmp_path):
+        from mutagen.id3 import ID3
+
+        src = _mp3_with_serato(str(tmp_path / "src.mp3"))
+        _set_id3_text(src, title="Cleaning Out My Closet")
+        out = _export(_seg(), str(tmp_path / "src_clean.mp3"), source_path=src)
+
+        assert str(ID3(out)["TIT2"].text[0]) == "Cleaning Out My Closet (Clean)"
+
+    def test_is_idempotent(self, tmp_path):
+        from mutagen.id3 import ID3
+
+        src = _mp3_with_serato(str(tmp_path / "src.mp3"))
+        _set_id3_text(src, title="Song")
+        out = _export(_seg(), str(tmp_path / "src_clean.mp3"), source_path=src)
+
+        assert mark_title_clean(out) is False
+        assert str(ID3(out)["TIT2"].text[0]) == "Song (Clean)"
+
+    def test_missing_file_does_not_raise(self, tmp_path):
+        assert mark_title_clean(str(tmp_path / "nope.mp3")) is False
