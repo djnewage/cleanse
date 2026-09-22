@@ -34,6 +34,28 @@ export interface AudioMetadata {
   duration: number | null
 }
 
+export interface AppSettings {
+  musicFolder: string | null
+  exportFolder: string | null
+}
+
+export interface MusicFile {
+  path: string
+  name: string
+  size: number
+  mtime: number
+}
+
+export interface MusicFolderListing {
+  files: MusicFile[]
+  /** The entry cap was hit: the list is not the whole folder. */
+  capped: boolean
+  /** Some sub-folder sat deeper than the depth cap and was skipped. */
+  depthLimited: boolean
+  maxEntries: number
+  maxDepth: number
+}
+
 export interface ElectronAPI {
   selectAudioFile: () => Promise<string | null>
   selectAudioFiles: () => Promise<string[]>
@@ -81,6 +103,11 @@ export interface ElectronAPI {
   downloadUpdate: () => Promise<{ started: boolean; message?: string }>
   installUpdate: () => Promise<void>
   getPathForFile: (file: File) => string
+  getSettings: () => Promise<AppSettings>
+  selectMusicFolder: () => Promise<string | null>
+  clearMusicFolder: () => Promise<void>
+  clearExportFolder: () => Promise<void>
+  listMusicFolder: () => Promise<MusicFolderListing>
   getHistory: () => Promise<HistoryEntry[]>
   addHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => Promise<HistoryEntry>
   deleteHistoryEntry: (id: string) => Promise<void>
@@ -195,7 +222,19 @@ const electronAPI: ElectronAPI = {
     }
   },
 
-  getPathForFile: (file: File) => decodeURIComponent(webUtils.getPathForFile(file)),
+  getPathForFile: (file: File) => {
+    const path = decodeURIComponent(webUtils.getPathForFile(file))
+    // A real dropped file is the DJ choosing it: tell main it may be read.
+    // (A File the renderer fabricates has no path, so nothing is granted.)
+    if (path) ipcRenderer.send('grant-file-access', path)
+    return path
+  },
+
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  selectMusicFolder: () => ipcRenderer.invoke('select-music-folder'),
+  clearMusicFolder: () => ipcRenderer.invoke('clear-music-folder'),
+  clearExportFolder: () => ipcRenderer.invoke('clear-export-folder'),
+  listMusicFolder: () => ipcRenderer.invoke('list-music-folder'),
 
   onBackendStatus: (callback: (status: BackendStatus) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: BackendStatus): void => {

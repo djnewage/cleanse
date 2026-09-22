@@ -4,7 +4,10 @@ import type {
   TranscribedWord,
   CensorWord,
   BackendStatus,
-  SeparationResult
+  SeparationResult,
+  AppSettings,
+  MusicFile,
+  MusicFolderListing
 } from './index'
 
 declare global {
@@ -13,4 +16,4 @@ declare global {
   }
 }
 
-export type { ElectronAPI, TranscriptionResult, TranscribedWord, CensorWord, BackendStatus, SeparationResult }
+export type { ElectronAPI, TranscriptionResult, TranscribedWord, CensorWord, BackendStatus, SeparationResult, AppSettings, MusicFile, MusicFolderListing }
