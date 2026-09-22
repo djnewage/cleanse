@@ -1,13 +1,25 @@
 import { useCallback, useState } from 'react'
+import type { ImportSource } from '../types'
+import { AUDIO_EXTENSIONS_LABEL, isAudioFileName } from '../../../shared/audioExtensions'
+import { LIBRARY_DRAG_TYPE } from './MusicFolder'
 
 interface FileUploadProps {
-  onFilesSelected: (files: Array<{ path: string; name: string }>) => void
+  onFilesSelected: (files: Array<{ path: string; name: string }>, source: ImportSource) => void
   disabled: boolean
+  /** No music folder chosen yet: offer to set one up right here. */
+  offerMusicFolder: boolean
+  onChooseMusicFolder: () => void
+  /** "2 already in the queue" and the like, shown for a moment after an import. */
+  notice: string | null
 }
 
-const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.wma']
-
-export default function FileUpload({ onFilesSelected, disabled }: FileUploadProps): React.JSX.Element {
+export default function FileUpload({
+  onFilesSelected,
+  disabled,
+  offerMusicFolder,
+  onChooseMusicFolder,
+  notice
+}: FileUploadProps): React.JSX.Element {
   const [isDragging, setIsDragging] = useState(false)
 
   const handleClick = useCallback(async () => {
@@ -17,7 +29,7 @@ export default function FileUpload({ onFilesSelected, disabled }: FileUploadProp
         path,
         name: path.split(/[\\/]/).pop() || path
       }))
-      onFilesSelected(files)
+      onFilesSelected(files, 'picker')
     }
   }, [onFilesSelected])
 
@@ -39,13 +51,25 @@ export default function FileUpload({ onFilesSelected, disabled }: FileUploadProp
       setIsDragging(false)
       if (disabled) return
 
+      // Rows dragged from the library sidebar carry their paths directly;
+      // they were never OS files on the clipboard.
+      const fromLibrary = e.dataTransfer.getData(LIBRARY_DRAG_TYPE)
+      if (fromLibrary) {
+        try {
+          const files = JSON.parse(fromLibrary) as Array<{ path: string; name: string }>
+          if (Array.isArray(files) && files.length > 0) onFilesSelected(files, 'folder')
+        } catch {
+          /* not ours after all */
+        }
+        return
+      }
+
       const droppedFiles = e.dataTransfer.files
       const validFiles: Array<{ path: string; name: string }> = []
 
       for (let i = 0; i < droppedFiles.length; i++) {
         const file = droppedFiles[i]
-        const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
-        if (AUDIO_EXTENSIONS.includes(ext)) {
+        if (isAudioFileName(file.name)) {
           const filePath = window.electronAPI.getPathForFile(file)
           if (filePath) {
             validFiles.push({ path: filePath, name: file.name })
@@ -54,7 +78,7 @@ export default function FileUpload({ onFilesSelected, disabled }: FileUploadProp
       }
 
       if (validFiles.length > 0) {
-        onFilesSelected(validFiles)
+        onFilesSelected(validFiles, 'drop')
       }
     },
     [disabled, onFilesSelected]
@@ -80,9 +104,19 @@ export default function FileUpload({ onFilesSelected, disabled }: FileUploadProp
       <p className="text-sm opacity-60">
         {disabled ? 'The Python backend is starting up' : 'or click to browse • Select multiple files'}
       </p>
-      <p className="text-xs opacity-40 mt-2">
-        MP3, WAV, OGG, M4A, FLAC, AAC, WMA
-      </p>
+      <p className="text-xs opacity-40 mt-2">{AUDIO_EXTENSIONS_LABEL}</p>
+      {offerMusicFolder && !disabled && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation() // not the file picker
+            onChooseMusicFolder()
+          }}
+          className="mt-4 text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2"
+        >
+          Choose your music folder to browse it here
+        </button>
+      )}
+      {notice && <p className="mt-3 text-xs text-amber-400">{notice}</p>}
     </div>
   )
 }

@@ -8,7 +8,10 @@ import type {
   ExportFormat,
   SongEntry,
   CensorWord,
-  TranscribedWord
+  TranscribedWord,
+  AppSettings,
+  MusicFolderListing,
+  ImportSource
 } from './types'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import {
@@ -21,6 +24,7 @@ import {
 } from './lib/analytics'
 import { useQueueProcessor } from './hooks/useQueueProcessor'
 import FileUpload from './components/FileUpload'
+import MusicFolder from './components/MusicFolder'
 import QueueList from './components/QueueList'
 import BatchControls from './components/BatchControls'
 import SongDetailPanel from './components/SongDetailPanel'
@@ -107,7 +111,17 @@ function reducer(state: BatchAppState, action: BatchAppAction): BatchAppState {
       return { ...state, backendReady: action.ready }
 
     case 'ADD_SONGS': {
-      const newSongs: SongEntry[] = action.songs.map((s) => ({
+      // One-click adding from the library makes double-adds easy; a song is
+      // in the queue once, whichever way it arrived. (handleFilesSelected
+      // filters first so it can say so; this is the invariant's home.)
+      const present = new Set(state.songs.map((s) => s.filePath))
+      const unique = action.songs.filter((s) => {
+        if (present.has(s.filePath)) return false
+        present.add(s.filePath)
+        return true
+      })
+      if (unique.length === 0) return state
+      const newSongs: SongEntry[] = unique.map((s) => ({
         id: generateId(),
         filePath: s.filePath,
         fileName: s.fileName,
@@ -634,6 +648,82 @@ function MainApp(): React.JSX.Element {
 
   // Model warmup state
   const [modelStatus, setModelStatus] = useState<'waiting' | 'downloading' | 'loading' | 'ready'>('waiting')
+
+  // Machine-local folders (music library, export destination). Main owns
+  // the file; this is a mirror refreshed whenever a dialog changes one.
+  const [settings, setSettings] = useState<AppSettings>({ musicFolder: null, exportFolder: null })
+  const [library, setLibrary] = useState<MusicFolderListing | null>(null)
+  const [libraryLoading, setLibraryLoading] = useState(false)
+  const [libraryOpen, setLibraryOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('cleanse-library-open') !== 'false'
+    } catch {
+      return true
+    }
+  })
+  const [importNotice, setImportNotice] = useState<string | null>(null)
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The latest songs, for callbacks that must not re-create on every change.
+  const songsRef = useRef(state.songs)
+  songsRef.current = state.songs
+
+  const showImportNotice = useCallback((message: string) => {
+    setImportNotice(message)
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
+    noticeTimerRef.current = setTimeout(() => setImportNotice(null), 4000)
+  }, [])
+
+  const loadLibrary = useCallback(async () => {
+    setLibraryLoading(true)
+    try {
+      setLibrary(await window.electronAPI.listMusicFolder())
+    } catch (err) {
+      Sentry.captureException(err)
+      setLibrary(null)
+    } finally {
+      setLibraryLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    window.electronAPI.getSettings().then(setSettings).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (settings.musicFolder) void loadLibrary()
+    else setLibrary(null)
+  }, [settings.musicFolder, loadLibrary])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('cleanse-library-open', String(libraryOpen))
+    } catch {
+      /* per-viewer convenience only */
+    }
+  }, [libraryOpen])
+
+  const handleChooseMusicFolder = useCallback(async () => {
+    const dir = await window.electronAPI.selectMusicFolder()
+    if (!dir) return
+    setSettings((prev) => ({ ...prev, musicFolder: dir }))
+    setLibraryOpen(true)
+    track('music_folder_set')
+  }, [])
+
+  const handleForgetMusicFolder = useCallback(async () => {
+    await window.electronAPI.clearMusicFolder()
+    setSettings((prev) => ({ ...prev, musicFolder: null }))
+  }, [])
+
+  const handleChangeExportFolder = useCallback(async () => {
+    const dir = await window.electronAPI.selectOutputDirectory()
+    if (dir) setSettings((prev) => ({ ...prev, exportFolder: dir }))
+  }, [])
+
+  const handleForgetExportFolder = useCallback(async () => {
+    await window.electronAPI.clearExportFolder()
+    setSettings((prev) => ({ ...prev, exportFolder: null }))
+  }, [])
   const [modelDownloadProgress, setModelDownloadProgress] = useState(0)
   const [modelDownloadMessage, setModelDownloadMessage] = useState('')
   const [exportFormat, setExportFormat] = useState<ExportFormat>(() => {
@@ -862,15 +952,28 @@ function MainApp(): React.JSX.Element {
 
   // Handle file selection
   const handleFilesSelected = useCallback(
-    (files: Array<{ path: string; name: string }>) => {
+    (files: Array<{ path: string; name: string }>, source: ImportSource) => {
+      const queued = new Set(songsRef.current.map((s) => s.filePath))
+      const fresh = files.filter((f) => !queued.has(f.path))
+      const skipped = files.length - fresh.length
+      if (skipped > 0) {
+        showImportNotice(
+          fresh.length === 0
+            ? skipped === 1
+              ? 'That song is already in the queue'
+              : `All ${skipped} are already in the queue`
+            : `${skipped} already in the queue — added ${fresh.length}`
+        )
+      }
+      if (fresh.length === 0) return
       dispatch({
         type: 'ADD_SONGS',
-        songs: files.map((f) => ({ filePath: f.path, fileName: f.name }))
+        songs: fresh.map((f) => ({ filePath: f.path, fileName: f.name }))
       })
-      logSongsImported(files.length)
-      recordSongsImported(files.length)
+      logSongsImported(fresh.length, source)
+      recordSongsImported(fresh.length)
     },
-    [recordSongsImported]
+    [recordSongsImported, showImportNotice]
   )
 
   // Toggle expanded song
@@ -1204,11 +1307,14 @@ function MainApp(): React.JSX.Element {
         return
       }
     } else {
-      outputDir = await window.electronAPI.selectOutputDirectory()
+      // A remembered export folder skips the picker; the folder line under
+      // the batch controls is where the DJ changes or forgets it.
+      outputDir = settings.exportFolder ?? (await window.electronAPI.selectOutputDirectory())
       if (!outputDir) {
         exportingRef.current = false
         return
       }
+      if (outputDir !== settings.exportFolder) setSettings((prev) => ({ ...prev, exportFolder: outputDir }))
     }
 
     dispatch({ type: 'START_EXPORT_ALL', total: exportableSongs.length })
@@ -1302,7 +1408,7 @@ function MainApp(): React.JSX.Element {
     if (quotaLimited) {
       openPaywall('batch_truncated')
     }
-  }, [state.songs, exportFormat, checkCanProcess, recordUsage, openPaywall])
+  }, [state.songs, exportFormat, checkCanProcess, recordUsage, openPaywall, settings.exportFolder])
 
   // Toggle turbo mode
   const handleToggleTurbo = useCallback((enabled: boolean) => {
@@ -1342,10 +1448,12 @@ function MainApp(): React.JSX.Element {
   const readyCount = state.songs.filter((s) => s.status === 'ready').length
   const completedCount = state.songs.filter((s) => s.status === 'completed').length
   const isProcessing = state.currentlyProcessingId !== null
+  const importDisabled = !state.backendReady || modelStatus !== 'ready'
+  const queuedPaths = new Set(state.songs.map((s) => s.filePath))
   return (
-    <div className="min-h-screen bg-app text-text-primary">
+    <div className="h-screen flex flex-col bg-app text-text-primary">
       {/* Header */}
-      <header className="drag-region border-b border-border px-6 py-4">
+      <header className="drag-region border-b border-border px-6 py-4 shrink-0">
         <div className="flex items-center justify-between no-drag">
           <div>
             <h1 className="text-xl font-bold">Cleanse <span className="text-xs font-normal text-text-disabled">v{pkg.version}</span></h1>
@@ -1442,7 +1550,37 @@ function MainApp(): React.JSX.Element {
         </div>
       </header>
 
-      {/* Main content */}
+      {/* Body: library sidebar + main column, each scrolling on its own */}
+      <div className="flex flex-1 min-h-0">
+        {settings.musicFolder && libraryOpen && (
+          <div className="w-80 xl:w-96 shrink-0 min-h-0">
+            <MusicFolder
+              folder={settings.musicFolder}
+              listing={library}
+              loading={libraryLoading}
+              queuedPaths={queuedPaths}
+              disabled={importDisabled}
+              notice={importNotice}
+              onAdd={(files) => handleFilesSelected(files, 'folder')}
+              onChangeFolder={handleChooseMusicFolder}
+              onForgetFolder={handleForgetMusicFolder}
+              onRefresh={loadLibrary}
+              onCollapse={() => setLibraryOpen(false)}
+            />
+          </div>
+        )}
+        {settings.musicFolder && !libraryOpen && (
+          <button
+            onClick={() => setLibraryOpen(true)}
+            className="shrink-0 w-7 border-r border-border bg-surface text-text-tertiary hover:text-text-primary hover:bg-elevated flex flex-col items-center pt-3 gap-2"
+            title="Show library"
+          >
+            <span className="text-sm">›</span>
+            <span className="text-[10px] uppercase tracking-wider [writing-mode:vertical-rl]">Library</span>
+          </button>
+        )}
+
+      <div className="flex-1 min-w-0 overflow-y-auto">
       <main className="max-w-4xl mx-auto px-6 py-8 flex flex-col gap-6">
         {/* Model download progress */}
         {state.backendReady && modelStatus !== 'ready' && (
@@ -1467,7 +1605,13 @@ function MainApp(): React.JSX.Element {
         )}
 
         {/* File upload */}
-        <FileUpload onFilesSelected={handleFilesSelected} disabled={!state.backendReady || modelStatus !== 'ready'} />
+        <FileUpload
+          onFilesSelected={handleFilesSelected}
+          disabled={importDisabled}
+          offerMusicFolder={!settings.musicFolder}
+          onChooseMusicFolder={handleChooseMusicFolder}
+          notice={importNotice}
+        />
 
         {/* Queue list */}
         {state.songs.length > 0 && (
@@ -1515,6 +1659,9 @@ function MainApp(): React.JSX.Element {
               isExporting={state.isExportingAll}
               exportProgress={state.exportProgress}
               disabled={isProcessing}
+              exportFolder={settings.exportFolder}
+              onChangeExportFolder={handleChangeExportFolder}
+              onForgetExportFolder={handleForgetExportFolder}
             />
           </>
         )}
@@ -1524,6 +1671,8 @@ function MainApp(): React.JSX.Element {
           <HistoryList history={state.history} onDelete={handleDeleteHistoryEntry} />
         )}
       </main>
+      </div>
+      </div>
 
       {/* Help modal */}
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />

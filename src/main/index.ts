@@ -217,7 +217,14 @@ ipcMain.handle('select-output-directory', async () => {
 // here, never from a renderer-supplied string: the music folder is also a
 // file-access root, so letting the renderer name it would let it name "/".
 
-ipcMain.handle('get-settings', () => getSettings())
+ipcMain.handle('get-settings', () => {
+  const settings = getSettings()
+  // An export folder on an unplugged drive would make every batch export
+  // fail silently; report it as unset so the picker asks again. The music
+  // folder is kept: its listing just comes back empty until the drive is back.
+  if (settings.exportFolder && !existsSync(settings.exportFolder)) settings.exportFolder = null
+  return settings
+})
 
 ipcMain.handle('select-music-folder', async () => {
   if (!mainWindow) return null

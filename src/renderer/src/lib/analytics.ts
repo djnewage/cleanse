@@ -12,7 +12,7 @@
 // production property.
 
 import pkg from '../../../../package.json'
-import type { CensorType, ExportFormat } from '../types'
+import type { CensorType, ExportFormat, ImportSource } from '../types'
 
 const MEASUREMENT_ID = import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string | undefined
 const API_SECRET = import.meta.env.VITE_GA_API_SECRET as string | undefined
@@ -49,7 +49,8 @@ export interface EventMap {
   auth_failed: { action: AuthAction; code: string }
   password_reset_requested: NoParams
 
-  songs_imported: { count: number }
+  songs_imported: { count: number; source: ImportSource }
+  music_folder_set: NoParams
   lyrics_fetched: { source: string; duration_mismatch: boolean; from_tags: boolean }
   separation_completed: { elapsed_ms: number; turbo: boolean }
   transcription_completed: {
@@ -342,8 +343,8 @@ export function logSignOut(): void {
   track('logout')
 }
 
-export function logSongsImported(count: number): void {
-  track('songs_imported', { count })
+export function logSongsImported(count: number, source: ImportSource): void {
+  track('songs_imported', { count, source })
 }
 
 export function logFeedbackSubmitted(): void {
