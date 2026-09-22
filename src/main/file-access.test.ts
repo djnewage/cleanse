@@ -67,6 +67,19 @@ describe('the renderer may read what the DJ chose, and what this app made', () =
     assert.equal(await access.allow(await file(join(other, 'b.mp3'))), null)
   })
 
+  it('a song queued from the music folder stays readable after the folder is forgotten', async () => {
+    const access = createFileAccess([previews])
+    const queued = await file(join(music, 'Crate', 'queued.mp3'))
+    const notQueued = await file(join(music, 'Crate', 'other.mp3'))
+    const outside = await file(join(root, 'elsewhere.mp3'))
+    access.setRoot('music', music)
+    await access.keep([queued, outside]) // outside is not allowed now, so keep() must not grant it
+    access.setRoot('music', null)
+    assert.ok(await access.allow(queued))
+    assert.equal(await access.allow(notQueued), null)
+    assert.equal(await access.allow(outside), null)
+  })
+
   it('a folder that merely shares the prefix is outside', async () => {
     const access = createFileAccess([previews])
     const evil = await file(join(root, 'tmp', 'cleanse-preview-evil', 'x.mp3'))

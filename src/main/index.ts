@@ -63,6 +63,7 @@ const fileAccess = createFileAccess([PREVIEW_DIR, STEMS_DIR])
 
 function refused(what: string): FileAccessError {
   const err = new FileAccessError(what)
+  log.warn(`[file-access] refused ${what}`) // no path: main.log is shared in bug reports
   Sentry.captureException(err)
   return err
 }
@@ -175,6 +176,14 @@ ipcMain.handle('read-audio-file', async (_event, filePath: string) => {
 // the moment it turns the File into a path (see preload getPathForFile).
 ipcMain.on('grant-file-access', (_event, filePath: string) => {
   void fileAccess.grant([filePath])
+})
+
+// Songs queued from the music folder are readable through the folder root;
+// this pins them so they keep playing after the DJ changes or forgets the
+// folder. It only ever pins what is already readable, so the renderer
+// cannot use it to reach anything new.
+ipcMain.handle('keep-file-access', async (_event, paths: string[]) => {
+  if (Array.isArray(paths)) await fileAccess.keep(paths)
 })
 
 ipcMain.handle('select-audio-file', async () => {

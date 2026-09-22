@@ -108,6 +108,8 @@ export interface ElectronAPI {
   clearMusicFolder: () => Promise<void>
   clearExportFolder: () => Promise<void>
   listMusicFolder: () => Promise<MusicFolderListing>
+  /** Pin already-readable paths (songs just queued) so a later folder change can't cut them off. */
+  keepFileAccess: (paths: string[]) => Promise<void>
   getHistory: () => Promise<HistoryEntry[]>
   addHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => Promise<HistoryEntry>
   deleteHistoryEntry: (id: string) => Promise<void>
@@ -235,6 +237,7 @@ const electronAPI: ElectronAPI = {
   clearMusicFolder: () => ipcRenderer.invoke('clear-music-folder'),
   clearExportFolder: () => ipcRenderer.invoke('clear-export-folder'),
   listMusicFolder: () => ipcRenderer.invoke('list-music-folder'),
+  keepFileAccess: (paths: string[]) => ipcRenderer.invoke('keep-file-access', paths),
 
   onBackendStatus: (callback: (status: BackendStatus) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: BackendStatus): void => {

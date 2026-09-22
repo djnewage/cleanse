@@ -970,6 +970,9 @@ function MainApp(): React.JSX.Element {
         type: 'ADD_SONGS',
         songs: fresh.map((f) => ({ filePath: f.path, fileName: f.name }))
       })
+      // A song from the library is readable through the folder; pin it so it
+      // still plays after the folder is changed or forgotten.
+      window.electronAPI.keepFileAccess(fresh.map((f) => f.path)).catch(() => {})
       logSongsImported(fresh.length, source)
       recordSongsImported(fresh.length)
     },

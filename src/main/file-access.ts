@@ -27,6 +27,11 @@ export interface FileAccess {
   /** Add a trusted folder (the music folder). Replaces any previous folder
    * under the same label, so changing the music folder revokes the old one. */
   setRoot: (label: string, dir: string | null) => void
+  /** Make paths that are readable NOW (through a root) stay readable after
+   * that root goes away: a song queued from the music folder must still play
+   * after the DJ changes or forgets the folder. Cannot widen access — a path
+   * that is not already allowed is ignored. */
+  keep: (paths: unknown[]) => Promise<void>
   size: () => number
 }
 
@@ -152,6 +157,14 @@ export function createFileAccess(
     setRoot: (label, dir) => {
       if (dir) namedRoots.set(label, dir)
       else namedRoots.delete(label)
+    },
+    keep: async (paths) => {
+      for (const p of paths) {
+        const real = await allow(p)
+        if (!real) continue
+        if (granted.size >= max) granted.delete(granted.values().next().value as string)
+        granted.add(key(real))
+      }
     },
     size: () => granted.size
   }
