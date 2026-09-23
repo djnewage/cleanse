@@ -49,6 +49,24 @@ import {
   getDeviceInfo
 } from './python-bridge'
 import { getHistory, addHistoryEntry, deleteHistoryEntry } from './history-store'
+import { getSettings, updateSettings } from './settings-store'
+import { listMusicFolder, MAX_ENTRIES, MAX_DEPTH } from './music-folder'
+import { createFileAccess, FileAccessError, mediaUrlToPath } from './file-access'
+import { AUDIO_EXTENSIONS } from '../shared/audioExtensions'
+
+// Which files the renderer may read (see file-access.ts). The app's own temp
+// folders are always in; the music folder joins when the DJ picks one; every
+// dropped, picked or exported file is granted one at a time.
+const PREVIEW_DIR = join(tmpdir(), 'cleanse-preview')
+const STEMS_DIR = join(tmpdir(), 'cleanse-separated')
+const fileAccess = createFileAccess([PREVIEW_DIR, STEMS_DIR])
+
+function refused(what: string): FileAccessError {
+  const err = new FileAccessError(what)
+  log.warn(`[file-access] refused ${what}`) // no path: main.log is shared in bug reports
+  Sentry.captureException(err)
+  return err
+}
 
 async function describeBackendError(originalMsg: string): Promise<string> {
   // Yield to event loop so the child process 'exit' event can propagate
@@ -148,19 +166,34 @@ async function ensureFileExists(filePath: string): Promise<void> {
 }
 
 ipcMain.handle('read-audio-file', async (_event, filePath: string) => {
-  const buffer = await readFile(filePath)
+  const real = await fileAccess.allow(filePath)
+  if (!real) throw refused('an audio file')
+  const buffer = await readFile(real)
   return buffer.buffer
+})
+
+// Dropped files never pass through a dialog in main; the preload grants them
+// the moment it turns the File into a path (see preload getPathForFile).
+ipcMain.on('grant-file-access', (_event, filePath: string) => {
+  void fileAccess.grant([filePath])
+})
+
+// Songs queued from the music folder are readable through the folder root;
+// this pins them so they keep playing after the DJ changes or forgets the
+// folder. It only ever pins what is already readable, so the renderer
+// cannot use it to reach anything new.
+ipcMain.handle('keep-file-access', async (_event, paths: string[]) => {
+  if (Array.isArray(paths)) await fileAccess.keep(paths)
 })
 
 ipcMain.handle('select-audio-file', async () => {
   if (!mainWindow) return null
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
-    filters: [
-      { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma'] }
-    ]
+    filters: [{ name: 'Audio Files', extensions: [...AUDIO_EXTENSIONS] }]
   })
   if (result.canceled || result.filePaths.length === 0) return null
+  await fileAccess.grant(result.filePaths)
   return result.filePaths[0]
 })
 
@@ -168,32 +201,85 @@ ipcMain.handle('select-audio-files', async () => {
   if (!mainWindow) return []
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile', 'multiSelections'],
-    filters: [
-      { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma'] }
-    ]
+    filters: [{ name: 'Audio Files', extensions: [...AUDIO_EXTENSIONS] }]
   })
   if (result.canceled || result.filePaths.length === 0) return []
+  await fileAccess.grant(result.filePaths)
   return result.filePaths
 })
 
-ipcMain.handle('select-output-directory', async () => {
+ipcMain.handle('select-output-directory', async (_event, remember: boolean = false) => {
   if (!mainWindow) return null
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory', 'createDirectory']
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: getSettings().exportFolder ?? undefined
   })
   if (result.canceled || result.filePaths.length === 0) return null
+  // Persisted only when the DJ chose "Remember a folder" / "Change". The
+  // ad-hoc picker behind Export All must not silently switch "Ask each time"
+  // back into a remembered folder.
+  if (remember) updateSettings({ exportFolder: result.filePaths[0] })
   return result.filePaths[0]
+})
+
+// --- Settings + music folder ---
+//
+// The folders in settings are only ever set from a native dialog handled
+// here, never from a renderer-supplied string: the music folder is also a
+// file-access root, so letting the renderer name it would let it name "/".
+
+ipcMain.handle('get-settings', () => {
+  const settings = getSettings()
+  // An export folder on an unplugged drive would make every batch export
+  // fail silently; report it as unset so the picker asks again. The music
+  // folder is kept: its listing just comes back empty until the drive is back.
+  if (settings.exportFolder && !existsSync(settings.exportFolder)) settings.exportFolder = null
+  return settings
+})
+
+ipcMain.handle('select-music-folder', async () => {
+  if (!mainWindow) return null
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose your music folder',
+    properties: ['openDirectory'],
+    defaultPath: getSettings().musicFolder ?? undefined
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  const dir = result.filePaths[0]
+  updateSettings({ musicFolder: dir })
+  fileAccess.setRoot('music', dir)
+  return dir
+})
+
+ipcMain.handle('clear-music-folder', () => {
+  updateSettings({ musicFolder: null })
+  fileAccess.setRoot('music', null)
+})
+
+ipcMain.handle('clear-export-folder', () => {
+  updateSettings({ exportFolder: null })
+})
+
+ipcMain.handle('list-music-folder', async () => {
+  // Always the folder in settings, never a path from the renderer.
+  const dir = getSettings().musicFolder
+  if (!dir) return { files: [], capped: false, depthLimited: false, maxEntries: MAX_ENTRIES, maxDepth: MAX_DEPTH }
+  const listing = await listMusicFolder(dir)
+  return { ...listing, maxEntries: MAX_ENTRIES, maxDepth: MAX_DEPTH }
 })
 
 ipcMain.handle('select-output-path', async (_event, defaultName: string) => {
   if (!mainWindow) return null
+  const exportFolder = getSettings().exportFolder
   const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: defaultName,
+    // Open in the remembered export folder; the DJ can still pick another.
+    defaultPath: exportFolder ? join(exportFolder, defaultName) : defaultName,
     filters: [
       { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aiff'] }
     ]
   })
   if (result.canceled || !result.filePath) return null
+  await fileAccess.grant([result.filePath]) // history plays the edit from here
   return result.filePath
 })
 
@@ -386,6 +472,11 @@ ipcMain.handle(
       }
 
       const result = await resp.json()
+      // Previews live under PREVIEW_DIR, which is already a readable root, but
+      // that relies on Node's tmpdir() and Python's gettempdir() agreeing.
+      // Granting the exact file the backend wrote makes playback independent
+      // of that (e.g. an 8.3 short-name TEMP on Windows).
+      if (typeof result?.output_path === 'string') await fileAccess.grant([result.output_path])
       return result.output_path
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -446,7 +537,11 @@ ipcMain.handle(
         throw new Error(message || 'Censoring failed')
       }
 
-      return await resp.json()
+      const result = await resp.json()
+      // Batch exports name their output inside the chosen folder without a
+      // per-file dialog, so this is where the edit gets its grant.
+      if (typeof result?.output_path === 'string') await fileAccess.grant([result.output_path])
+      return result
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       throw new Error(`Censor error: ${await describeBackendError(msg)}`)
@@ -456,11 +551,18 @@ ipcMain.handle(
 
 // --- History IPC Handlers ---
 
-ipcMain.handle('get-history', () => {
-  return getHistory()
+ipcMain.handle('get-history', async () => {
+  const history = getHistory()
+  // Edits this app saved in earlier sessions: the history list plays them.
+  await fileAccess.grant(history.map((h) => h.censoredFilePath))
+  return history
 })
 
-ipcMain.handle('add-history-entry', (_event, entry) => {
+ipcMain.handle('add-history-entry', async (_event, entry) => {
+  // get-history re-grants every stored censoredFilePath, so a stored path
+  // must already be one the renderer may read (exports are granted when the
+  // backend writes them). Otherwise history would be a way to name any file.
+  await fileAccess.require(entry?.censoredFilePath, 'a history entry')
   return addHistoryEntry(entry)
 })
 
@@ -645,14 +747,17 @@ protocol.registerSchemesAsPrivileged([
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.electron.cleanse')
 
+  // userData is only reliable once the app is ready; the music folder picked
+  // in an earlier session becomes a readable root from the start of this one.
+  fileAccess.setRoot('music', getSettings().musicFolder)
+
   // Register custom protocol to serve local audio files to the renderer
   // Supports HTTP Range requests so <audio> elements can seek
   protocol.handle('media', async (request) => {
-    const raw = request.url.slice('media://'.length)
-    let filePath = decodeURIComponent(raw)
-    // Chromium strips the colon from Windows drive letters (C:/… → C/…)
-    if (/^[a-zA-Z]\//.test(filePath)) {
-      filePath = filePath[0] + ':' + filePath.slice(1)
+    const filePath = await fileAccess.allow(mediaUrlToPath(request.url))
+    if (!filePath) {
+      refused('a file to play')
+      return new Response('Forbidden', { status: 403 })
     }
 
     try {
@@ -795,10 +900,9 @@ app.on('before-quit', () => {
   stopPythonBackend()
 
   // Clean up preview directory
-  const previewDir = join(tmpdir(), 'cleanse-preview')
-  if (existsSync(previewDir)) {
+  if (existsSync(PREVIEW_DIR)) {
     try {
-      rmSync(previewDir, { recursive: true, force: true })
+      rmSync(PREVIEW_DIR, { recursive: true, force: true })
     } catch (err) {
       console.error('[Main] Failed to cleanup preview directory:', err)
     }

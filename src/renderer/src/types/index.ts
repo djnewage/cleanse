@@ -56,6 +56,29 @@ export interface DeviceInfo {
   turbo_supported: boolean
 }
 
+export interface AppSettings {
+  musicFolder: string | null
+  exportFolder: string | null
+}
+
+export interface MusicFile {
+  path: string
+  name: string
+  size: number
+  mtime: number
+}
+
+export interface MusicFolderListing {
+  files: MusicFile[]
+  capped: boolean
+  depthLimited: boolean
+  maxEntries: number
+  maxDepth: number
+}
+
+/** Where a batch of songs came from — the folder browser, an OS drop, or the file picker. */
+export type ImportSource = 'folder' | 'drop' | 'picker'
+
 export interface AudioMetadata {
   artist: string | null
   title: string | null

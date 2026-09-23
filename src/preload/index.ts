@@ -34,11 +34,34 @@ export interface AudioMetadata {
   duration: number | null
 }
 
+export interface AppSettings {
+  musicFolder: string | null
+  exportFolder: string | null
+}
+
+export interface MusicFile {
+  path: string
+  name: string
+  size: number
+  mtime: number
+}
+
+export interface MusicFolderListing {
+  files: MusicFile[]
+  /** The entry cap was hit: the list is not the whole folder. */
+  capped: boolean
+  /** Some sub-folder sat deeper than the depth cap and was skipped. */
+  depthLimited: boolean
+  maxEntries: number
+  maxDepth: number
+}
+
 export interface ElectronAPI {
   selectAudioFile: () => Promise<string | null>
   selectAudioFiles: () => Promise<string[]>
   selectOutputPath: (defaultName: string) => Promise<string | null>
-  selectOutputDirectory: () => Promise<string | null>
+  /** remember=true persists the choice as the export folder; the plain picker does not. */
+  selectOutputDirectory: (remember?: boolean) => Promise<string | null>
   getAudioMetadata: (path: string) => Promise<AudioMetadata>
   fetchLyrics: (artist: string | null, title: string | null, duration?: number, fileName?: string) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null; lyrics_source?: string | null; duration_mismatch?: boolean; from_tag_metadata?: boolean }>
   transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean, lyricsFromTags?: boolean) => Promise<TranscriptionResult>
@@ -81,6 +104,13 @@ export interface ElectronAPI {
   downloadUpdate: () => Promise<{ started: boolean; message?: string }>
   installUpdate: () => Promise<void>
   getPathForFile: (file: File) => string
+  getSettings: () => Promise<AppSettings>
+  selectMusicFolder: () => Promise<string | null>
+  clearMusicFolder: () => Promise<void>
+  clearExportFolder: () => Promise<void>
+  listMusicFolder: () => Promise<MusicFolderListing>
+  /** Pin already-readable paths (songs just queued) so a later folder change can't cut them off. */
+  keepFileAccess: (paths: string[]) => Promise<void>
   getHistory: () => Promise<HistoryEntry[]>
   addHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => Promise<HistoryEntry>
   deleteHistoryEntry: (id: string) => Promise<void>
@@ -142,7 +172,7 @@ const electronAPI: ElectronAPI = {
   selectOutputPath: (defaultName: string) =>
     ipcRenderer.invoke('select-output-path', defaultName),
 
-  selectOutputDirectory: () => ipcRenderer.invoke('select-output-directory'),
+  selectOutputDirectory: (remember?: boolean) => ipcRenderer.invoke('select-output-directory', remember ?? false),
 
   getAudioMetadata: (path: string) => ipcRenderer.invoke('get-audio-metadata', path),
 
@@ -195,7 +225,20 @@ const electronAPI: ElectronAPI = {
     }
   },
 
-  getPathForFile: (file: File) => decodeURIComponent(webUtils.getPathForFile(file)),
+  getPathForFile: (file: File) => {
+    const path = decodeURIComponent(webUtils.getPathForFile(file))
+    // A real dropped file is the DJ choosing it: tell main it may be read.
+    // (A File the renderer fabricates has no path, so nothing is granted.)
+    if (path) ipcRenderer.send('grant-file-access', path)
+    return path
+  },
+
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  selectMusicFolder: () => ipcRenderer.invoke('select-music-folder'),
+  clearMusicFolder: () => ipcRenderer.invoke('clear-music-folder'),
+  clearExportFolder: () => ipcRenderer.invoke('clear-export-folder'),
+  listMusicFolder: () => ipcRenderer.invoke('list-music-folder'),
+  keepFileAccess: (paths: string[]) => ipcRenderer.invoke('keep-file-access', paths),
 
   onBackendStatus: (callback: (status: BackendStatus) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: BackendStatus): void => {

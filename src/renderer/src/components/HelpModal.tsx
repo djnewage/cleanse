@@ -31,7 +31,7 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps): React.JS
 
         {/* Workflow */}
         <Section title="Workflow">
-          <Step n={1}>Drop audio files to import them into the queue</Step>
+          <Step n={1}>Drop audio files, or pick them from your music folder in the library sidebar</Step>
           <Step n={2}>Songs are automatically processed (separated + transcribed)</Step>
           <Step n={3}>Review flagged words in the transcript editor</Step>
           <Step n={4}>Export clean versions individually or in bulk</Step>

@@ -1,5 +1,6 @@
 import type { CensorType, ExportFormat } from '../types'
 import ExportFormatPicker from './ExportFormatPicker'
+import { folderName } from '../lib/library'
 
 interface BatchControlsProps {
   songCount: number
@@ -18,6 +19,10 @@ interface BatchControlsProps {
   isExporting: boolean
   exportProgress: { completed: number; total: number } | null
   disabled: boolean
+  /** Remembered batch-export destination; null means Export All asks each time. */
+  exportFolder: string | null
+  onChangeExportFolder: () => void
+  onForgetExportFolder: () => void
 }
 
 const censorOptions: { value: CensorType; label: string }[] = [
@@ -43,7 +48,10 @@ export default function BatchControls({
   onClearAll,
   isExporting,
   exportProgress,
-  disabled
+  disabled,
+  exportFolder,
+  onChangeExportFolder,
+  onForgetExportFolder
 }: BatchControlsProps): React.JSX.Element {
   const exportableCount = readyCount + completedCount
   const canExport = exportableCount > 0 && !isExporting
@@ -166,6 +174,30 @@ export default function BatchControls({
             `Export All (${exportableCount})`
           )}
         </button>
+      </div>
+
+      {/* Where Export All puts files */}
+      <div className="flex items-center gap-2 text-xs text-text-tertiary">
+        {exportFolder ? (
+          <>
+            <span className="truncate" title={exportFolder}>
+              Exports go to <span className="text-text-secondary font-medium">{folderName(exportFolder)}</span>
+            </span>
+            <button onClick={onChangeExportFolder} disabled={isExporting} className="hover:text-text-primary underline underline-offset-2 disabled:opacity-50">
+              Change
+            </button>
+            <button onClick={onForgetExportFolder} disabled={isExporting} className="hover:text-text-primary underline underline-offset-2 disabled:opacity-50">
+              Ask each time
+            </button>
+          </>
+        ) : (
+          <>
+            <span>Export All asks where to save.</span>
+            <button onClick={onChangeExportFolder} disabled={isExporting} className="hover:text-text-primary underline underline-offset-2 disabled:opacity-50">
+              Remember a folder
+            </button>
+          </>
+        )}
       </div>
 
       {/* Export progress bar */}

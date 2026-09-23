@@ -72,7 +72,7 @@ export default function HistoryItem({ entry, onDelete }: HistoryItemProps): Reac
             controls
             preload="auto"
             className="w-full mt-2"
-            src={`media://${entry.censoredFilePath}`}
+            src={`media://${encodeURIComponent(entry.censoredFilePath)}`}
           />
         </div>
       )}
