@@ -3,6 +3,9 @@
 
 import type { MusicFile } from '../types'
 
+/** The drag payload a library row carries; FileUpload reads it back on drop. */
+export const LIBRARY_DRAG_TYPE = 'application/x-cleanse-paths'
+
 export interface LibraryRow extends MusicFile {
   title: string
   artist: string

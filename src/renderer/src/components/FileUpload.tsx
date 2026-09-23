@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import type { ImportSource } from '../types'
 import { AUDIO_EXTENSIONS_LABEL, isAudioFileName } from '../../../shared/audioExtensions'
-import { LIBRARY_DRAG_TYPE } from './MusicFolder'
+import { LIBRARY_DRAG_TYPE } from '../lib/library'
 
 interface FileUploadProps {
   onFilesSelected: (files: Array<{ path: string; name: string }>, source: ImportSource) => void

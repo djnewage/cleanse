@@ -208,15 +208,17 @@ ipcMain.handle('select-audio-files', async () => {
   return result.filePaths
 })
 
-ipcMain.handle('select-output-directory', async () => {
+ipcMain.handle('select-output-directory', async (_event, remember: boolean = false) => {
   if (!mainWindow) return null
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory', 'createDirectory'],
     defaultPath: getSettings().exportFolder ?? undefined
   })
   if (result.canceled || result.filePaths.length === 0) return null
-  // Remembered so the next batch export doesn't have to ask again.
-  updateSettings({ exportFolder: result.filePaths[0] })
+  // Persisted only when the DJ chose "Remember a folder" / "Change". The
+  // ad-hoc picker behind Export All must not silently switch "Ask each time"
+  // back into a remembered folder.
+  if (remember) updateSettings({ exportFolder: result.filePaths[0] })
   return result.filePaths[0]
 })
 
@@ -470,6 +472,11 @@ ipcMain.handle(
       }
 
       const result = await resp.json()
+      // Previews live under PREVIEW_DIR, which is already a readable root, but
+      // that relies on Node's tmpdir() and Python's gettempdir() agreeing.
+      // Granting the exact file the backend wrote makes playback independent
+      // of that (e.g. an 8.3 short-name TEMP on Windows).
+      if (typeof result?.output_path === 'string') await fileAccess.grant([result.output_path])
       return result.output_path
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -551,7 +558,11 @@ ipcMain.handle('get-history', async () => {
   return history
 })
 
-ipcMain.handle('add-history-entry', (_event, entry) => {
+ipcMain.handle('add-history-entry', async (_event, entry) => {
+  // get-history re-grants every stored censoredFilePath, so a stored path
+  // must already be one the renderer may read (exports are granted when the
+  // backend writes them). Otherwise history would be a way to name any file.
+  await fileAccess.require(entry?.censoredFilePath, 'a history entry')
   return addHistoryEntry(entry)
 })
 

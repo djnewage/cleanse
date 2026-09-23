@@ -13,6 +13,7 @@ import {
   folderName,
   formatAdded,
   formatSize,
+  LIBRARY_DRAG_TYPE,
   sortRows,
   toRow,
   type LibraryRow,
@@ -20,8 +21,6 @@ import {
   type SortSpec
 } from '../lib/library'
 
-/** The drag payload a row puts on the clipboard; FileUpload reads it back. */
-export const LIBRARY_DRAG_TYPE = 'application/x-cleanse-paths'
 
 const ROW_H = 28
 const OVERSCAN = 8
@@ -72,7 +71,10 @@ export default function MusicFolder({
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [sort, setSort] = useState<SortSpec>(loadSort)
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
-  const anchorRef = useRef<number | null>(null)
+  // The shift-click anchor is a PATH, not an index: rows re-sort and re-filter
+  // under the DJ, and an index into the old order would select a range of
+  // unrelated tracks.
+  const anchorRef = useRef<string | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportH, setViewportH] = useState(400)
@@ -128,13 +130,14 @@ export default function MusicFolder({
 
   const handleRowClick = (e: React.MouseEvent, index: number): void => {
     const row = rows[index]
-    if (e.shiftKey && anchorRef.current !== null) {
-      const [a, b] = [anchorRef.current, index].sort((x, y) => x - y)
+    const anchorIndex = anchorRef.current === null ? -1 : rows.findIndex((r) => r.path === anchorRef.current)
+    if (e.shiftKey && anchorIndex >= 0) {
+      const [a, b] = [anchorIndex, index].sort((x, y) => x - y)
       const range = rows.slice(a, b + 1).map((r) => r.path)
       setSelected((prev) => (e.metaKey || e.ctrlKey ? new Set([...prev, ...range]) : new Set(range)))
       return
     }
-    anchorRef.current = index
+    anchorRef.current = row.path
     if (e.metaKey || e.ctrlKey) {
       setSelected((prev) => {
         const next = new Set(prev)

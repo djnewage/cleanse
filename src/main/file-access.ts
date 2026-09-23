@@ -92,13 +92,15 @@ export function isInside(rootKey: string, pathKeyValue: string, separator: strin
 
 /** media://<encoded absolute path> -> the path, or null if it isn't one.
  * Chromium rewrites "C:/x" as "C/x" in a non-standard URL; put the colon back
- * BEFORE any check is made on the result. */
+ * BEFORE any check is made on the result. Nothing after the prefix is treated
+ * as a query: the renderer never adds one, and "Where Is The Love?.mp3" is a
+ * legal file name. */
 export function mediaUrlToPath(url: string): string | null {
   const prefix = 'media://'
   if (typeof url !== 'string' || !url.toLowerCase().startsWith(prefix)) return null
   let path: string
   try {
-    path = decodeURIComponent(url.slice(prefix.length).split(/[?#]/)[0])
+    path = decodeURIComponent(url.slice(prefix.length))
   } catch {
     return null
   }

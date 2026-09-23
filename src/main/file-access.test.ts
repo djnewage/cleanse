@@ -210,8 +210,8 @@ describe('media:// URLs', () => {
     assert.equal(mediaUrlToPath('media://' + encodeURIComponent('/a/Music/b.mp3')), '/a/Music/b.mp3')
   })
 
-  it('ignores a query or fragment, and refuses what is not a media URL', () => {
-    assert.equal(mediaUrlToPath('media://C%3A%5Ca.mp3?t=1#x'), 'C:\\a.mp3')
+  it('keeps a ? in the file name, and refuses what is not a media URL', () => {
+    assert.equal(mediaUrlToPath('media:///Users/dj/Where Is The Love?_clean.mp3'), '/Users/dj/Where Is The Love?_clean.mp3')
     assert.equal(mediaUrlToPath('file:///C:/a.mp3'), null)
     assert.equal(mediaUrlToPath('media://%E0%A4%A'), null)
     assert.equal(mediaUrlToPath('media://'), null)

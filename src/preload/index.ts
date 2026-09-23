@@ -60,7 +60,8 @@ export interface ElectronAPI {
   selectAudioFile: () => Promise<string | null>
   selectAudioFiles: () => Promise<string[]>
   selectOutputPath: (defaultName: string) => Promise<string | null>
-  selectOutputDirectory: () => Promise<string | null>
+  /** remember=true persists the choice as the export folder; the plain picker does not. */
+  selectOutputDirectory: (remember?: boolean) => Promise<string | null>
   getAudioMetadata: (path: string) => Promise<AudioMetadata>
   fetchLyrics: (artist: string | null, title: string | null, duration?: number, fileName?: string) => Promise<{ plain_lyrics: string | null; synced_lyrics: string | null; lyrics_source?: string | null; duration_mismatch?: boolean; from_tag_metadata?: boolean }>
   transcribeFile: (path: string, turbo?: boolean, vocalsPath?: string, lyrics?: string, syncedLyrics?: string, dualPass?: boolean, lyricsFromTags?: boolean) => Promise<TranscriptionResult>
@@ -171,7 +172,7 @@ const electronAPI: ElectronAPI = {
   selectOutputPath: (defaultName: string) =>
     ipcRenderer.invoke('select-output-path', defaultName),
 
-  selectOutputDirectory: () => ipcRenderer.invoke('select-output-directory'),
+  selectOutputDirectory: (remember?: boolean) => ipcRenderer.invoke('select-output-directory', remember ?? false),
 
   getAudioMetadata: (path: string) => ipcRenderer.invoke('get-audio-metadata', path),
 

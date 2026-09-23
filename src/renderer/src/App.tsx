@@ -661,14 +661,19 @@ function MainApp(): React.JSX.Element {
       return true
     }
   })
-  const [importNotice, setImportNotice] = useState<string | null>(null)
+  // Shown where the import came from: the sidebar for library adds, the drop
+  // zone for drops and the picker — never both at once.
+  const [importNotice, setImportNotice] = useState<{ message: string; source: ImportSource } | null>(null)
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // The latest songs, for callbacks that must not re-create on every change.
   const songsRef = useRef(state.songs)
   songsRef.current = state.songs
+  // Memoised: progress ticks re-render MainApp several times a second, and a
+  // fresh Set each time would re-render every visible library row.
+  const queuedPaths = useMemo(() => new Set(state.songs.map((s) => s.filePath)), [state.songs])
 
-  const showImportNotice = useCallback((message: string) => {
-    setImportNotice(message)
+  const showImportNotice = useCallback((message: string, source: ImportSource) => {
+    setImportNotice({ message, source })
     if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
     noticeTimerRef.current = setTimeout(() => setImportNotice(null), 4000)
   }, [])
@@ -716,7 +721,7 @@ function MainApp(): React.JSX.Element {
   }, [])
 
   const handleChangeExportFolder = useCallback(async () => {
-    const dir = await window.electronAPI.selectOutputDirectory()
+    const dir = await window.electronAPI.selectOutputDirectory(true)
     if (dir) setSettings((prev) => ({ ...prev, exportFolder: dir }))
   }, [])
 
@@ -962,7 +967,8 @@ function MainApp(): React.JSX.Element {
             ? skipped === 1
               ? 'That song is already in the queue'
               : `All ${skipped} are already in the queue`
-            : `${skipped} already in the queue — added ${fresh.length}`
+            : `${skipped} already in the queue — added ${fresh.length}`,
+          source
         )
       }
       if (fresh.length === 0) return
@@ -1311,13 +1317,16 @@ function MainApp(): React.JSX.Element {
       }
     } else {
       // A remembered export folder skips the picker; the folder line under
-      // the batch controls is where the DJ changes or forgets it.
-      outputDir = settings.exportFolder ?? (await window.electronAPI.selectOutputDirectory())
+      // the batch controls is where the DJ changes or forgets it. Re-read from
+      // main at export time: the mirror in state was loaded at launch, and an
+      // unplugged drive since then would fail every song instead of asking.
+      const current = await window.electronAPI.getSettings()
+      if (current.exportFolder !== settings.exportFolder) setSettings(current)
+      outputDir = current.exportFolder ?? (await window.electronAPI.selectOutputDirectory())
       if (!outputDir) {
         exportingRef.current = false
         return
       }
-      if (outputDir !== settings.exportFolder) setSettings((prev) => ({ ...prev, exportFolder: outputDir }))
     }
 
     dispatch({ type: 'START_EXPORT_ALL', total: exportableSongs.length })
@@ -1452,7 +1461,6 @@ function MainApp(): React.JSX.Element {
   const completedCount = state.songs.filter((s) => s.status === 'completed').length
   const isProcessing = state.currentlyProcessingId !== null
   const importDisabled = !state.backendReady || modelStatus !== 'ready'
-  const queuedPaths = new Set(state.songs.map((s) => s.filePath))
   return (
     <div className="h-screen flex flex-col bg-app text-text-primary">
       {/* Header */}
@@ -1563,7 +1571,7 @@ function MainApp(): React.JSX.Element {
               loading={libraryLoading}
               queuedPaths={queuedPaths}
               disabled={importDisabled}
-              notice={importNotice}
+              notice={importNotice?.source === 'folder' ? importNotice.message : null}
               onAdd={(files) => handleFilesSelected(files, 'folder')}
               onChangeFolder={handleChooseMusicFolder}
               onForgetFolder={handleForgetMusicFolder}
@@ -1613,7 +1621,7 @@ function MainApp(): React.JSX.Element {
           disabled={importDisabled}
           offerMusicFolder={!settings.musicFolder}
           onChooseMusicFolder={handleChooseMusicFolder}
-          notice={importNotice}
+          notice={importNotice && importNotice.source !== 'folder' ? importNotice.message : null}
         />
 
         {/* Queue list */}
