@@ -1581,13 +1581,16 @@ function MainApp(): React.JSX.Element {
           </div>
         )}
         {settings.musicFolder && !libraryOpen && (
+          // The collapsed tab has to be findable at a glance: a wide strip
+          // with the folder icon and a blue accent, not a hairline.
           <button
             onClick={() => setLibraryOpen(true)}
-            className="shrink-0 w-7 border-r border-border bg-surface text-text-tertiary hover:text-text-primary hover:bg-elevated flex flex-col items-center pt-3 gap-2"
-            title="Show library"
+            className="shrink-0 w-11 border-r border-border bg-surface text-text-secondary hover:text-text-primary hover:bg-elevated flex flex-col items-center pt-4 gap-3 transition-colors"
+            title={`Show your music library (${library ? library.files.length.toLocaleString() + ' songs' : 'loading'})`}
           >
-            <span className="text-sm">›</span>
-            <span className="text-[10px] uppercase tracking-wider [writing-mode:vertical-rl]">Library</span>
+            <span className="text-lg leading-none">🗂</span>
+            <span className="text-blue-400 text-sm leading-none">›</span>
+            <span className="text-[11px] font-semibold uppercase tracking-widest [writing-mode:vertical-rl] rotate-180">Library</span>
           </button>
         )}
 
@@ -1619,8 +1622,9 @@ function MainApp(): React.JSX.Element {
         <FileUpload
           onFilesSelected={handleFilesSelected}
           disabled={importDisabled}
-          offerMusicFolder={!settings.musicFolder}
+          library={!settings.musicFolder ? 'none' : libraryOpen ? 'open' : 'collapsed'}
           onChooseMusicFolder={handleChooseMusicFolder}
+          onShowLibrary={() => setLibraryOpen(true)}
           notice={importNotice && importNotice.source !== 'folder' ? importNotice.message : null}
         />
 

@@ -6,9 +6,12 @@ import { LIBRARY_DRAG_TYPE } from '../lib/library'
 interface FileUploadProps {
   onFilesSelected: (files: Array<{ path: string; name: string }>, source: ImportSource) => void
   disabled: boolean
-  /** No music folder chosen yet: offer to set one up right here. */
-  offerMusicFolder: boolean
+  /** 'none': no folder yet, offer to set one up. 'collapsed': a folder is
+   * set but the sidebar is hidden — the thin tab alone was easy to miss, so
+   * the drop zone also points at it. 'open': nothing to add. */
+  library: 'none' | 'collapsed' | 'open'
   onChooseMusicFolder: () => void
+  onShowLibrary: () => void
   /** "2 already in the queue" and the like, shown for a moment after an import. */
   notice: string | null
 }
@@ -16,8 +19,9 @@ interface FileUploadProps {
 export default function FileUpload({
   onFilesSelected,
   disabled,
-  offerMusicFolder,
+  library,
   onChooseMusicFolder,
+  onShowLibrary,
   notice
 }: FileUploadProps): React.JSX.Element {
   const [isDragging, setIsDragging] = useState(false)
@@ -102,10 +106,14 @@ export default function FileUpload({
         {disabled ? 'Waiting for backend...' : 'Drop audio files here'}
       </p>
       <p className="text-sm opacity-60">
-        {disabled ? 'The Python backend is starting up' : 'or click to browse • Select multiple files'}
+        {disabled
+          ? 'The Python backend is starting up'
+          : library === 'open'
+            ? 'or click to browse • or pick from your library on the left'
+            : 'or click to browse • Select multiple files'}
       </p>
       <p className="text-xs opacity-40 mt-2">{AUDIO_EXTENSIONS_LABEL}</p>
-      {offerMusicFolder && !disabled && (
+      {library === 'none' && !disabled && (
         <button
           onClick={(e) => {
             e.stopPropagation() // not the file picker
@@ -114,6 +122,17 @@ export default function FileUpload({
           className="mt-4 text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2"
         >
           Choose your music folder to browse it here
+        </button>
+      )}
+      {library === 'collapsed' && !disabled && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onShowLibrary()
+          }}
+          className="mt-4 text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2"
+        >
+          Show your music library
         </button>
       )}
       {notice && <p className="mt-3 text-xs text-amber-400">{notice}</p>}
