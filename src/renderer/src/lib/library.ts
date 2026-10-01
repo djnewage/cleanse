@@ -86,16 +86,13 @@ export function formatSize(bytes: number): string {
   return `${bytes} B`
 }
 
-/** Short enough for a narrow column: "Today", "Mon", "Sep 3", "Jun '25". */
+/** A compact numeric date with the year on every row, the way Serato's Date
+ * Added column reads: "9/3/26" (or "3/9/26" in a day-first locale). Only
+ * today's files get a word, since that is the case a DJ scans for. */
 export function formatAdded(mtime: number, now: number = Date.now()): string {
   const d = new Date(mtime)
-  const ageDays = (now - mtime) / 86_400_000
-  if (ageDays < 1 && new Date(now).toDateString() === d.toDateString()) return 'Today'
-  if (ageDays < 7) return d.toLocaleDateString(undefined, { weekday: 'short' })
-  if (d.getFullYear() === new Date(now).getFullYear()) {
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-  }
-  return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' }).replace(' ', " '")
+  if (new Date(now).toDateString() === d.toDateString()) return 'Today'
+  return d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: '2-digit' })
 }
 
 /** The last path segment, for either separator. */

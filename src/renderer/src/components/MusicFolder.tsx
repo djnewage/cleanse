@@ -266,7 +266,7 @@ export default function MusicFolder({
         <span className="w-5 shrink-0" />
         {renderHeader('Song', 'title', 'flex-1 min-w-0')}
         {renderHeader('Artist', 'artist', 'hidden @[18rem]:block flex-1 min-w-0')}
-        {renderHeader('Added', 'added', 'w-12 shrink-0 text-right')}
+        {renderHeader('Added', 'added', 'w-14 shrink-0 text-right')}
         {renderHeader('Size', 'size', 'hidden @[23rem]:block w-14 shrink-0 text-right')}
       </div>
 
@@ -329,7 +329,7 @@ export default function MusicFolder({
                   <span className={`hidden @[18rem]:block flex-1 min-w-0 truncate ${isSelected ? 'text-white/80' : 'text-text-secondary'}`}>
                     {row.artist}
                   </span>
-                  <span className={`w-12 shrink-0 text-right text-[11px] tabular-nums ${isSelected ? 'text-white/80' : 'text-text-tertiary'}`}>
+                  <span className={`w-14 shrink-0 text-right text-[11px] tabular-nums ${isSelected ? 'text-white/80' : 'text-text-tertiary'}`}>
                     {formatAdded(row.mtime)}
                   </span>
                   <span className={`hidden @[23rem]:block w-14 shrink-0 text-right text-[11px] tabular-nums ${isSelected ? 'text-white/80' : 'text-text-tertiary'}`}>
